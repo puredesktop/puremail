@@ -1,0 +1,14 @@
+{
+  "sourceRepository": "https://github.com/Nikau-Dev/puremail",
+  "sourceCommit": "25580e35730951e38a853b3879bcb2380f8f33ac",
+  "sourceBranch": "main",
+  "snapshotDate": "2026-09-25",
+  "historyIncluded": false,
+  "changes": [
+    "README licensing, attribution, and contribution information",
+    "Contribution guide and third-party notices",
+    "MIT license for original app code except MPL-covered PureCut",
+    "Preserved upstream licenses; added missing font notices where bundled",
+    "Removed bundled demo data and development records; sanitized personal examples and machine paths"
+  ]
+}
