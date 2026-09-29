@@ -10,7 +10,7 @@ import {
   type ThreadHistoryEntry,
   type ThreadHistoryFilter,
 } from './threadHistory'
-import { formatThreadListTime, senderAvatar } from './mailShellHelpers'
+import { senderAvatar } from './mailShellHelpers'
 import {
   FilterChip,
   HistoryCloseButton,
@@ -199,6 +199,8 @@ export function ThreadHistoryPopover({
                 key={entry.id}
                 type="button"
                 $current={entry.id === currentId}
+                title={`${entry.sender}: ${entry.snippet}`}
+                aria-label={`${STATE_WORD[entry.state]} · ${entry.sender} · ${new Date(entry.at).toLocaleString()} · ${entry.snippet}`}
                 onClick={() => onOpenEntry(entry)}
               >
                 <HistoryRowGlyph aria-hidden="true" $state={entry.state}>
@@ -206,7 +208,7 @@ export function ThreadHistoryPopover({
                 </HistoryRowGlyph>
                 <HistoryRowState>{STATE_WORD[entry.state]}</HistoryRowState>
                 <HistoryRowTime>
-                  {formatThreadListTime(entry.at)}
+                  {new Date(entry.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                 </HistoryRowTime>
                 {entry.id === currentId && (
                   <HistoryRowMarker>current</HistoryRowMarker>
@@ -374,6 +376,8 @@ export function ThreadTimelineView({
                   <TimelineDot
                     aria-hidden="true"
                     $current={entry.id === currentId}
+                title={`${entry.sender}: ${entry.snippet}`}
+                aria-label={`${STATE_WORD[entry.state]} · ${entry.sender} · ${new Date(entry.at).toLocaleString()} · ${entry.snippet}`}
                   />
                   <TimelineBody>
                     {expanded ? (
@@ -381,6 +385,8 @@ export function ThreadTimelineView({
                         <TimelineCardHead
                           type="button"
                           $current={entry.id === currentId}
+                title={`${entry.sender}: ${entry.snippet}`}
+                aria-label={`${STATE_WORD[entry.state]} · ${entry.sender} · ${new Date(entry.at).toLocaleString()} · ${entry.snippet}`}
                           aria-expanded="true"
                           onClick={() => toggleExpanded(entry.id)}
                         >
@@ -406,7 +412,7 @@ export function ThreadTimelineView({
                             {STATE_WORD[entry.state].toLowerCase()}
                           </TimelineRowSnippet>
                           <HistoryRowMarker>
-                            {formatThreadListTime(entry.at)}
+                            {new Date(entry.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                           </HistoryRowMarker>
                           <span aria-hidden="true">⌃</span>
                         </TimelineCardHead>
@@ -447,7 +453,7 @@ export function ThreadTimelineView({
                         </span>
                         <TimelineRowSnippet>{entry.snippet}</TimelineRowSnippet>
                         <HistoryRowMarker>
-                          {formatThreadListTime(entry.at)}
+                          {new Date(entry.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                         </HistoryRowMarker>
                       </TimelineRow>
                     )}

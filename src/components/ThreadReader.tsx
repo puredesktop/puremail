@@ -1231,6 +1231,8 @@ export function ThreadReader({
       openDraftInComposeWindow(draft)
       return
     }
+    if (!draft) return
+    setFocusedMessageId(null)
     setActiveReplyDraftId(entry.id)
     setFocusedDraftId(null)
     setReaderMode('reply')

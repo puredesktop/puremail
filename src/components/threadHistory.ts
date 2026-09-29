@@ -47,10 +47,10 @@ export function buildThreadHistoryEntries(
     )
     entries.push({
       id: message.id,
-      // A draft the provider hands back is still an unsent draft, however it
-      // reached us. Reading "from me" as "sent" is what let a reply drafted
-      // by another client sit in the timeline claiming it had gone out.
-      kind: message.isDraft ? 'draft' : 'message',
+      // Kind identifies the backing record for navigation; state describes
+      // delivery. A provider draft is still a message record, not a local
+      // Draft id. Keep it readable without claiming it was sent.
+      kind: 'message',
       state: message.isDraft ? 'draft' : outgoing ? 'sent' : 'received',
       at: message.receivedAt,
       sender: message.from.name || message.from.email,
