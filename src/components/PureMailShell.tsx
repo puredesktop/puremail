@@ -1,3 +1,4 @@
+import type { InviteActionState } from '../types'
 import { useThreadMessageSelection } from './useThreadMessageSelection'
 import { mailSettingsPatch } from '../lib/mailSettingsPatch'
 import { useAppSettings } from '@purescience/platform-bridge/components/settings/AppSettings'
@@ -2173,12 +2174,18 @@ export function PureMailShell({
     await provider.send({ draft: rsvp, threadId: message.threadId })
   }
 
+  const [inviteActionState, setInviteActionState] = useState<InviteActionState | null>(null)
   const inviteResponseBusyRef = useRef(false)
   const openCalendarInviteForMessage = async (
     message: MailMessage,
     response?: CalendarInviteResponse,
   ): Promise<void> => {
     if (!selectedThread || inviteResponseBusyRef.current) return
+    const rsvpResponse = isInviteRsvpResponse(response) ? response : undefined
+    const feedback = (status: InviteActionState['status'], text: string): void => {
+      setInviteActionState({ messageId: message.id, status, message: text, response: rsvpResponse })
+      if (status !== 'pending') setCommandNotice(text)
+    }
     const intent = createCalendarInviteIntentFromMessage(
       selectedThread,
       message,
@@ -2188,16 +2195,16 @@ export function PureMailShell({
       store.accounts.find(account => account.id === selectedThread.accountId)?.email,
     )
     if (!intent) {
-      setCommandNotice(
-        'This invite file could not be parsed. Nothing was added.',
-      )
+      feedback('error', 'This invite file could not be parsed. Nothing was added.')
       return
     }
     let responseSent = false
     inviteResponseBusyRef.current = true
+    feedback('pending', rsvpResponse ? 'Sending your response…' : 'Adding invitation to Calendar…')
     try {
       await emailInviteRsvpToOrganizer(message, response)
       responseSent = isInviteRsvpResponse(response)
+      if (responseSent) feedback('pending', 'Response sent. Updating Calendar…')
       const current = (await bridge.call(
         PLATFORM_BRIDGE_METHODS.STORAGE_READ_JSON,
         [
@@ -2220,20 +2227,25 @@ export function PureMailShell({
           },
         },
       ])
+      // Keep the delivery result visible in Mail; Calendar consumes the queued intent.
+      if (responseSent) {
+        feedback('success', `${response === 'accepted' ? 'Accepted' : response === 'declined' ? 'Declined' : 'Tentative'} — response sent to the organizer.`)
+        return
+      }
       try {
         await bridge.call(PLATFORM_BRIDGE_METHODS.WORKSPACE_OPEN_APP, [
           { appSlug: 'calendar', resourceId: intent.resourceId },
         ])
       } catch {
-        setCommandNotice(
+        feedback('success',
           responseSent ? 'RSVP sent. Calendar will update when it next opens.' : 'Invitation queued. Calendar will import it when it next opens.',
         )
         return
       }
-      setCommandNotice(isInviteRsvpResponse(response) ? 'RSVP sent; invitation opened in PureCalendar.' : 'Invitation opened in PureCalendar.')
+      feedback('success', 'Invitation opened in PureCalendar.')
     } catch (error) {
       const message = error instanceof Error ? error.message : calendarHandoffErrorMessage(error)
-      setCommandNotice(responseSent ? `RSVP sent, but Calendar could not be updated: ${message}` : `RSVP was not sent: ${message}`)
+      feedback(responseSent ? 'success' : 'error', responseSent ? `RSVP sent, but Calendar could not be updated: ${message}` : `RSVP was not sent: ${message}`)
     } finally {
       inviteResponseBusyRef.current = false
     }
@@ -4609,6 +4621,7 @@ export function PureMailShell({
             archiveSelectedThread={archiveSelectedThread}
             unarchiveSelectedThread={unarchiveSelectedThread}
             addFollowUp={addFollowUp}
+            inviteActionState={inviteActionState}
             openCalendarInvite={openCalendarInvite}
             openCalendarInviteForMessage={openCalendarInviteForMessage}
           />

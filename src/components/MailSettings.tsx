@@ -10,6 +10,7 @@ import {
 } from '../lib/mailFilters'
 import { quoteQueryValue, saveMailView } from '../lib/mailQuery'
 import { Fragment, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Pencil } from 'lucide-react'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { Badge } from '@purescience/platform-ui/components/common/feedback/Badge'
@@ -21,8 +22,7 @@ import {
   disconnectGoogleCredential,
   fetchGoogleCredentialStatus,
   forgetConnectionPasswords,
-  saveImapPassword,
-  saveSmtpPassword,
+  saveConnectionPasswords,
 } from '../bridge/platformBridge'
 import {
   IMAP_ACCOUNT_PRESETS,
@@ -498,11 +498,7 @@ export function MailSettings({
     // own key when provided (Proton Bridge hands out one password per
     // protocol); otherwise sending reuses the IMAP one.
     setSavingAccount(true)
-    const passwordSaves = [saveImapPassword(profileId, imapForm.imapPassword)]
-    if (imapForm.smtpPassword) {
-      passwordSaves.push(saveSmtpPassword(profileId, imapForm.smtpPassword))
-    }
-    void Promise.all(passwordSaves)
+    void saveConnectionPasswords(profileId, imapForm.imapPassword, imapForm.smtpPassword)
       .then(() => {
         persistAccount()
         setImapForm(current => ({
@@ -959,7 +955,7 @@ export function MailSettings({
               )}
             </SettingsCard>
 
-            {providerDrawerOpen && (
+            {providerDrawerOpen && createPortal(
               <SettingsDrawerBackdrop
                 onClick={() => setProviderDrawerOpen(false)}
               >
@@ -1507,7 +1503,8 @@ export function MailSettings({
                     </ConnectionSetupPage>
                   </SettingsDrawerBody>
                 </SettingsDrawer>
-              </SettingsDrawerBackdrop>
+              </SettingsDrawerBackdrop>,
+              document.body,
             )}
 
             <SettingsCard id="settings-fetching">

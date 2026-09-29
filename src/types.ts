@@ -999,3 +999,11 @@ export interface MailRun {
   /** Done runs leave the rail once archived; the record stays. */
   archivedAt?: string
 }
+
+/** Delivery feedback belongs to one invitation, not whichever thread is selected later. */
+export interface InviteActionState {
+  messageId: string
+  status: 'pending' | 'success' | 'error'
+  message: string
+  response?: 'accepted' | 'tentative' | 'declined'
+}

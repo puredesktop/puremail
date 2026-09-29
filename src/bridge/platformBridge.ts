@@ -104,6 +104,16 @@ export async function saveSmtpPassword(
   await saveMailPasswordSecret(smtpPasswordSecretKey(profileId), password)
 }
 
+/** The vault uses read/modify/write: never save a profile's passwords concurrently. */
+export async function saveConnectionPasswords(
+  profileId: string,
+  imapPassword: string,
+  smtpPassword?: string,
+): Promise<void> {
+  await saveImapPassword(profileId, imapPassword)
+  if (smtpPassword) await saveSmtpPassword(profileId, smtpPassword)
+}
+
 /** Best-effort secrets cleanup when a saved connection profile is removed. */
 export async function forgetConnectionPasswords(
   profileId: string,

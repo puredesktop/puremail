@@ -326,6 +326,7 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
 export function bridgeSmtpTransport(config: BridgeTransportConfig): SmtpTransport {
   return {
     async send(rawMime, from, to) {
+      try {
       await callMailTransport('MAIL_TRANSPORT_SMTP_SEND', {
         profileId: config.profileId,
         smtp: config.smtp,
@@ -335,6 +336,13 @@ export function bridgeSmtpTransport(config: BridgeTransportConfig): SmtpTranspor
         to,
         rawMime,
       })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('No stored password under secrets key')) {
+          throw new Error('The saved outgoing-mail password is missing or could not be unlocked. Open Mail settings, edit this connection, and re-save its IMAP and SMTP passwords. For Proton Bridge, use the passwords shown by Bridge. Then retry your response.')
+        }
+        throw error
+      }
     },
   }
 }
