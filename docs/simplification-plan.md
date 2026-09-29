@@ -227,7 +227,7 @@ Worth fixing regardless of the plan:
   handlers. Because the shell exposes manifest tools unfiltered when no
   registration exists, **the model is shown these tools and calls to them
   hang for 90 seconds and then fail.** PureMail would also fail the
-  platform's own `validate-puredesktop-app` check.
+  former app-owned `validate-puredesktop-app` check.
 - Settings nav "Live Mail" points at `settings-live-mail`, which no longer
   exists — scroll-to is a no-op. Five cards have no nav entry.
 - Toggling the attachment filter does not clear the thread selection, so a
