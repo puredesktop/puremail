@@ -3922,6 +3922,8 @@ export const SignatureListRow = styled.div`
 
 /** 50px bar over rail + content: mark, search, account-wide actions. */
 export const MailTopBar = styled.header`
+  position: relative;
+  z-index: 20;
   display: flex;
   height: 50px;
   flex: none;
@@ -3981,22 +3983,99 @@ export const KbdChip = styled.span.attrs(chrome('meta'))`
  * The search results, dropped under the field. Local hits first, then the
  * server-side rows — same content the old sidebar drawer carried.
  */
+export const SearchToolbar = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--puremail-line);
+`
+
+export const SearchSectionTitle = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--platform-colors-text-secondary);
+  span { font-weight: 400; }
+`
+
+export const SearchResultHeading = styled.div`
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  ${Subject} {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  time {
+    flex: none;
+    font-size: 11px;
+    color: var(--platform-colors-text-secondary);
+  }
+  @media (max-width: 600px) {
+    flex-wrap: wrap;
+    gap: 3px;
+    ${Subject} { flex-basis: 100%; }
+  }
+`
+
+export const SearchResultDetail = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  color: var(--platform-colors-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  span:last-child { flex: none; }
+`
+
 export const TopSearchPanel = styled.div`
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   left: 0;
   right: 0;
   z-index: 40;
-  display: grid;
-  gap: 8px;
+  isolation: isolate;
   max-height: min(70vh, calc(100vh - 120px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--platform-colors-border);
-  background: var(--puremail-pane-bg);
-  box-shadow: 0 14px 34px
-    color-mix(in srgb, var(--platform-colors-text) 16%, transparent);
-  padding: 10px 12px 12px;
+  white-space: normal;
+  border: 1px solid var(--puremail-line);
+  border-radius: 8px;
+  background: var(--puremail-message-bg, #fff);
+  color: var(--platform-colors-text);
+  box-shadow: 0 12px 32px color-mix(in srgb, #111827 18%, transparent);
+  padding: 0 0 4px;
+
+  ${SearchResults} {
+    display: block;
+    margin: 0;
+    & + & { border-top: 1px solid var(--puremail-line); }
+    > ${Meta} { padding: 8px 12px; margin: 0; font-size: 12px; }
+  }
+  ${ListButton} {
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 0;
+    & + & { border-top: 1px solid var(--puremail-line); }
+    &:hover, &:focus-visible { background: var(--platform-colors-surface-hover); }
+    &:focus-visible { outline: 2px solid var(--puremail-accent); outline-offset: -2px; }
+    &:disabled { cursor: progress; }
+    ${Subject} { font-size: 13px; font-weight: 600; }
+    ${Meta} { margin-top: 3px; font-size: 11px; line-height: 1.4; }
+  }
+  [aria-label='Query operator builder'] { padding: 10px 12px; border-bottom: 1px solid var(--puremail-line); }
 `
 
 export const TopBarIconButton = styled.button.attrs(chrome('toolbar-control'))<{ $fetching?: boolean }>`

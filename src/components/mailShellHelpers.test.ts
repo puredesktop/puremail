@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assessAiInstructionRisks , formatThreadListTime } from './mailShellHelpers'
+import { assessAiInstructionRisks , formatThreadListTime, mailSystemNotice } from './mailShellHelpers'
 
 /**
  * The settings save boundary: instructions are assessed BEFORE they persist,
@@ -89,5 +89,17 @@ describe('formatThreadListTime', () => {
 
   it('never renders an invalid date', () => {
     expect(formatThreadListTime('not-a-date', now)).toBe('')
+  })
+})
+
+describe('mail system notices', () => {
+  it('does not report successful calendar mirroring as disabled', () => {
+    expect(mailSystemNotice('2 calendar invites mirrored to PureCalendar.')).toBe('')
+    expect(mailSystemNotice('Calendar invite mirrored to PureCalendar.')).toBe('')
+  })
+  it('preserves actual permission and calendar failures', () => {
+    const notice = 'Calendar handoff permission is missing.'
+    expect(mailSystemNotice(notice)).toBe(notice)
+    expect(mailSystemNotice('Could not open calendar handoff.')).toContain('Could not')
   })
 })

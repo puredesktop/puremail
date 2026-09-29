@@ -163,7 +163,7 @@ Query syntax is the same string the user types in the search box:
 
 Local search covers the synced window; `searchAllMail` reaches the
 provider server-side beyond it, and `getThread` can import an
-out-of-window result before reading it (Gmail accounts only — see
+out-of-window result before reading it (Gmail and IMAP accounts — see
 Providers).
 
 ## Providers
@@ -179,9 +179,9 @@ differently and say so in their results:
   and `fileThread` (or `applyMailAction` with `move`) moves the thread
   to that folder on the server.
 - **searchAllMail** works on both: Gmail search syntax verbatim on
-  Gmail; plain-text search across every folder on IMAP. On Gmail an
-  out-of-window hit can be imported with `getThread`; on IMAP it cannot
-  — relay its subject, sender, and date instead.
+  Gmail; plain-text search across every folder on IMAP. On both providers an
+  out-of-window hit can be imported with `getThread`. IMAP imports the matched
+  message and follows its reference headers to retrieve the conversation.
 - **Snooze** is app-local on every provider; archive, trash,
   read/unread, and move reach the server on both.
 

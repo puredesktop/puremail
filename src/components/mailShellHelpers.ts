@@ -445,3 +445,10 @@ export function threadSyncLabel(thread: MailThread): string | null {
   if (thread.syncState === 'conflict') return 'sync conflict'
   return null
 }
+
+/** Only failures belong in the system warning; successful handoffs do not. */
+export function mailSystemNotice(notice: string): string {
+  const relevant = /permission|bridge|handoff|calendar/i.test(notice)
+  const failed = /missing|denied|failed|could not|cannot|not allowed|unavailable|error/i.test(notice)
+  return relevant && failed ? notice : ''
+}

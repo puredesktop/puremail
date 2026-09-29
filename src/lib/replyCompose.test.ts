@@ -293,3 +293,12 @@ describe('contactsToComposeInput', () => {
     ).toBe('Sarah Example <sarah@design.example>, ben@example.org')
   })
 })
+
+describe('sent-message reply addressing', () => {
+  it('replies to the original recipient even when a sent message has an owned Reply-To', () => {
+    const sent = message({from: {name: 'Alex', email: OWNER[0]},
+      replyTo: [{name: 'Alex', email: OWNER[0]}],
+      to: [{name: 'Sarah', email: 'sarah@design.example'}, {name:'Alex',email:OWNER[0]}]})
+    expect(replyToContacts(sent, OWNER)).toEqual([{name:'Sarah',email:'sarah@design.example'}])
+  })
+})

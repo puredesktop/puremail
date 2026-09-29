@@ -35,6 +35,7 @@ export function stripHtmlToText(html?: string): string {
 function stripQuotedHtmlHistory(html?: string): {
   html: string
   stripped: string[]
+  quotedHtml?: string
 } {
   if (!html) return { html: '', stripped: [] }
   const quoteBoundaries: Array<{ label: string; pattern: RegExp }> = [
@@ -70,6 +71,7 @@ function stripQuotedHtmlHistory(html?: string): {
   return {
     html: cutAt < html.length ? html.slice(0, cutAt) : html,
     stripped: [...new Set(stripped)],
+    ...(cutAt < html.length ? { quotedHtml: html.slice(cutAt) } : {}),
   }
 }
 
@@ -178,7 +180,15 @@ export function readerMailBody(message: MailMessage): ReaderMailBody {
   const fullText = readerMailFullText(message)
   const cleaned = cleanMailMessageText(message)
   const cleanedVisibleText = cleaned.text || fullText
-  const segments = readerMailBodySegments(fullText, cleanedVisibleText, cleaned)
+  const htmlHistory = stripQuotedHtmlHistory(message.bodyHtml)
+  // Partition the source before cleaning it. Subtracting cleaned text from
+  // full text fails when whitespace or signature removal changes the prefix.
+  const segments: ReaderMailBody['segments'] = htmlHistory.quotedHtml
+    ? [
+        { type: 'text', text: compactMailText(stripHtmlToText(htmlHistory.html).split('\n').map(line => line.trim()).join('\n')) },
+        { type: 'quote', text: compactMailText(stripHtmlToText(htmlHistory.quotedHtml)), label: 'Quoted history' },
+      ].filter(segment => segment.text) as ReaderMailBody['segments']
+    : readerMailBodySegments(fullText, cleanedVisibleText, cleaned)
   const visibleText =
     compactMailText(
       segments

@@ -183,6 +183,8 @@ export interface MailMessage {
   isDraft?: boolean
   /** RFC 5322 Message-ID header, used for In-Reply-To/References on replies. */
   messageIdHeader?: string
+  inReplyTo?: string
+  references?: string[]
   from: MailContact
   /** RFC 5322 Reply-To: where the sender asked replies to go, when set. */
   replyTo?: MailContact[]
@@ -768,6 +770,8 @@ export interface ImapAccountSettings {
 }
 
 export interface MailSyncCoverage {
+  /** Message-level date window, distinct from whole-thread fetch coverage. */
+  messagesCoveredFrom?: string
   /**
    * ISO timestamp. When the fetch hit its thread cap, only threads with
    * lastMessageAt >= coveredFrom were fully listed; older local threads must
@@ -826,6 +830,8 @@ export interface MailProvider {
   ): Promise<Attachment>
   fetchThreadById?(
     threadId: string,
+    cachedMessages?: MailMessage[],
+    signal?: AbortSignal,
   ): Promise<{ threads: MailThread[]; messages: MailMessage[] } | null>
   searchThreadSummaries?(
     query: string,

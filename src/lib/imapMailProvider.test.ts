@@ -810,3 +810,110 @@ describe('paging through the fetch window', () => {
     expect(calls.length).toBeGreaterThan(1)
   })
 })
+
+describe('older thread hydration', () => {
+  it('stops server lookups when the reader moves away', async () => {
+    const imap = fakeImap()
+    const p = provider(imap).provider
+    const initial = await p.fetchStore()
+    const controller = new AbortController()
+    let calls = 0
+    imap.fetchMessages = async () => {
+      calls += 1
+      controller.abort()
+      return []
+    }
+    await expect(p.fetchThreadById(initial.threads[0]!.id, [], controller.signal)).rejects.toThrow()
+    expect(calls).toBe(1)
+  })
+
+  it('loads an older original across folders without importing an unrelated same-subject message', async () => {
+    const imap = fakeImap()
+    const root = imap.boxes.get('INBOX')![0]!
+    const reply = imap.boxes.get('INBOX')![1]!
+    imap.boxes.set('INBOX', [reply, { ...root, uid: 9, messageId: '<unrelated@ext>' }])
+    imap.boxes.set('Sent', [{ ...root, uid: 10 }])
+    const requests: Array<{ since?: string; header?: string }> = []
+    imap.fetchMessages = async (path, limit = 200, since, before, header) => {
+      requests.push({ since, header: header ? 'headers' : undefined })
+      return (imap.boxes.get(path) ?? []).filter(item => {
+        if (since) return item.messageId === reply.messageId
+        if (before !== undefined && item.uid >= before) return false
+        if (!header) return true
+        return (Array.isArray(header) ? header : [header]).some(filter => {
+          const values = filter.name === 'Message-ID' ? [item.messageId] : filter.name === 'In-Reply-To' ? [item.inReplyTo] : item.references ?? []
+          return values.includes(filter.value)
+        })
+      }).slice(-limit)
+    }
+    const p = provider(imap).provider
+    const initial = await p.fetchStore()
+    const id = initial.threads[0]!.id
+    expect(initial.messages).toHaveLength(1)
+    const fragment = await p.fetchThreadById(id)
+    expect(fragment?.messages.map(item => item.messageIdHeader).sort()).toEqual(['<reply@ext>', '<root@ext>'])
+    expect(fragment?.messages.every(item => item.threadId === id)).toBe(true)
+    expect(requests.filter(item => item.header).every(item => item.since === undefined)).toBe(true)
+    const hydrated = { ...initial, messages: [
+      ...fragment!.messages,
+      { ...fragment!.messages[0]!, id: 'deleted-recent-message', receivedAt: new Date().toISOString() },
+    ] }
+    const refreshed = await p.sync(hydrated)
+    const merged = mergeMailProviderSyncResult(hydrated, refreshed)
+    expect(merged.messages.map(item => item.messageIdHeader).sort()).toEqual(['<reply@ext>', '<root@ext>'])
+    await p.markThreadRead(id, true)
+    expect(imap.boxes.get('Sent')![0]!.flags).toContain('\\Seen')
+  })
+
+  it('uses persisted header seeds before the first provider sync', async () => {
+    const { provider: p } = provider()
+    const fragment = await p.fetchThreadById('persisted-thread', [{
+      id: 'cached', threadId: 'persisted-thread', messageIdHeader: '<reply@ext>',
+      from: { name: 'A', email: 'a@example.com' }, to: [], subject: 'Reply',
+      body: '', receivedAt: '2026-09-29T10:00:00Z', attachments: [], read: true,
+    }])
+    expect(fragment?.messages).toHaveLength(2)
+    expect(fragment?.threads[0]?.id).toBe('persisted-thread')
+  })
+})
+
+describe('opening server-only search results', () => {
+  function remoteProvider(messageId?: string) {
+    const imap = fakeImap()
+    const original = { ...imap.boxes.get('INBOX')![0]!, uid: 777, messageId, inReplyTo: undefined, references: undefined }
+    imap.boxes.set('Archive', [original])
+    imap.searchAll = async () => [{ folderPath: 'Archive', ...original }]
+    imap.fetchMessages = async (path, _limit, since, _before, headers, uids) => {
+      if (since) return []
+      const filters = headers ? (Array.isArray(headers) ? headers : [headers]) : []
+      return (imap.boxes.get(path) ?? []).filter(item => uids ? uids.includes(item.uid) : filters.some(header => item.messageId === header.value))
+    }
+    return { ...provider(imap), original }
+  }
+  it.each([undefined, '<old-search@example.com>'])('imports a search hit by UID (Message-ID: %s)', async messageId => {
+    const { provider: p, imap } = remoteProvider(messageId)
+    await p.fetchStore()
+    const [hit] = await p.searchThreadSummaries('invoice')
+    expect(hit!.inLocalWindow).toBe(false)
+    const fragment = await p.fetchThreadById(hit!.threadId)
+    expect(fragment?.messages).toHaveLength(1)
+    expect(fragment?.messages[0]?.id).toBe('imap_msg_Archive_777')
+    expect(fragment?.messages[0]?.body).toContain('Invoice attached')
+    expect((await p.searchThreadSummaries('invoice'))[0]?.inLocalWindow).toBe(true)
+    await p.markThreadRead(hit!.threadId, true)
+    expect(imap.boxes.get('Archive')![0]!.flags).toContain('\\Seen')
+  })
+  it('reports a result removed from the server instead of opening an empty reader', async () => {
+    const { provider: p, imap } = remoteProvider()
+    await p.fetchStore()
+    const [hit] = await p.searchThreadSummaries('invoice')
+    imap.boxes.set('Archive', [])
+    await expect(p.fetchThreadById(hit!.threadId)).rejects.toThrow('no longer in its server folder')
+  })
+  it('does not confuse identical UIDs in different folders without Message-ID', async () => {
+    const { provider: p, imap, original } = remoteProvider()
+    imap.searchAll = async () => ['Archive', 'Sent'].map(folderPath => ({ folderPath, ...original }))
+    const hits = await p.searchThreadSummaries('invoice')
+    expect(new Set(hits.map(hit => hit.threadId)).size).toBe(2)
+  })
+})
