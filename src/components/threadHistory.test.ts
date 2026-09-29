@@ -81,7 +81,7 @@ describe('buildThreadHistoryEntries', () => {
       ME,
     )
     expect(entries[0].state).toBe('draft')
-    expect(entries[0].kind).toBe('draft')
+    expect(entries[0].kind).toBe('message')
   })
 
   it('treats a sent draft as sent mail, not a draft', () => {

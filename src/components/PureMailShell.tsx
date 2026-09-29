@@ -1,3 +1,4 @@
+import { useThreadMessageSelection } from './useThreadMessageSelection'
 import { mailSettingsPatch } from '../lib/mailSettingsPatch'
 import { useAppSettings } from '@purescience/platform-bridge/components/settings/AppSettings'
 import { createTypedTriageRunner } from '../lib/typedTriage'
@@ -545,9 +546,6 @@ export function PureMailShell({
   const composeOpenRef = useRef(false)
   composeOpenRef.current = composeHoldsDraft(composeMode)
   const [readerMode, setReaderMode] = useState<'email' | 'reply'>('email')
-  const [activeMessageTabId, setActiveMessageTabId] = useState<string | null>(
-    null,
-  )
   const [activeReplyDraftId, setActiveReplyDraftId] = useState<string | null>(
     null,
   )
@@ -897,6 +895,11 @@ export function PureMailShell({
     .sort((a, b) =>
       replyDraftTimestamp(b).localeCompare(replyDraftTimestamp(a)),
     )
+  const [activeMessageTabId, setActiveMessageTabId] = useThreadMessageSelection(
+    selectedThreadId,
+    selectedMessageTabs,
+    focusedMessageId,
+  )
   const activeMessageTab =
     selectedMessageTabs.find(message => message.id === activeMessageTabId) ??
     selectedMessageTabs[0] ??
@@ -977,39 +980,6 @@ export function PureMailShell({
     setActiveReplyDraftId(null)
     setFocusedDraftId(null)
   }, [selectedThreadId])
-
-  useEffect(() => {
-    const conversationKey = selectedThread
-      ? conversationKeyForThread(selectedThread)
-      : null
-    const threadIds = conversationKey
-      ? store.threads
-          .filter(
-            thread => conversationKeyForThread(thread) === conversationKey,
-          )
-          .map(thread => thread.id)
-      : selectedThreadId
-      ? [selectedThreadId]
-      : []
-    const selectedThreadMessages = store.messages
-      .filter(message => threadIds.includes(message.threadId))
-      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
-    if (
-      focusedMessageId &&
-      selectedThreadMessages.some(message => message.id === focusedMessageId)
-    ) {
-      setActiveMessageTabId(focusedMessageId)
-      setReaderMode('email')
-      return
-    }
-    setActiveMessageTabId(selectedThreadMessages[0]?.id ?? null)
-  }, [
-    focusedMessageId,
-    selectedThread,
-    selectedThreadId,
-    store.messages,
-    store.threads,
-  ])
 
   useEffect(() => {
     if (!selectedAccount) return
@@ -2457,6 +2427,7 @@ export function PureMailShell({
     }
     setSelectedThreadId(thread.id)
     setFocusedMessageId(messageId)
+    setReaderMode('email')
     // Selecting a thread ENTERS reading: the list and the reader are
     // mutually exclusive surfaces, so opening is a navigation, not a
     // selection change beside a persistent pane.
