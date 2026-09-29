@@ -19,7 +19,7 @@ function invite(overrides: Partial<MailCalendarInvite> = {}): MailCalendarInvite
     endsAt: '2026-07-10T10:30:00.000Z',
     timeZone: 'UTC',
     organizer: { name: 'Orla Organizer', email: 'organizer@example.com' },
-    attendees: [],
+    attendees: [{ email: 'alex@alternate.example', name: 'User', response: 'needsAction' }],
     rawSource: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n',
     ...overrides,
   }
@@ -44,6 +44,11 @@ describe('isInviteRsvpResponse', () => {
 })
 
 describe('buildInviteRsvpDraft', () => {
+  it('does not answer a cancelled or forwarded invitation as an unrelated account', () => {
+    expect(buildInviteRsvpDraft({ ...BASE_INPUT, invite: invite({ status: 'cancelled' }) })).toBeNull()
+    expect(buildInviteRsvpDraft({ ...BASE_INPUT, account: { email: 'uninvited@example.com', name: 'Other' } })).toBeNull()
+  })
+
   it('addresses the organizer with a response-prefixed subject and one-line body', () => {
     const draft = buildInviteRsvpDraft(BASE_INPUT)
 

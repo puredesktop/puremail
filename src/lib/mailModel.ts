@@ -833,6 +833,7 @@ export function createCalendarInviteIntentFromMessage(
   response?: CalendarInviteResponse,
   now = new Date().toISOString(),
   autoCreate = false,
+  responderEmail?: string,
 ): CalendarInviteIntent | null {
   const invite = calendarInviteForMessage(message)
   if (!invite) return null
@@ -867,7 +868,9 @@ export function createCalendarInviteIntentFromMessage(
     endsAt: invite.endsAt,
     timeZone: invite.timeZone,
     organizer: invite.organizer,
-    attendees: invite.attendees,
+    attendees: invite.attendees.map(attendee =>
+      response && responderEmail && attendee.email.trim().toLowerCase() === responderEmail.trim().toLowerCase()
+        ? { ...attendee, response } : attendee),
     recurrenceRule: invite.recurrenceRule,
     response,
     autoCreate,

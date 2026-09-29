@@ -2144,13 +2144,7 @@ export function PureMailShell({
     setCommandNotice('Thread task created.')
   }
 
-  /**
-   * iMIP leg of an invite response: mail a METHOD:REPLY ICS back to the
-   * organizer so external calendars see the RSVP. Best-effort — the local
-   * calendar intent has already succeeded, so failures only surface a
-   * notice and never roll anything back. Demo accounts have no outbound
-   * mail, so they skip silently.
-   */
+  /** Send the reply before recording a successful response in Calendar. */
   const emailInviteRsvpToOrganizer = async (
     message: MailMessage,
     response: CalendarInviteResponse | undefined,
@@ -2160,15 +2154,14 @@ export function PureMailShell({
     // compose can send it. This was hard-gated to Gmail, so a non-Gmail
     // user's RSVP updated their calendar and silently never reached the
     // organizer.
-    if (activeProvider === 'demo') return
+    if (activeProvider === 'demo') throw new Error('Connect the invitation’s mail account to send a response.')
     const provider = mailProviderRef.current
-    if (!provider || !mailProviderSupports(provider, 'compose')) return
-    const account = storeRef.current.accounts.find(
-      item => item.provider === activeProvider,
-    )
-    if (!account?.email) return
+    if (!provider || !mailProviderSupports(provider, 'compose')) throw new Error('This account cannot send an RSVP.')
+    const thread = storeRef.current.threads.find(item => item.id === message.threadId)
+    const account = storeRef.current.accounts.find(item => item.id === thread?.accountId)
+    if (!account?.email) throw new Error('The invitation account is unavailable.')
     const invite = calendarInviteForMessage(message)
-    if (!invite) return
+    if (!invite) throw new Error('The invitation could not be read.')
     const rsvp = buildInviteRsvpDraft({
       invite,
       response,
@@ -2176,29 +2169,23 @@ export function PureMailShell({
       threadId: message.threadId,
       timestamp: new Date().toISOString(),
     })
-    if (!rsvp) return
-    try {
-      await provider.send({ draft: rsvp, threadId: message.threadId })
-    } catch (error) {
-      setCommandNotice(
-        `Could not email your RSVP to the organizer: ${
-          error instanceof Error ? error.message : 'Unknown send error.'
-        }`,
-      )
-    }
+    if (!rsvp) throw new Error('This invitation cannot be answered by this account.')
+    await provider.send({ draft: rsvp, threadId: message.threadId })
   }
 
+  const inviteResponseBusyRef = useRef(false)
   const openCalendarInviteForMessage = async (
     message: MailMessage,
     response?: CalendarInviteResponse,
   ): Promise<void> => {
-    if (!selectedThread) return
+    if (!selectedThread || inviteResponseBusyRef.current) return
     const intent = createCalendarInviteIntentFromMessage(
       selectedThread,
       message,
       response,
       new Date().toISOString(),
       true,
+      store.accounts.find(account => account.id === selectedThread.accountId)?.email,
     )
     if (!intent) {
       setCommandNotice(
@@ -2206,7 +2193,11 @@ export function PureMailShell({
       )
       return
     }
+    let responseSent = false
+    inviteResponseBusyRef.current = true
     try {
+      await emailInviteRsvpToOrganizer(message, response)
+      responseSent = isInviteRsvpResponse(response)
       const current = (await bridge.call(
         PLATFORM_BRIDGE_METHODS.STORAGE_READ_JSON,
         [
@@ -2235,16 +2226,16 @@ export function PureMailShell({
         ])
       } catch {
         setCommandNotice(
-          'PureCalendar is not available. The invite file was not added.',
+          responseSent ? 'RSVP sent. Calendar will update when it next opens.' : 'Invitation queued. Calendar will import it when it next opens.',
         )
         return
       }
-      setCommandNotice('Calendar invite added to PureCalendar.')
-      // Never throws — RSVP failures surface their own notice and must not
-      // disturb the already-recorded local response.
-      await emailInviteRsvpToOrganizer(message, response)
+      setCommandNotice(isInviteRsvpResponse(response) ? 'RSVP sent; invitation opened in PureCalendar.' : 'Invitation opened in PureCalendar.')
     } catch (error) {
-      setCommandNotice(calendarHandoffErrorMessage(error))
+      const message = error instanceof Error ? error.message : calendarHandoffErrorMessage(error)
+      setCommandNotice(responseSent ? `RSVP sent, but Calendar could not be updated: ${message}` : `RSVP was not sent: ${message}`)
+    } finally {
+      inviteResponseBusyRef.current = false
     }
   }
 
@@ -2479,6 +2470,20 @@ export function PureMailShell({
       if (editableDraft) openDraftInComposeWindow(editableDraft)
     }
   }
+
+  useEffect(() => bridge.onEvent(PLATFORM_BRIDGE_EVENTS.RESOURCE_OPEN, payload => {
+    const path = (payload as { path?: string })?.path
+    const prefix = 'purescience://mail/invitation/'
+    if (!path?.startsWith(prefix)) return
+    try {
+      const [threadId, messageId] = path.slice(prefix.length).split('/').map(decodeURIComponent)
+      if (!storeRef.current.threads.some(thread => thread.id === threadId)) {
+        setCommandNotice('This invitation is not loaded. Search Mail for the original invitation to respond.')
+        return
+      }
+      openThread(threadId, messageId || null)
+    } catch { setCommandNotice('Could not open this invitation.') }
+  }), [queryResult.entries])
 
   const openTaskSource = (task: MailTask): void => {
     const target = resolveMailTaskSourceTarget(store, task)
