@@ -41,7 +41,7 @@ export const fastTipCss = css`
     z-index: 40;
     padding: 4px 7px;
     background: var(--platform-colors-text);
-    color: var(--platform-colors-bg);
+    color: var(--platform-colors-text-inverse);
     font-family: var(--platform-typography-font-family);
     font-size: var(--pure-chrome-meta-size);
     font-weight: 500;
@@ -412,7 +412,7 @@ export const DockedTaskDrawerBody = styled.div`
   max-height: calc(4 * 38px);
   flex: 1 1 auto;
   overflow: auto;
-  background: var(--puremail-message-bg);
+  background: var(--glass-well);
 `
 
 /**
@@ -727,6 +727,10 @@ export const ReaderHeaderBand = styled.header`
   border-bottom: 1px solid var(--puremail-line);
   background: var(--puremail-pane-header-bg);
   padding: 22px 40px;
+
+  :root[data-platform-appearance='white']:not([data-platform-theme='dark']) & {
+    background: var(--platform-colors-surface);
+  }
 
   @media (max-width: 720px) {
     padding: 22px 24px;
@@ -4246,7 +4250,7 @@ export const ContentColumn = styled.main`
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  background: var(--puremail-message-bg);
+  background: var(--glass-panel);
 `
 
 /** 44px list header: selection, refresh, view name — or the bulk toolbar. */
