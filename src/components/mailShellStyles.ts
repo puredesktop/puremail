@@ -3150,10 +3150,12 @@ export const ComposeScreen = styled.section`
 export const SettingsDrawerBackdrop = styled.div`
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: calc(var(--platform-z-index-zi-app-modal, 300) + 1);
+  isolation: isolate;
   display: flex;
   justify-content: flex-end;
-  background: color-mix(in srgb, var(--platform-colors-bg) 74%, transparent);
+  background: rgb(15 23 42 / 0.28);
+  backdrop-filter: blur(4px);
 `
 
 export const SettingsDrawer = styled.aside`
@@ -3163,7 +3165,14 @@ export const SettingsDrawer = styled.aside`
   height: 100%;
   min-width: 0;
   border-left: 1px solid var(--platform-colors-border);
-  background: var(--platform-colors-surface);
+  /* The theme's surface token is translucent; credential forms need a solid canvas. */
+  color-scheme: light;
+  background: Canvas;
+  color: CanvasText;
+
+  :root[data-platform-theme='dark'] & {
+    color-scheme: dark;
+  }
   box-shadow: -18px 0 48px color-mix(in srgb, black 18%, transparent);
 `
 

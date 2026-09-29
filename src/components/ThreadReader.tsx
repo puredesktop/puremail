@@ -1,3 +1,4 @@
+import type { InviteActionState } from '../types'
 import {
   Fragment,
   memo,
@@ -350,6 +351,7 @@ export interface ThreadReaderProps {
   archiveSelectedThread: () => void
   unarchiveSelectedThread: () => void
   addFollowUp: () => void
+  inviteActionState: InviteActionState | null
   openCalendarInvite: (response?: CalendarInviteResponse) => Promise<void>
   openCalendarInviteForMessage: (
     message: MailMessage,
@@ -464,6 +466,7 @@ export function ThreadReader({
   archiveSelectedThread,
   unarchiveSelectedThread,
   addFollowUp,
+  inviteActionState,
   openCalendarInvite,
   openCalendarInviteForMessage,
 }: ThreadReaderProps): React.ReactElement {
@@ -1274,8 +1277,11 @@ export function ThreadReader({
         ? selectedInvite.attendees[0]
         : undefined)
     : undefined
-  const inviteResponse =
-    inviteAttendee && inviteAttendee.response !== 'needsAction'
+  const inviteAction = inviteActionState?.messageId === selectedInviteMessage?.id ? inviteActionState : null
+  const inviteBusy = inviteActionState?.status === 'pending'
+  const inviteResponse = inviteAction?.status === 'success' && inviteAction.response
+    ? inviteAction.response
+    :     inviteAttendee && inviteAttendee.response !== 'needsAction'
       ? inviteAttendee.response
       : null
   const inviteTone: InviteStatusTone =
@@ -2046,6 +2052,7 @@ export function ThreadReader({
                   <BulkMenuWrap ref={inviteChangeRef}>
                     <ReaderDetailsButton
                       type="button"
+                      disabled={inviteBusy}
                       aria-haspopup="menu"
                       aria-expanded={inviteChangeOpen}
                       onClick={() => setInviteChangeOpen(open => !open)}
@@ -2080,12 +2087,13 @@ export function ThreadReader({
                   </BulkMenuWrap>
                 </InviteStatusRow>
               )}
-              <InviteCardActions>
+              <InviteCardActions aria-busy={inviteBusy}>
                 {/* A cancellation is not something to accept or decline —
                     the only action left is reconciling the calendar. */}
                 {selectedInvite.status === 'cancelled' ? (
                   <Button
                     size="sm"
+                      disabled={inviteBusy}
                     variant="primary"
                     onClick={() => void openCalendarInvite()}
                   >
@@ -2095,6 +2103,7 @@ export function ThreadReader({
                   <>
                     <Button
                       size="sm"
+                      disabled={inviteBusy}
                       variant="primary"
                       onClick={() => void openCalendarInvite()}
                     >
@@ -2102,6 +2111,7 @@ export function ThreadReader({
                     </Button>
                     <Button
                       size="sm"
+                      disabled={inviteBusy}
                       onClick={() => void openCalendarApp()}
                     >
                       Open in PureCalendar
@@ -2111,25 +2121,29 @@ export function ThreadReader({
                   <>
                     <Button
                       size="sm"
+                      disabled={inviteBusy}
                       variant="primary"
                       onClick={() => void openCalendarInvite('accepted')}
                     >
-                      Accept
+                      {inviteBusy && inviteAction?.response === 'accepted' ? 'Sending…' : 'Accept'}
                     </Button>
                     <Button
                       size="sm"
+                      disabled={inviteBusy}
                       onClick={() => void openCalendarInvite('tentative')}
                     >
-                      Maybe
+                      {inviteBusy && inviteAction?.response === 'tentative' ? 'Sending…' : 'Maybe'}
                     </Button>
                     <Button
                       size="sm"
+                      disabled={inviteBusy}
                       onClick={() => void openCalendarInvite('declined')}
                     >
-                      Decline
+                      {inviteBusy && inviteAction?.response === 'declined' ? 'Sending…' : 'Decline'}
                     </Button>
                     <Button
                       size="sm"
+                      disabled={inviteBusy}
                       onClick={() => void openCalendarInvite()}
                     >
                       Add to calendar
@@ -2140,6 +2154,12 @@ export function ThreadReader({
                   <InviteCardNote>no event description</InviteCardNote>
                 )}
               </InviteCardActions>
+              {inviteAction && (
+                <div role={inviteAction.status === 'error' ? 'alert' : 'status'}
+                  style={{ marginTop: 10, fontSize: 13, color: inviteAction.status === 'error' ? 'var(--platform-colors-danger)' : 'var(--platform-colors-text)' }}>
+                  {inviteAction.message}
+                </div>
+              )}
             </InviteCard>
           )}
           {activeMessageTab ? (
