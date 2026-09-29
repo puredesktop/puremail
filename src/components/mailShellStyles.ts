@@ -737,7 +737,7 @@ export const ReaderHeaderBand = styled.header`
 export const ReaderStateLine = styled.div`
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: 6px 8px;
   min-width: 0;
   margin-bottom: 10px;
@@ -993,8 +993,9 @@ export const HistoryFilterRow = styled.div`
 
 export const HistoryRowList = styled.div`
   min-height: 0;
-  /* ~7 rows before it scrolls. */
-  max-height: 252px;
+  /* Include the month header as well as seven message rows. */
+  max-height: min(320px, 50vh);
+  scrollbar-gutter: stable;
   overflow-y: auto;
 `
 

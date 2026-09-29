@@ -193,7 +193,9 @@ export function ThreadHistoryPopover({
       >
         {groups.map(group => (
           <div key={group.label}>
-            <HistoryMonthLabel>{group.label}</HistoryMonthLabel>
+            <HistoryMonthLabel title={`Times in ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}>
+              {group.label} · {Intl.DateTimeFormat().resolvedOptions().timeZone}
+            </HistoryMonthLabel>
             {group.entries.map(entry => (
               <HistoryRow
                 key={entry.id}
@@ -219,7 +221,9 @@ export function ThreadHistoryPopover({
         ))}
       </HistoryRowList>
       <HistoryFooter>
-        showing {rows.length} of {filtered.length}
+        {filter === 'all'
+          ? `${rows.length} of ${entries.length} loaded`
+          : `${rows.length} ${filter} · ${entries.length} total`}
         <HistoryFooterLink type="button" onClick={onOpenThreadView}>
           Open thread view →
         </HistoryFooterLink>
