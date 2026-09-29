@@ -79,9 +79,10 @@ export function buildInviteRsvpDraft(input: InviteRsvpInput): Draft | null {
   const { invite, response, account } = input
   const organizerEmail = invite.organizer?.email.trim() ?? ''
   if (!organizerEmail) return null
-  if (invite.method !== 'REQUEST') return null
+  if (invite.method !== 'REQUEST' || invite.status === 'cancelled') return null
   const accountEmail = account.email.trim()
-  if (!accountEmail) return null
+  if (!accountEmail || !invite.attendees.some(attendee =>
+    attendee.email.trim().toLowerCase() === accountEmail.toLowerCase())) return null
 
   const organizerName = invite.organizer?.name.trim() ?? ''
   const attendeeName = accountDisplayName(account)
