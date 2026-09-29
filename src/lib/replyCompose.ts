@@ -106,11 +106,11 @@ export function replyToContacts(
   message: MailMessage,
   ownerEmails: string[],
 ): MailContact[] {
-  if (message.replyTo && message.replyTo.length > 0) return message.replyTo
   const own = identitySet(ownerEmails)
   if (own.has(contactKey(message.from))) {
     return message.to.filter(contact => !own.has(contactKey(contact)))
   }
+  if (message.replyTo && message.replyTo.length > 0) return message.replyTo
   return [message.from]
 }
 

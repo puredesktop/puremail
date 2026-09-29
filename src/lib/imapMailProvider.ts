@@ -98,6 +98,8 @@ export interface ImapTransport {
     since?: string,
     /** Paging cursor: only messages with a UID below this one. */
     beforeUid?: number,
+    headerSearch?: { name: string; value: string } | Array<{ name: string; value: string }>,
+    uids?: number[],
   ): Promise<ImapEnvelope[]>
   setFlag(
     folderPath: string,
@@ -213,7 +215,7 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
         ...(folder.specialUse === '\\All' ? { virtual: true } : {}),
       }))
     },
-    async fetchMessages(folderPath, limit, since, beforeUid) {
+    async fetchMessages(folderPath, limit, since, beforeUid, headerSearch, uids) {
       const messages = (await callMailTransport(
         'MAIL_TRANSPORT_FETCH_MESSAGES',
         {
@@ -221,6 +223,8 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
           folderPath,
           limit,
           ...(since ? { since } : {}),
+          ...(headerSearch ? { headerSearch } : {}),
+          ...(uids ? { uids } : {}),
           ...(typeof beforeUid === 'number' ? { beforeUid } : {}),
         },
       )) as Array<{
@@ -471,6 +475,7 @@ export class ImapMailProvider implements MailProvider {
     bulkActions: false,
   }
 
+  private remoteHits = new Map<string, { folderPath: string; uid: number }>()
   private store: MailStore | null = null
   private folders: ImapFolder[] = []
   private locations = new Map<string, ThreadLocation[]>()
@@ -658,6 +663,8 @@ export class ImapMailProvider implements MailProvider {
           ...(envelope.messageId
             ? { messageIdHeader: envelope.messageId }
             : {}),
+          inReplyTo: envelope.inReplyTo,
+          references: envelope.references,
           from: envelope.from,
           to: envelope.to,
           ...(envelope.cc?.length ? { cc: envelope.cc } : {}),
@@ -720,12 +727,108 @@ export class ImapMailProvider implements MailProvider {
       messages,
       drafts,
       starredThreadIds,
+      syncCoverage: { messagesCoveredFrom: windowStart },
     }
     return this.store
   }
 
+  async fetchThreadById(threadId: string, cachedMessages: MailMessage[] = [], signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const seeds = [...cachedMessages, ...(this.store?.messages ?? [])].filter(message => message.threadId === threadId)
+    const pending = new Set<string>()
+    const addId = (value?: string) => { const id = normalizeMessageId(value); if (id) pending.add(id) }
+    for (const message of seeds) {
+      addId(message.messageIdHeader)
+      addId(message.inReplyTo)
+      message.references?.forEach(addId)
+    }
+    const remoteHit = this.remoteHits.get(threadId)
+    if (!pending.size && !remoteHit) return null
+    await this.options.imap.connect()
+    const folders = await this.options.imap.listFolders()
+    const found = new Map<string, ImapEnvelope[]>()
+    if (remoteHit) {
+      const envelope = (await this.options.imap.fetchMessages(remoteHit.folderPath, 1, undefined, undefined, undefined, [remoteHit.uid]))
+        .find(message => message.uid === remoteHit.uid)
+      if (!envelope) throw new Error('This message is no longer in its server folder. Search again to find its current location.')
+      found.set(remoteHit.folderPath, [envelope])
+      addId(envelope.messageId)
+      addId(envelope.inReplyTo)
+      envelope.references?.forEach(addId)
+    }
+    const searched = new Set<string>()
+    // Exact RFC message-id links, never subject matching. Search is not
+    // constrained by the inbox sync window, and each result is paginated.
+    while ([...pending].some(id => !searched.has(id))) {
+      const ids = [...pending].filter(value => !searched.has(value)).slice(0, 50)
+      if (searched.size + ids.length > 200) throw new Error('Thread history exceeds the lookup limit; only synced messages are shown.')
+      ids.forEach(id => searched.add(id))
+      const headers = ids.flatMap(id => ['Message-ID', 'In-Reply-To', 'References'].map(name => ({ name, value: `<${id}>` })))
+      for (const folder of folders) {
+        let before: number | undefined
+        for (;;) {
+          signal?.throwIfAborted()
+          const batch = await this.options.imap.fetchMessages(folder.path, FOLDER_FETCH_PAGE, undefined, before, headers)
+          if (!batch.length) break
+          for (const envelope of batch) {
+            const links = [envelope.messageId, envelope.inReplyTo, ...(envelope.references ?? [])].map(normalizeMessageId)
+            if (!ids.some(id => links.includes(id))) continue
+            const items = found.get(folder.path) ?? []
+            if (!items.some(item => item.uid === envelope.uid)) items.push(envelope)
+            found.set(folder.path, items)
+            links.forEach(value => { if (value) pending.add(value) })
+          }
+          const lowest = Math.min(...batch.map(item => item.uid))
+          if (batch.length < FOLDER_FETCH_PAGE || (before !== undefined && lowest >= before)) break
+          before = lowest
+        }
+      }
+    }
+    signal?.throwIfAborted()
+    // Reuse the regular parser, attachment and duplicate-location handling.
+    const parser = new ImapMailProvider({ ...this.options, imap: {
+      ...this.options.imap,
+      connect: async () => {},
+      listFolders: async () => folders,
+      fetchMessages: async (path, limit = FOLDER_FETCH_PAGE, _since, before) =>
+        (found.get(path) ?? []).filter(item => before === undefined || item.uid < before)
+          .sort((a, b) => b.uid - a.uid).slice(0, limit),
+    } })
+    const parsed = await parser.fetchStore()
+    const locations = [...parser.locations.values()].flat()
+    const original = this.store?.threads.find(thread => thread.id === threadId)
+    const thread = original ?? parsed.threads[0]
+    if (!thread) return null
+    this.locations.set(threadId, [...(this.locations.get(threadId) ?? []), ...locations]
+      .filter((location, index, all) => all.findIndex(item => item.folder === location.folder && item.uid === location.uid) === index))
+    this.folders = folders
+    const messages = parsed.messages.map(message => ({ ...message, threadId }))
+    const fragment = { threads: [{ ...thread, id: threadId }], messages }
+    if (this.store) {
+      const ids = new Set(messages.map(message => message.id))
+      this.store = { ...this.store,
+        threads: [...this.store.threads.filter(item => item.id !== threadId), ...fragment.threads],
+        messages: [...this.store.messages.filter(item => !ids.has(item.id)), ...messages],
+      }
+    }
+    return fragment
+  }
+
   async sync(store?: MailStore): Promise<MailStore> {
     const fresh = await this.fetchStore()
+    // Windowed refreshes do not invalidate locations of older loaded mail.
+    // IDs encode the real folder and UID, including after an app restart.
+    for (const message of store?.messages ?? []) {
+      if (!fresh.threads.some(thread => thread.id === message.threadId)) continue
+      if (message.receivedAt >= fresh.syncCoverage!.messagesCoveredFrom!) continue
+      const match = /^imap_msg_(.+)_(\d+)$/.exec(message.id)
+      if (!match) continue
+      const locations = this.locations.get(message.threadId) ?? []
+      const location = { folder: match[1]!, uid: Number(match[2]) }
+      if (!locations.some(item => item.folder === location.folder && item.uid === location.uid)) {
+        this.locations.set(message.threadId, [...locations, location])
+      }
+    }
     return {
       ...fresh,
       settings: { ...fresh.settings, ...(store?.settings ?? {}) },
@@ -1051,7 +1154,9 @@ export class ImapMailProvider implements MailProvider {
         'This account’s transport cannot search server-side; only locally synced mail is searchable.',
       )
     }
-    const hits = await this.options.imap.searchAll(query, limit)
+    if (!query.trim()) return []
+    await this.options.imap.connect()
+    const hits = await this.options.imap.searchAll(query.trim(), limit)
     const seenThreadIds = new Set<string>()
     const results: Array<{
       threadId: string
@@ -1063,20 +1168,17 @@ export class ImapMailProvider implements MailProvider {
     }> = []
     for (const hit of hits) {
       const localMessage = this.store?.messages.find(
-        message => message.id === `imap_msg_${hit.folderPath}_${hit.uid}`,
+        message => message.id === `imap_msg_${hit.folderPath}_${hit.uid}` ||
+          (Boolean(hit.messageId) && normalizeMessageId(message.messageIdHeader) === normalizeMessageId(hit.messageId)),
       )
       const threadId =
         localMessage?.threadId ??
-        // Same minting rule as fetchStore's non-reply case, so a hit that
-        // syncs later resolves to the same thread id.
-        `imap_thread_${(hit.messageId ?? `uid_${hit.uid}`).replace(
-          /[^a-zA-Z0-9]/g,
-          '',
-        )}`
+        `imap_thread_remote_${encodeURIComponent(hit.messageId ?? `${hit.folderPath}:${hit.uid}`)}`
       // Virtual mirrors (Proton's All Mail holds a copy of everything)
       // return the same message once per folder; one row per thread.
       if (seenThreadIds.has(threadId)) continue
       seenThreadIds.add(threadId)
+      if (!localMessage) this.remoteHits.set(threadId, hit)
       results.push({
         threadId,
         subject: hit.subject || '(no subject)',

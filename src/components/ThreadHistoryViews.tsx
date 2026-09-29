@@ -165,7 +165,7 @@ export function ThreadHistoryPopover({
     >
       <HistoryPopoverHeader>
         <HistoryPopoverTitle>Thread history</HistoryPopoverTitle>
-        <HistoryPopoverCount>
+        <HistoryPopoverCount title="Synced messages and older messages retrieved for this conversation.">
           {entries.length} message{entries.length === 1 ? '' : 's'}
         </HistoryPopoverCount>
         <HistoryCloseButton

@@ -3733,10 +3733,17 @@ export function mergeMailProviderSyncResult(
     return !threadIsInsideFetchWindow({ settings: mergedSettings }, thread, now)
   })
   const carriedThreadIds = new Set(carriedThreads.map(thread => thread.id))
+  const messageWindowStart = coverage?.messagesCoveredFrom
+    ? Date.parse(coverage.messagesCoveredFrom) : NaN
+  const fetchedMessageIds = new Set(providerStore.messages.map(message => message.id))
   const carriedMessages = currentStore.messages.filter(
     message =>
-      carriedThreadIds.has(message.threadId) &&
-      !supersededLocalThreadIds.has(message.threadId),
+      !fetchedMessageIds.has(message.id) &&
+      !supersededLocalThreadIds.has(message.threadId) &&
+      (carriedThreadIds.has(message.threadId) ||
+        (providerThreadIds.has(message.threadId) &&
+          Number.isFinite(messageWindowStart) &&
+          Date.parse(message.receivedAt) < messageWindowStart)),
   )
 
   return {

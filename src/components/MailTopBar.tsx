@@ -36,7 +36,10 @@ import {
   Meta,
   RecipientChip,
   SearchResults,
-  SearchRow,
+  SearchToolbar,
+  SearchSectionTitle,
+  SearchResultHeading,
+  SearchResultDetail,
   Subject,
   ThreadActionsMenu,
   TopAccountAvatar,
@@ -213,44 +216,55 @@ export function MailTopBar({
   )
   const [allMailPending, setAllMailPending] = useState(false)
   const [allMailError, setAllMailError] = useState('')
+  const [openingThread, setOpeningThread] = useState<string | null>(null)
+  const searchGeneration = useRef(0)
+  const allMailQuery = (draftDirtyRef.current ? draftQuery : currentQuery).trim()
   useEffect(() => {
-    // A new query invalidates the previous server answer.
+    // Ignore answers from earlier queries, including edits before debounce.
+    searchGeneration.current += 1
+    setAllMailPending(false)
+    setOpeningThread(null)
     setAllMailResults(null)
     setAllMailError('')
-  }, [currentQuery])
+  }, [allMailQuery, searchPanelOpen, selectedAccountId])
   const runAllMailSearch = (): void => {
     if (!searchAllMail || allMailPending) return
-    const query = (draftQuery.trim() || currentQuery).trim()
+    const query = allMailQuery
     if (!query) return
+    const generation = ++searchGeneration.current
     setAllMailPending(true)
+    setAllMailResults(null)
     setAllMailError('')
     searchAllMail(query, 20)
-      .then(results => setAllMailResults(results))
-      .catch(error =>
-        setAllMailError(
-          error instanceof Error ? error.message : 'Search failed.',
-        ),
-      )
-      .finally(() => setAllMailPending(false))
+      .then(results => { if (generation === searchGeneration.current) setAllMailResults(results) })
+      .catch(error => {
+        if (generation === searchGeneration.current) setAllMailError(error instanceof Error ? error.message : 'Search failed.')
+      })
+      .finally(() => { if (generation === searchGeneration.current) setAllMailPending(false) })
   }
   const openResultThread = (threadId: string): void => {
     setSearchPanelOpen(false)
     openThread(threadId)
   }
   const openAllMailResult = (result: AllMailResult): void => {
-    if (result.inLocalWindow || !importRemoteThread) {
+    if (result.inLocalWindow) {
       openResultThread(result.threadId)
       return
     }
-    // Outside the sync window: fetch it into the store first, exactly as the
-    // getThread tool does, then open it like any other thread.
+    if (!importRemoteThread || openingThread) return
+    const generation = searchGeneration.current
+    setOpeningThread(result.threadId)
+    setAllMailError('')
     void importRemoteThread(result.threadId)
-      .then(() => openResultThread(result.threadId))
-      .catch(error =>
-        setAllMailError(
-          error instanceof Error ? error.message : 'Could not fetch thread.',
-        ),
-      )
+      .then(fragment => {
+        if (generation !== searchGeneration.current) return
+        if (!fragment?.threads.length || !fragment.messages.length) throw new Error('The server message could not be loaded. Search again to retry.')
+        openResultThread(fragment.threads[0].id)
+      })
+      .catch(error => {
+        if (generation === searchGeneration.current) setAllMailError(error instanceof Error ? error.message : 'Could not fetch thread.')
+      })
+      .finally(() => { if (generation === searchGeneration.current) setOpeningThread(null) })
   }
 
   const appendOperator = (operator: string): void => {
@@ -320,7 +334,7 @@ export function MailTopBar({
         </TopSearchField>
         {searchPanelOpen && (
           <TopSearchPanel id="puremail-search-panel">
-            <SearchRow style={{ justifyContent: 'flex-end' }}>
+            <SearchToolbar>
               <Button
                 size="sm"
                 variant="subtle"
@@ -330,48 +344,7 @@ export function MailTopBar({
               >
                 <SlidersHorizontal aria-hidden="true" size={13} /> operators
               </Button>
-            </SearchRow>
-            {builderOpen && (
-              <div
-                style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
-                role="group"
-                aria-label="Query operator builder"
-              >
-                {[
-                  'is:unread',
-                  'is:starred',
-                  'has:attachment',
-                  'has:calendar',
-                  'from:',
-                  'to:',
-                  'cc:',
-                  'subject:',
-                  'newer_than:7d',
-                  'older_than:30d',
-                  'sort:oldest',
-                ].map(operator => (
-                  <Button
-                    key={operator}
-                    size="sm"
-                    onClick={() => appendOperator(operator)}
-                  >
-                    {operator}
-                  </Button>
-                ))}
-                {store.labels.slice(0, 4).map(label => (
-                  <Button
-                    key={label.id}
-                    size="sm"
-                    onClick={() =>
-                      appendOperator(`label:${quoteQueryValue(label.name)}`)
-                    }
-                  >
-                    label:{label.name}
-                  </Button>
-                ))}
-              </div>
-            )}
-            <SearchRow style={{ flexWrap: 'wrap', gap: 4 }}>
+
               {/* Chips repeat the input verbatim for a single term — they
                   only earn their row as per-term removers. */}
               {activeQueryChips.length > 1 &&
@@ -453,13 +426,51 @@ export function MailTopBar({
                   Remove view
                 </Button>
               )}
-            </SearchRow>
+            </SearchToolbar>
+            {builderOpen && (
+              <div
+                style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
+                role="group"
+                aria-label="Query operator builder"
+              >
+                {[
+                  'is:unread',
+                  'is:starred',
+                  'has:attachment',
+                  'has:calendar',
+                  'from:',
+                  'to:',
+                  'cc:',
+                  'subject:',
+                  'newer_than:7d',
+                  'older_than:30d',
+                  'sort:oldest',
+                ].map(operator => (
+                  <Button
+                    key={operator}
+                    size="sm"
+                    onClick={() => appendOperator(operator)}
+                  >
+                    {operator}
+                  </Button>
+                ))}
+                {store.labels.slice(0, 4).map(label => (
+                  <Button
+                    key={label.id}
+                    size="sm"
+                    onClick={() =>
+                      appendOperator(`label:${quoteQueryValue(label.name)}`)
+                    }
+                  >
+                    label:{label.name}
+                  </Button>
+                ))}
+              </div>
+            )}
+
             {remoteResults.length > 0 && (
               <SearchResults aria-label="Mail server results">
-                <Meta>
-                  Not on this device · {remoteResults.length} more on the
-                  server
-                </Meta>
+                <SearchSectionTitle>Server matches <span>{remoteResults.length}</span></SearchSectionTitle>
                 {remoteResults.slice(0, 8).map(result => (
                   <ListButton
                     key={`remote-${result.type}-${result.id}`}
@@ -475,6 +486,7 @@ export function MailTopBar({
             )}
             {searchAllMail && (
               <SearchResults aria-label="Search all mail">
+                <SearchSectionTitle>Search the server <span>{allMailResults === null ? 'All dates' : `${allMailResults.length} results`}</span></SearchSectionTitle>
                 <ListButton
                   onClick={runAllMailSearch}
                   aria-busy={allMailPending}
@@ -483,10 +495,11 @@ export function MailTopBar({
                     {allMailPending ? 'Searching all mail…' : 'Search all mail'}
                   </Subject>
                   <Meta>
-                    Ask the mail server directly, past the local fetch window
+                    Include messages not downloaded to this device
                   </Meta>
                 </ListButton>
-                {allMailError && <Meta>{allMailError}</Meta>}
+                {allMailError && <Meta role="alert">{allMailError}</Meta>}
+                {allMailResults && allMailResults.length >= 20 && <Meta>Showing up to 20 matches. Refine your search for more specific results.</Meta>}
                 {allMailResults && allMailResults.length === 0 && (
                   <Meta>No matches on the server.</Meta>
                 )}
@@ -494,12 +507,17 @@ export function MailTopBar({
                   <ListButton
                     key={`all-mail-${result.threadId}`}
                     onClick={() => openAllMailResult(result)}
+                    disabled={Boolean(openingThread)}
+                    aria-busy={openingThread === result.threadId}
                   >
-                    <Subject>{result.subject || '(no subject)'}</Subject>
-                    <Meta>
-                      {result.from} · {formatDate(result.date)}
-                      {result.inLocalWindow ? '' : ' · not on this device'}
-                    </Meta>
+                    <SearchResultHeading>
+                      <Subject>{openingThread === result.threadId ? 'Loading message…' : result.subject || '(no subject)'}</Subject>
+                      <time dateTime={result.date}>{formatDate(result.date)}</time>
+                    </SearchResultHeading>
+                    <SearchResultDetail>
+                      <span>{result.from || 'Unknown sender'}</span>
+                      <span>{result.inLocalWindow ? 'On this device' : 'On server'}</span>
+                    </SearchResultDetail>
                     {result.snippet && <Meta>{result.snippet}</Meta>}
                   </ListButton>
                 ))}
@@ -507,6 +525,7 @@ export function MailTopBar({
             )}
             {commandResults.length > 0 && (
               <SearchResults aria-label="Commands">
+                <SearchSectionTitle>Actions</SearchSectionTitle>
                 {commandResults.slice(0, 4).map(command => (
                   <ListButton
                     key={`command-${command.id}`}

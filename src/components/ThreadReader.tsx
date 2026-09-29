@@ -55,9 +55,10 @@ import {
   type ThreadHistoryFilter,
 } from './threadHistory'
 import { quoteQueryValue, saveMailView } from '../lib/mailQuery'
-import { draftLaunchPreview } from '../lib/replyCompose'
+import { draftLaunchPreview, replyToContacts } from '../lib/replyCompose'
 import {
   draftKindForDraft,
+  latestInboundMessage,
   readerMailBody,
   recoverMailThreadSync,
 } from '../lib/mailModel'
@@ -1671,26 +1672,10 @@ export function ThreadReader({
       {systemNotice && !systemNoticeDismissed && (
         <MailSystemBanner role="status">
           <span aria-hidden="true">●</span>
-          <span>
-            <strong>Calendar handoff is off.</strong> {systemNotice}{' '}
-            Mail works normally; calendar follow-ups are paused until
-            permissions reload.
-          </span>
-          <div>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => setSystemNoticeDismissed(true)}
-            >
-              Grant & restart
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => setSystemNoticeDismissed(true)}
-            >
-              Later
-            </Button>
-          </div>
+          <span>{systemNotice}</span>
+          <Button size="sm" onClick={() => setSystemNoticeDismissed(true)}>
+            Dismiss
+          </Button>
         </MailSystemBanner>
       )}
       {mailDraftNotice && !systemNotice && (
@@ -2425,10 +2410,18 @@ export function ThreadReader({
                 <>
                   <ReplyLaunchPreview>
                     Reply to{' '}
-                    {activeMessageTab
-                      ? activeMessageTab.from.name ||
-                        activeMessageTab.from.email
-                      : 'this thread'}
+                    {(() => {
+                      // Match the source and recipient rules used by Reply.
+                      const source = latestInboundMessage(
+                        selectedMessages.filter(message => message.threadId === selectedThread.id && !message.isDraft),
+                        selectedAccount?.email ?? '',
+                      )
+                      const recipients = source ? replyToContacts(source, [
+                        selectedAccount?.email ?? '',
+                        ...(store.settings.ownerIdentities?.emails ?? []),
+                      ]) : []
+                      return recipients.map(contact => contact.name || contact.email).join(', ') || 'this thread'
+                    })()}
                     …
                   </ReplyLaunchPreview>
                   <ReplyLaunchOpen>Opens the compose window</ReplyLaunchOpen>

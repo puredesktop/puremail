@@ -258,6 +258,7 @@ import {
 } from './mailShellLayout'
 import {
   calendarHandoffErrorMessage,
+  mailSystemNotice,
   conversationKeyForThread,
   openingThreadShouldRepointMailbox,
   parseComposeRecipients,
@@ -704,11 +705,7 @@ export function PureMailShell({
         thread.id === selectedThreadId &&
         thread.accountId === selectedAccountId,
     ) ?? null
-  const systemNotice =
-    /permission|bridge|handoff|calendar/i.test(commandNotice) &&
-    commandNotice !== 'Ready'
-      ? commandNotice
-      : ''
+  const systemNotice = mailSystemNotice(commandNotice)
   const mailDraftNotice =
     /draft|model/i.test(commandNotice) && commandNotice !== 'Ready'
       ? commandNotice
@@ -1326,6 +1323,25 @@ export function PureMailShell({
     onError: setCommandNotice,
     onNotice: setCommandNotice,
   })
+
+  useEffect(() => {
+    if (mailFetching || !selectedThreadId || !providerBacked?.fetchThreadById) return
+    let cancelled = false
+    const controller = new AbortController()
+    void providerBacked.fetchThreadById(selectedThreadId, storeRef.current.messages, controller.signal)
+      .then(fragment => {
+        if (cancelled || !fragment) return
+        // Preserve current local triage and read state during a remote read.
+        setStore(current => mergeThreadFragment(current, {
+          threads: fragment.threads.map(thread => current.threads.find(item => item.id === thread.id) ?? thread),
+          messages: fragment.messages.map(message => current.messages.find(item => item.id === message.id) ?? message),
+        }))
+      })
+      .catch(() => {
+        if (!cancelled) setCommandNotice('Could not load older thread history. Reopen the conversation to retry; synced messages are still available.')
+      })
+    return () => { cancelled = true; controller.abort() }
+  }, [selectedThreadId, providerBacked, mailFetching])
 
   // Opening a thread marks it read — locally so unread badges clear right
   // away, and in Gmail so the UNREAD label cannot resurrect it on the next
@@ -2418,6 +2434,9 @@ export function PureMailShell({
     threadId: string,
     messageId: string | null = null,
   ): void => {
+    // Remote imports update the store immediately, before React replaces
+    // the search result's callback. Resolve against that current snapshot.
+    const store = storeRef.current
     const thread = store.threads.find(item => item.id === threadId)
     if (!thread) return
     setSelectedAccountId(thread.accountId)
@@ -2995,7 +3014,7 @@ export function PureMailShell({
   }
 
   const searchGmail =
-    providerBacked
+    activeProvider === 'gmail' && providerBacked
       ? (query: string) => providerBacked.search(query)
       : null
 
@@ -3015,7 +3034,8 @@ export function PureMailShell({
    */
   const importRemoteThread = providerBacked?.fetchThreadById
     ? async (threadId: string) => {
-        const fragment = await providerBacked.fetchThreadById!(threadId)
+        const fragment = await providerBacked.fetchThreadById!(threadId, storeRef.current.messages)
+        if (mailProviderRef.current !== providerBacked) return null
         if (fragment && fragment.threads.length > 0) {
           setStore(current => mergeThreadFragment(current, fragment))
         }
