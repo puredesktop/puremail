@@ -217,6 +217,7 @@ import {
   BulkMenuWrap,
   ThreadActionsMenu,
 } from './mailShellStyles'
+import { plainTextSegments } from '../lib/plainTextLinks'
 import {
   attachmentExtension,
   displayThreadLabels,
@@ -241,7 +242,8 @@ import {
  * paragraphs, single newlines stay as line breaks INSIDE one. The old
  * per-line rendering gave EVERY line its own <p> (each with a paragraph
  * margin) and every blank line a full `&nbsp;` paragraph — inches of air
- * between two sentences.
+ * between two sentences. Links become real links: `Label [url]` links the
+ * label and drops the URL, so newsletter plain parts do not read as walls of URL.
  */
 function plainTextParagraphs(
   text: string,
@@ -254,12 +256,35 @@ function plainTextParagraphs(
     .filter(paragraph => paragraph.trim().length > 0)
     .map((paragraph, paragraphIndex) => (
       <p key={`${keyPrefix}-${paragraphIndex}`}>
-        {paragraph.split('\n').map((line, lineIndex, lines) => (
-          <Fragment key={`${keyPrefix}-${paragraphIndex}-${lineIndex}`}>
-            {line}
-            {lineIndex < lines.length - 1 ? <br /> : null}
-          </Fragment>
-        ))}
+        {plainTextSegments(paragraph).map((segment, segmentIndex) => {
+          const key = `${keyPrefix}-${paragraphIndex}-${segmentIndex}`
+          if (segment.kind === 'link') {
+            return (
+              <a
+                key={key}
+                href={segment.href}
+                title={segment.href}
+                onClick={event => {
+                  // The sandboxed frame cannot open new windows reliably: the shell opens it.
+                  event.preventDefault()
+                  void openExternalUrl(segment.href)
+                }}
+              >
+                {segment.text}
+              </a>
+            )
+          }
+          return (
+            <Fragment key={key}>
+              {segment.text.split('\n').map((line, lineIndex, lines) => (
+                <Fragment key={`${key}-${lineIndex}`}>
+                  {line}
+                  {lineIndex < lines.length - 1 ? <br /> : null}
+                </Fragment>
+              ))}
+            </Fragment>
+          )
+        })}
       </p>
     ))
 }
