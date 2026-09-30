@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { bridge } from '@purescience/platform-ui/bridge/client'
 import { App } from './App'
+import { installMailAppearance, MailWhiteNeutral } from './lib/mailAppearance'
 import { guardDevelopmentTiming } from './lib/developmentTiming'
 
 if (import.meta.env.DEV) {
@@ -10,4 +11,11 @@ if (import.meta.env.DEV) {
 
 bridge.deferViewportReady()
 
-createRoot(document.getElementById('root')!).render(<App />)
+installMailAppearance()
+
+createRoot(document.getElementById('root')!).render(
+  <>
+    <MailWhiteNeutral />
+    <App />
+  </>,
+)
