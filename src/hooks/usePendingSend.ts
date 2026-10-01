@@ -23,7 +23,10 @@ export function usePendingSend(input: {
   pendingSends: PendingSendState[]
   sendingDraftIds: string[]
   /** False when refused (another non-run hold is open) — nothing was queued. */
-  schedulePendingSend: (pending: PendingSendState, commit: () => void) => boolean
+  schedulePendingSend: (
+    pending: PendingSendState,
+    commit: () => void,
+  ) => boolean
   undoPendingSend: (pendingId: string) => void
   markDraftSending: (draftId: string, sending: boolean) => void
 } {
@@ -31,8 +34,10 @@ export function usePendingSend(input: {
   const [pendingSend, setPendingSend] = useState<PendingSendState | null>(null)
   const [pendingSends, setPendingSends] = useState<PendingSendState[]>([])
   const [sendingDraftIds, setSendingDraftIds] = useState<string[]>([])
+  const holdsRef = useRef<PendingSendState[]>([])
   const timeoutsRef = useRef<Record<string, number>>({})
   const dropPending = (pendingId: string): void => {
+    holdsRef.current = holdsRef.current.filter(item => item.id !== pendingId)
     setPendingSend(current => (current?.id === pendingId ? null : current))
     setPendingSends(current => current.filter(item => item.id !== pendingId))
   }
@@ -52,8 +57,13 @@ export function usePendingSend(input: {
     commit: () => void,
   ): boolean => {
     // One compose/reply hold at a time; run holds stack among themselves.
-    const stacks = pending.target === 'run' && (!pendingSend || pendingSend.target === 'run')
-    if (pendingSend && !stacks) {
+    const holds = holdsRef.current
+    const stacks =
+      pending.target === 'run' && holds.every(item => item.target === 'run')
+    if (
+      holds.some(item => item.id === pending.id) ||
+      (holds.length > 0 && !stacks)
+    ) {
       setCommandNotice('A send is already waiting. Undo it or let it finish.')
       return false
     }
@@ -63,6 +73,7 @@ export function usePendingSend(input: {
       commit()
       return true
     }
+    holdsRef.current = [...holds, pending]
     const timeoutId = window.setTimeout(() => {
       delete timeoutsRef.current[pending.id]
       dropPending(pending.id)

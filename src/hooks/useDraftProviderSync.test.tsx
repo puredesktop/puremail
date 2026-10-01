@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftProviderSync } from './useDraftProviderSync'
@@ -54,11 +54,15 @@ function mountHook(input: {
   const notices: string[] = []
   const errors: string[] = []
 
+  let rerender = () => {}
   function Harness(): null {
+    const [, redraw] = useState(0)
+    rerender = () => redraw(value => value + 1)
     const { forgetDraft } = useDraftProviderSync({
       store,
       setStore: updater => {
         store = updater(store)
+        rerender()
       },
       provider: input.provider,
       onError: message => errors.push(message),
@@ -76,16 +80,179 @@ function mountHook(input: {
     notices,
     errors,
     storeNow: () => store,
+    edit: (patch: Partial<Draft>) =>
+      act(() => {
+        store = {
+          ...store,
+          drafts: store.drafts.map(item => ({ ...item, ...patch })),
+        }
+        rerender()
+      }),
+    switchAccount: (provider: typeof input.provider, drafts: Draft[]) =>
+      act(() => {
+        input.provider = provider
+        store = { ...emptyMailStore(), drafts }
+        rerender()
+      }),
     unmount: () => act(() => root.unmount()),
   }
 }
 
 describe('draft provider sync', () => {
+  it('saves edits made while the first save is in flight without creating a duplicate', async () => {
+    const pending = deferred<string>()
+    const createDraft = vi.fn(() => pending.promise)
+    const updateDraft = vi.fn(async () => undefined)
+    const harness = mountHook({
+      drafts: [draft()],
+      provider: { capabilities: { drafts: true }, createDraft, updateDraft },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    // Same timestamp: content, rather than clock precision, determines freshness.
+    harness.edit({ body: 'Newer text', syncState: 'pending' })
+    await act(async () => {
+      pending.resolve('saved-id')
+    })
+    expect(harness.storeNow().drafts[0].syncState).toBe('pending')
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(createDraft).toHaveBeenCalledTimes(1)
+    expect(updateDraft).toHaveBeenCalledWith(
+      'saved-id',
+      expect.objectContaining({ body: 'Newer text' }),
+    )
+    expect(harness.storeNow().drafts[0].syncState).toBe('synced')
+    harness.unmount()
+  })
+
+  it('retries failed saves without requiring another user edit', async () => {
+    const createDraft = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue('saved-id')
+    const harness = mountHook({
+      drafts: [draft()],
+      provider: { capabilities: { drafts: true }, createDraft },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(createDraft).toHaveBeenCalledTimes(2)
+    expect(harness.storeNow().drafts[0].syncState).toBe('synced')
+    harness.unmount()
+  })
+
+  it('keeps a discarded in-flight save and delete retries on their original account', async () => {
+    const pending = deferred<string>()
+    const deleteA = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(undefined)
+    const deleteB = vi.fn(async () => undefined)
+    const harness = mountHook({
+      drafts: [draft()],
+      provider: {
+        capabilities: { drafts: true },
+        createDraft: () => pending.promise,
+        deleteDraft: deleteA,
+      },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    act(() => {
+      harness.api.forgetDraft?.(draft())
+    })
+    harness.switchAccount(
+      { capabilities: { drafts: true }, deleteDraft: deleteB },
+      [draft({ body: 'Other account', syncState: 'synced' })],
+    )
+    await act(async () => {
+      pending.resolve('account-a-id')
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(deleteA).toHaveBeenCalledTimes(2)
+    expect(deleteB).not.toHaveBeenCalled()
+    expect(harness.storeNow().drafts[0].body).toBe('Other account')
+    expect(harness.storeNow().drafts[0].providerDraftId).toBeUndefined()
+    harness.unmount()
+  })
+
+  it('ignores old account save completions even when local draft IDs match', async () => {
+    const pending = deferred<string>()
+    const harness = mountHook({
+      drafts: [draft()],
+      provider: {
+        capabilities: { drafts: true },
+        createDraft: () => pending.promise,
+      },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    harness.switchAccount({ capabilities: { drafts: true } }, [
+      draft({ body: 'Other account', syncState: 'synced' }),
+    ])
+    await act(async () => {
+      pending.resolve('account-a-id')
+    })
+    expect(harness.storeNow().drafts[0].providerDraftId).toBeUndefined()
+    harness.unmount()
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
   })
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('stops after three failed saves and retains the local draft', async () => {
+    const createDraft = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    const harness = mountHook({
+      drafts: [draft()],
+      provider: { capabilities: { drafts: true }, createDraft },
+    })
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+    }
+    expect(createDraft).toHaveBeenCalledTimes(3)
+    expect(harness.storeNow().drafts[0].syncState).toBe('failed')
+    expect(harness.storeNow().drafts[0].body).toBe('Worth saving.')
+    harness.unmount()
+  })
+
+  it('does not mark an already sent draft pending when its save finishes', async () => {
+    const pending = deferred<string>()
+    const harness = mountHook({
+      drafts: [draft()],
+      provider: {
+        capabilities: { drafts: true },
+        createDraft: () => pending.promise,
+      },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    harness.edit({ sentAt: '2026-08-19T10:01:00.000Z', syncState: 'synced' })
+    await act(async () => {
+      pending.resolve('saved-id')
+    })
+    expect(harness.storeNow().drafts[0].syncState).toBe('synced')
+    expect(harness.storeNow().drafts[0].providerDraftId).toBeUndefined()
+    harness.unmount()
   })
 
   it('creates the provider draft once the edits settle', async () => {
@@ -159,7 +326,9 @@ describe('draft provider sync', () => {
   it('deletes the provider draft when a synced draft is discarded', async () => {
     const deleteDraft = vi.fn(async () => undefined)
     const harness = mountHook({
-      drafts: [draft({ providerDraftId: 'gmail-draft-1', syncState: 'synced' })],
+      drafts: [
+        draft({ providerDraftId: 'gmail-draft-1', syncState: 'synced' }),
+      ],
       provider: {
         capabilities: { drafts: true },
         createDraft: vi.fn(async () => 'x'),
@@ -234,7 +403,9 @@ describe('draft provider sync', () => {
       throw new Error('gmail unavailable')
     })
     const harness = mountHook({
-      drafts: [draft({ providerDraftId: 'gmail-draft-1', syncState: 'synced' })],
+      drafts: [
+        draft({ providerDraftId: 'gmail-draft-1', syncState: 'synced' }),
+      ],
       provider: {
         capabilities: { drafts: true },
         createDraft: vi.fn(async () => 'x'),
