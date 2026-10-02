@@ -58,5 +58,5 @@ export function MailAnnotationDocument({source,identity,room,showPrivate,noteKin
   }
   for(const note of visible)if(value.includes(`data-comment-id="${escape(note.id)}"`)&&resolveNote(article.text,note)&&!ids.has(note.id))void room.removeNote(identity.messageId,note.id)
  }
- return <DocumentEditor className="mail-annotation-document" value={value} extensions={extensions} enableComments showToolbar={false} onChange={changed} />
+ return <DocumentEditor className="mail-annotation-document" value={value} extensions={extensions} enableComments annotationPresentation="note" showToolbar={false} onChange={changed} />
 }
