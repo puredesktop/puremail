@@ -17,7 +17,8 @@ export const Room = styled.section`
   &[data-expanded='true'] {
     position: fixed;
     inset: 0;
-    z-index: 100;
+    z-index: calc(var(--platform-z-index-zi-app-modal, 1000) - 1);
+    background: #eceef1;
   }
   flex: 1;
   min-width: 0;
@@ -36,9 +37,8 @@ export const RoomBar = styled.header`
   gap: 10px;
   min-height: 60px;
   flex-wrap: wrap;
-  padding-block: 10px;
   box-sizing: border-box;
-  padding: 0 24px;
+  padding: 10px 24px;
 `
 
 export const BarButton = styled.button`

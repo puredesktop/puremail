@@ -9,21 +9,22 @@ it('expands and restores the reader and focuses the whole-message note',async()=
  const onBack=vi.fn();const scroll=vi.fn();HTMLElement.prototype.scrollIntoView=scroll
  try{
   await act(async()=>root.render(<ReadingRoom message={null} identity={{messageId:'m',article:'A long sentence\ncontinues on another source line.',subject:'A message',from:{name:'Sender',email:'sender@example.test'},date:'2026-10-02T00:00:00Z'} as never} room={{file:{byMessageId:{}},error:null} as never} onBack={onBack} onDraftReply={vi.fn()} onWriteSummary={vi.fn()}/>))
-  const button=(name:string)=>[...host.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent===name)!
-  expect(host.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('true')
+  const button=(name:string)=>[...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent===name)!
+  expect(document.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('true')
+  expect(document.querySelector('[aria-label="Reading room"]')?.parentElement).toBe(document.body)
   await act(async()=>button('Restore').click())
-  expect(host.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('false')
+  expect(document.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('false')
   await act(async()=>button('Expand').click())
-  expect(host.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('true')
+  expect(document.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('true')
   await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
-  expect(host.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('false')
+  expect(document.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('false')
   expect(onBack).toHaveBeenCalledTimes(1)
-  const slider=host.querySelector<HTMLInputElement>('input[aria-label="Reading text size"]')!
+  const slider=document.querySelector<HTMLInputElement>('input[aria-label="Reading text size"]')!
   await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(slider,'24');slider.dispatchEvent(new Event('input',{bubbles:true}))})
-  expect(host.querySelector('output')?.textContent).toBe('24px')
+  expect(document.querySelector('output')?.textContent).toBe('24px')
   await act(async()=>button('General note').click())
   expect(document.activeElement?.id).toBe('reading-room-whole-note')
   expect(scroll).toHaveBeenCalled()
-  expect(host.querySelector('p[data-start]')?.textContent).toBe('A long sentence\ncontinues on another source line.')
+  expect(document.querySelector('p[data-start]')?.textContent).toBe('A long sentence\ncontinues on another source line.')
  }finally{await act(async()=>root.unmount());host.remove()}
 })

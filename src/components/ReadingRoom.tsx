@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Bookmark, BookmarkCheck, Highlighter, Lock, Maximize2, Minimize2, PenLine, Reply, Trash2 } from 'lucide-react'
 import type { MailMessage } from '../types'
@@ -170,7 +171,7 @@ export function ReadingRoom({
   const replyCount = counts.reply
   const kept = !!record?.context
 
-  return (
+  const content = (
     <Room aria-label="Reading room" data-expanded={expanded}>
       <RoomBar>
         <BarButton type="button" data-quiet="true" onClick={onBack}>
@@ -392,6 +393,7 @@ export function ReadingRoom({
       ) : null}
     </Room>
   )
+  return expanded ? createPortal(content, document.body) : content
 }
 
 function PendingNote({ pending, onSave, onCancel }: { pending: Pending; onSave: (text: string) => void; onCancel: () => void }): React.ReactElement {
