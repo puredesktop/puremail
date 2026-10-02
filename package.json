@@ -16,7 +16,9 @@
     "react-dom": "^19.1.0",
     "styled-components": "^6.1.18",
     "@purescience/platform-bridge": "file:../../packages/bridge",
-    "@purescience/platform-editor": "file:../../packages/editor"
+    "@purescience/platform-editor": "file:../../packages/editor",
+    "@tiptap/core": "^3.0.0",
+    "@tiptap/pm": "^3.0.0"
   },
   "devDependencies": {
     "@swc/plugin-styled-components": "^12.9.0",

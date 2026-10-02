@@ -18,7 +18,7 @@ export const Room = styled.section`
     position: fixed;
     inset: 0;
     z-index: calc(var(--platform-z-index-zi-app-modal, 1000) - 1);
-    background: #eceef1;
+    background: #e5e7e3;
   }
   flex: 1;
   min-width: 0;
@@ -149,7 +149,8 @@ export const RoomColumns = styled.div`
 
 export const Sheet = styled.article`
   position: relative;
-  flex: 0 1 720px;
+  flex: 0 1 820px;
+  width: min(820px, 100%);
   min-width: 0;
   box-sizing: border-box;
   padding: 64px 76px 72px;
@@ -194,6 +195,19 @@ export const Prose = styled.div<{ $fontSize: number }>`
   font: 400 ${({ $fontSize }) => $fontSize}px/1.72 ${READING_SERIF};
   color: #23272f;
   overflow-wrap: break-word;
+  --vs-body-font: ${READING_SERIF};
+  --vs-font-size: ${({ $fontSize }) => $fontSize}px;
+  --vs-line-height: 1.72;
+  && .mail-annotation-document > div,
+  && .mail-annotation-document > div > div {
+    padding: 0; margin: 0; width: 100%; max-width: none; min-width: 0; min-height: 0;
+    border: 0; background: transparent; box-shadow: none; overflow: visible; font: inherit;
+  }
+  && .mail-annotation-document .tiptap,
+  && .mail-annotation-document .tiptap p { font: inherit; color: inherit; }
+  && .mail-annotation-document .tiptap p { margin: 0 0 1.05em; }
+
+
   p {
     margin: 0 0 1.05em;
     white-space: normal;
@@ -292,7 +306,10 @@ export const Margin = styled.aside`
   position: sticky;
   top: 8px;
   flex: 0 0 340px;
+  width: 340px;
+  min-width: 0;
   max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -321,6 +338,9 @@ export const MarginHead = styled.div`
 `
 
 export const NoteCard = styled.div`
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   display: flex;
   gap: 12px;
   padding: 12px 14px;
@@ -373,8 +393,11 @@ export const NoteCard = styled.div`
     text-align: left;
     cursor: pointer;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
   }
   .text {
     margin: 0;
@@ -436,13 +459,16 @@ export const NoteCard = styled.div`
 `
 
 export const NoteEditor = styled.div`
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
   textarea {
     box-sizing: border-box;
     width: 100%;
-    min-height: 64px;
+    min-height: 96px;
+    max-width: 100%;
     padding: 8px 10px;
     border: 1px solid var(--platform-colors-border);
     border-radius: 8px;
