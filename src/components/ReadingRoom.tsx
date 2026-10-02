@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Bookmark, BookmarkCheck, Highlighter, Lock, PenLine, Reply, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bookmark, BookmarkCheck, Highlighter, Lock, Maximize2, Minimize2, PenLine, Reply, Trash2 } from 'lucide-react'
 import type { MailMessage } from '../types'
 import { readerMailBody } from '../lib/mailTextUtils'
 export { identityOf } from '../lib/readingRoomIdentity'
@@ -77,6 +77,8 @@ export function ReadingRoom({
   const record = room.file.byMessageId[identity.messageId]
   const source = message ? readerMailBody(message).visibleText : identity.article
   const article = useMemo(() => articleOf(source), [source])
+  const [expanded, setExpanded] = useState(true)
+  const [fontSize, setFontSize] = useState(19)
   const [showPrivate, setShowPrivate] = useState(true)
   const [active, setActive] = useState<string | null>(null)
   const [selection, setSelection] = useState<(Pending & { x: number; y: number }) | null>(null)
@@ -138,11 +140,11 @@ export function ReadingRoom({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelection(null)
+      if (event.key === 'Escape') { setSelection(null); setExpanded(false); onBack() }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  }, [onBack])
 
   const begin = (kind: NoteKind) => {
     if (!selection) return
@@ -169,13 +171,28 @@ export function ReadingRoom({
   const kept = !!record?.context
 
   return (
-    <Room aria-label="Reading room">
+    <Room aria-label="Reading room" data-expanded={expanded}>
       <RoomBar>
         <BarButton type="button" data-quiet="true" onClick={onBack}>
           <ArrowLeft aria-hidden="true" />
           Back to mail
         </BarButton>
+        <BarButton type="button" aria-pressed={expanded} onClick={() => setExpanded(value => !value)} title={expanded ? 'Restore reader size' : 'Expand reader'}>
+          {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+          {expanded ? 'Restore' : 'Expand'}
+        </BarButton>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          Text size
+          <input type="range" aria-label="Reading text size" min={15} max={28} step={1} value={fontSize} onChange={event => setFontSize(Number(event.target.value))} style={{ width: 90 }} />
+          <output style={{ minWidth: 32 }}>{fontSize}px</output>
+        </label>
         <span style={{ flex: 1 }} />
+        <BarButton type="button" onClick={() => {
+          document.getElementById('reading-room-whole-note')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          document.getElementById('reading-room-whole-note')?.focus({ preventScroll: true })
+        }} title="Add a note about the whole reply, without selecting a passage">
+          <PenLine aria-hidden="true" />General note
+        </BarButton>
         {counts.reply ? (
           <Chip data-ink="reply">
             <i />
@@ -219,12 +236,12 @@ export function ReadingRoom({
               {identity.from.name ? ` · ${identity.from.email}` : ''}
             </Dateline>
             <Rule />
-            <Prose ref={prose} onMouseUp={readSelection} onKeyUp={readSelection}>
+            <Prose $fontSize={fontSize} ref={prose} onMouseUp={readSelection} onKeyUp={readSelection}>
               {article.paragraphs.length ? (
                 article.paragraphs.map(paragraph => {
                   const pieces = paragraphPieces(paragraph, marks)
                   return (
-                  <p key={paragraph.start} data-start={paragraph.start}>
+                  <p key={paragraph.start} data-start={paragraph.start} data-preserve-lines={paragraph.text.split('\n').filter(line => /^\s*(?:[-*•]|\d+[.)])\s/.test(line)).length > 1}>
                     {pieces.map((piece, index) => {
                       const content = piece.href ? (
                         <a href={piece.href} target="_blank" rel="noreferrer noopener">
