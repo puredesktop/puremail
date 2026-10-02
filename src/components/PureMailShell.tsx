@@ -310,7 +310,7 @@ type MailRailFilter = 'attachments'
 
 /** The reading room or one of its boxes, when it holds the content column. */
 type RoomScreenState =
-  | { kind: 'reading'; messageId: string; back: 'thread' | 'notes' | 'context' }
+  | { kind: 'reading'; messageId: string; threadId?: string; back: 'thread' | 'notes' | 'context' }
   | { kind: 'notes' }
   | { kind: 'context' }
 
@@ -1571,6 +1571,9 @@ export function PureMailShell({
       ) {
         return
       }
+      // The reading room and its boxes layer their own Escape (a selection
+      // or a note being written closes first, then the room steps back).
+      if (roomScreen !== null && !providerDrawerOpen && !mailSettingsOpen) return
 
       const handled =
         providerDrawerOpen ||
@@ -1613,6 +1616,7 @@ export function PureMailShell({
     mailSettingsOpen,
     providerDrawerOpen,
     reading,
+    roomScreen,
   ])
 
   const archiveSelectedThread = (): void => {
@@ -2646,8 +2650,23 @@ export function PureMailShell({
     setRoomScreen({ kind })
   }
   const openReadingRoom = (messageId: string, back: 'thread' | 'notes' | 'context'): void => {
+    const threadId = store.messages.find(item => item.id === messageId)?.threadId ?? readingRoom.file.byMessageId[messageId]?.threadId
     setRunScreen(null)
-    setRoomScreen({ kind: 'reading', messageId, back })
+    setRoomScreen({ kind: 'reading', messageId, threadId, back })
+  }
+  /** Leaves the reading room for where it was opened: the email itself, or the box it came from. */
+  const leaveReadingRoom = (screen: Extract<RoomScreenState, { kind: 'reading' }>): void => {
+    if (screen.back !== 'thread') {
+      setRoomScreen({ kind: screen.back })
+      return
+    }
+    if (screen.threadId && store.threads.some(thread => thread.id === screen.threadId)) {
+      setSelectedThreadId(screen.threadId)
+      setFocusedMessageId(screen.messageId)
+      setReaderMode('email')
+      setReading(true)
+    }
+    setRoomScreen(null)
   }
   const draftReplyFromNotes = (record: MessageAnnotations): void => {
     const brief = replyBrief(record)
@@ -4563,7 +4582,7 @@ export function PureMailShell({
             const message = store.messages.find(item => item.id === roomScreen.messageId) ?? null
             const record = readingRoom.file.byMessageId[roomScreen.messageId]
             const identity = identityOf(message, record, selectedAccount?.id)
-            const back = () => setRoomScreen(roomScreen.back === 'thread' ? null : { kind: roomScreen.back })
+            const back = () => leaveReadingRoom(roomScreen)
             if (!identity) return null
             return (
               <ReadingRoom

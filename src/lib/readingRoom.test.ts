@@ -131,6 +131,54 @@ describe('the reading room', () => {
   })
 })
 
+describe('what the reader wants to say', () => {
+  it('leads the brief, drafts with or without passage notes, and keeps private notes out', async () => {
+    const { setReplyIntent } = await import('./readingRoom')
+    const { text } = articleOf(body)
+    const now = '2026-10-06T10:00:00.000Z'
+    let file = setReplyIntent(emptyAnnotationsFile(), identity(text), 'Say yes to March, warmly, and offer Thursday.', now)
+    expect(replyBrief(file.byMessageId.m1)).toContain('What the reader wants to say: Say yes to March, warmly, and offer Thursday.')
+    file = addNote(file, identity(text), note(text, 'private', 'the budget is fixed', 'The board chair is the problem.'), now)
+    file = addNote(file, identity(text), note(text, 'reply', 'first week of March', 'Second week instead.'), now)
+    const brief = replyBrief(file.byMessageId.m1)
+    expect(brief.indexOf('What the reader wants to say')).toBeLessThan(brief.indexOf('Second week instead.'))
+    expect(brief).not.toContain('board chair')
+    expect(parseAnnotationsFile(JSON.parse(JSON.stringify(file))).byMessageId.m1.replyIntent).toBe('Say yes to March, warmly, and offer Thursday.')
+    file = setReplyIntent(file, identity(text), '', now)
+    expect(file.byMessageId.m1.replyIntent).toBeUndefined()
+  })
+})
+
+describe('wrapped plain text', () => {
+  const wrapped = [
+    'Following our call last week, I have gathered the notes from the editorial team',
+    'on the next steps, the order we might take them in, and who would lead each one,',
+    'together with a first view of which parts could run side by side and which must',
+    'wait for the board.',
+  ].join('\n')
+
+  it('rejoins lines a mail program wrapped, keeping every offset', () => {
+    const article = articleOf(`Dear Adam,\n\n${wrapped}\n\nWith thanks,\nMaren`)
+    expect(article.paragraphs[1].text).toBe(wrapped.replace(/\n/g, ' '))
+    expect(article.paragraphs[1].text.length).toBe(wrapped.length)
+    expect(article.paragraphs[2].text).toBe('With thanks,\nMaren')
+  })
+
+  it('keeps breaks before list items, after a colon, and in short-lined text', () => {
+    const list = 'Here are the next steps we agreed on the call yesterday afternoon, in order:\n- Confirm the dates for the spring pilot with the editorial board\n- Share the monthly counts of submissions from last year'
+    expect(articleOf(list).paragraphs[0].text).toBe(list)
+    const address = 'Northbridge Press\n12 Harbour Street\nWellington'
+    expect(articleOf(address).paragraphs[0].text).toBe(address)
+  })
+
+  it('still finds a passage noted across a wrapped line before the change', () => {
+    const { text } = articleOf(wrapped)
+    const quote = 'editorial team\non the next steps'
+    const start = wrapped.indexOf(quote)
+    expect(resolveNote(text, { quote, start, end: start + quote.length })).toEqual({ start, end: start + quote.length })
+  })
+})
+
 describe('reading room tools', () => {
   it('never hands a private note to the agent', async () => {
     const { getMessageNotesHandler, listKeptContextHandler } = await import('../agents/readingRoomHandlers')

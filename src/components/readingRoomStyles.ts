@@ -480,6 +480,52 @@ export const NoteEditor = styled.div`
   }
 `
 
+export const ReplyBox = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 14px 14px 12px;
+  border-radius: 14px;
+  background: var(--puremail-message-bg, #ffffff);
+  box-shadow: 0 1px 2px rgba(20, 25, 40, 0.06);
+  label {
+    font: 400 19px/1.2 ${READING_SERIF};
+    color: var(--platform-colors-text);
+  }
+  textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 84px;
+    padding: 9px 11px;
+    border: 1px solid var(--platform-colors-border);
+    border-radius: 9px;
+    background: var(--platform-colors-surface);
+    color: ${INK};
+    resize: vertical;
+    font: italic 400 16.5px/1.5 ${READING_SERIF};
+  }
+  textarea:focus {
+    outline: 2px solid color-mix(in srgb, ${INK} 45%, transparent);
+    outline-offset: 0;
+  }
+  .with {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--platform-colors-text-tertiary);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .done {
+    font-size: 12.5px;
+    color: var(--platform-colors-success, #1e7d4f);
+  }
+`
+
 export const WholeNote = styled.div`
   margin: 14px 14px 0;
   padding: 14px;
