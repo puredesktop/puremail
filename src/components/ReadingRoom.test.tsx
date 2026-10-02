@@ -16,7 +16,13 @@ it('expands and restores the reader and focuses the whole-message note',async()=
   expect(document.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('false')
   await act(async()=>button('Expand').click())
   expect(document.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('true')
-  await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+  const annotationInput = document.querySelector('.tiptap')!
+  const stopEscape = (event: Event) => event.stopPropagation()
+  annotationInput.addEventListener('keydown', stopEscape)
+  const escape = new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})
+  await act(async()=>annotationInput.dispatchEvent(escape))
+  expect(escape.defaultPrevented).toBe(true)
+  annotationInput.removeEventListener('keydown', stopEscape)
   expect(document.querySelector('[aria-label="Reading room"]')?.getAttribute('data-expanded')).toBe('false')
   expect(onBack).toHaveBeenCalledTimes(1)
   const slider=document.querySelector<HTMLInputElement>('input[aria-label="Reading text size"]')!
