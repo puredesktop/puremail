@@ -86,10 +86,15 @@ export function ReadingRoom({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setExpanded(false); onBack() }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        setExpanded(false)
+        onBack()
+      }
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
   }, [onBack])
 
   const save = async (passage: Pending, text: string) => {

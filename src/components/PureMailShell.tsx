@@ -1563,6 +1563,10 @@ export function PureMailShell({
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
 
+      // The annotation reader owns Escape and returns to its original view.
+      // Do not let the mail index handler intercept it during capture.
+      if (roomScreen?.kind === 'reading') return
+
       // The docked compose window layers its own Escape (open menus close
       // first, then it minimizes) — a press with focus inside it is its
       // business, never the reader's or the overlays'.
@@ -1614,6 +1618,7 @@ export function PureMailShell({
     mailSettingsOpen,
     providerDrawerOpen,
     reading,
+    roomScreen,
   ])
 
   const archiveSelectedThread = (): void => {
