@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assessAiInstructionRisks , formatThreadListTime, mailSystemNotice } from './mailShellHelpers'
+import { openingThreadShouldOpenDraft, assessAiInstructionRisks , formatThreadListTime, mailSystemNotice } from './mailShellHelpers'
 
 /**
  * The settings save boundary: instructions are assessed BEFORE they persist,
@@ -102,4 +102,10 @@ describe('mail system notices', () => {
     expect(mailSystemNotice(notice)).toBe(notice)
     expect(mailSystemNotice('Could not open calendar handoff.')).toContain('Could not')
   })
+})
+
+it('opens an Inbox reply draft from the virtual Drafts view', () => {
+  expect(openingThreadShouldOpenDraft(true, 'inbox', 'drafts')).toBe(true)
+  expect(openingThreadShouldOpenDraft(true, 'inbox', 'inbox')).toBe(false)
+  expect(openingThreadShouldOpenDraft(false, 'inbox', 'inbox')).toBe(true)
 })

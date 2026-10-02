@@ -262,6 +262,7 @@ import {
   mailSystemNotice,
   conversationKeyForThread,
   openingThreadShouldRepointMailbox,
+  openingThreadShouldOpenDraft,
   parseComposeRecipients,
   providerName,
   replyDraftTimestamp,
@@ -2486,7 +2487,7 @@ export function PureMailShell({
     const mailboxRole = store.mailboxes.find(
       mailbox => mailbox.id === thread.mailboxId,
     )?.role
-    if (!threadHasMessages || mailboxRole === 'drafts') {
+    if (openingThreadShouldOpenDraft(threadHasMessages, mailboxRole, selectedMailbox?.role)) {
       const editableDraft = store.drafts
         .filter(
           draft =>
@@ -3678,7 +3679,10 @@ export function PureMailShell({
       if (composeContext?.threadId && composeHoldsDraft(composeMode)) throw new Error('Close or save the open reply compose window before committing a drawer reply.')
       const result = drawerDrafts.current.commit(storeRef.current, selectedAccountIdRef.current, requestId, body)
       setStore(result.store)
-      setCommandNotice('Drawer reply applied. Saving and provider sync are pending.')
+      const draft = result.store.drafts.find(item => item.id === result.receipt.draftId)!
+      openThread(result.receipt.threadId)
+      openDraftInComposeWindow(draft)
+      setCommandNotice('Reply draft opened for review. Nothing sent; provider sync is pending.')
       return result.receipt
     },
     editDraft: (draftId, patch, expectedVersion) => {
