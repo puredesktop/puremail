@@ -23,8 +23,10 @@ it('expands and restores the reader and focuses the whole-message note',async()=
   await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(slider,'24');slider.dispatchEvent(new Event('input',{bubbles:true}))})
   expect(document.querySelector('output')?.textContent).toBe('24px')
   await act(async()=>button('General note').click())
+  await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10))})
   expect(document.activeElement?.id).toBe('reading-room-whole-note')
   expect(scroll).toHaveBeenCalled()
-  expect(document.querySelector('p[data-start]')?.textContent).toBe('A long sentence\ncontinues on another source line.')
+  expect(document.querySelector('.tiptap')?.textContent).toContain('A long sentence continues on another source line.')
+  expect(document.querySelector('aside[aria-label="Notes"]')).toBeNull()
  }finally{await act(async()=>root.unmount());host.remove()}
 })
