@@ -14,6 +14,11 @@ export const PENCIL = '#5d636b'
 export const PENCIL_TINT = '#efeee9'
 
 export const Room = styled.section`
+  &[data-expanded='true'] {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+  }
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -29,7 +34,9 @@ export const RoomBar = styled.header`
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 60px;
+  min-height: 60px;
+  flex-wrap: wrap;
+  padding-block: 10px;
   box-sizing: border-box;
   padding: 0 24px;
 `
@@ -189,7 +196,8 @@ export const Prose = styled.div`
   overflow-wrap: break-word;
   p {
     margin: 0 0 1.05em;
-    white-space: pre-line;
+    white-space: normal;
+    &[data-preserve-lines='true'] { white-space: pre-line; }
   }
   a {
     color: ${INK};
