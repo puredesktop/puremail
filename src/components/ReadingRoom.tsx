@@ -77,7 +77,8 @@ export function ReadingRoom({
   const record = room.file.byMessageId[identity.messageId]
   const source = message ? readerMailBody(message).visibleText : identity.article
   const article = useMemo(() => articleOf(source), [source])
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
+  const [fontSize, setFontSize] = useState(19)
   const [showPrivate, setShowPrivate] = useState(true)
   const [active, setActive] = useState<string | null>(null)
   const [selection, setSelection] = useState<(Pending & { x: number; y: number }) | null>(null)
@@ -180,6 +181,11 @@ export function ReadingRoom({
           {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
           {expanded ? 'Restore' : 'Expand'}
         </BarButton>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          Text size
+          <input type="range" aria-label="Reading text size" min={15} max={28} step={1} value={fontSize} onChange={event => setFontSize(Number(event.target.value))} style={{ width: 90 }} />
+          <output style={{ minWidth: 32 }}>{fontSize}px</output>
+        </label>
         <span style={{ flex: 1 }} />
         <BarButton type="button" onClick={() => {
           document.getElementById('reading-room-whole-note')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -230,7 +236,7 @@ export function ReadingRoom({
               {identity.from.name ? ` · ${identity.from.email}` : ''}
             </Dateline>
             <Rule />
-            <Prose ref={prose} onMouseUp={readSelection} onKeyUp={readSelection}>
+            <Prose $fontSize={fontSize} ref={prose} onMouseUp={readSelection} onKeyUp={readSelection}>
               {article.paragraphs.length ? (
                 article.paragraphs.map(paragraph => {
                   const pieces = paragraphPieces(paragraph, marks)

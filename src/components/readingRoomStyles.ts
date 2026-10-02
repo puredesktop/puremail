@@ -190,8 +190,8 @@ export const Rule = styled.div`
   background: #c9ccd2;
 `
 
-export const Prose = styled.div`
-  font: 400 19px/1.72 ${READING_SERIF};
+export const Prose = styled.div<{ $fontSize: number }>`
+  font: 400 ${({ $fontSize }) => $fontSize}px/1.72 ${READING_SERIF};
   color: #23272f;
   overflow-wrap: break-word;
   p {
