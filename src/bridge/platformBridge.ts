@@ -446,6 +446,11 @@ export async function fsWriteText(path: string, content: string): Promise<void> 
   await bridge.call(PLATFORM_BRIDGE_METHODS.FS_WRITE, [path, content])
 }
 
+/** Delete a file through the shell. */
+export async function fsDelete(path: string): Promise<void> {
+  await bridge.call(PLATFORM_BRIDGE_METHODS.FS_DELETE, [{ path }])
+}
+
 /** The names of the entries in a folder. Throws when the folder cannot be listed. */
 export async function fsListNames(folder: string): Promise<string[]> {
   const result = await bridge.call<{ entries?: Array<{ name?: string }> }>(

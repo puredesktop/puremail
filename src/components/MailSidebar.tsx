@@ -1,12 +1,14 @@
 import { useMemo } from 'react'
 import {
   Archive,
+  Bookmark,
   Clock,
   File,
   Folder,
   Inbox,
   LayoutGrid,
   MailMinus,
+  NotebookPen,
   PenLine,
   Search,
   Send,
@@ -63,6 +65,13 @@ export interface MailSidebarProps {
   /** The Runs index is on screen. */
   runsIndexActive: boolean
   openRunsIndex: () => void
+  /** The reading room's boxes: messages with notes, and messages kept as context. */
+  notesCount?: number
+  contextCount?: number
+  notesActive?: boolean
+  contextActive?: boolean
+  openNotes?: () => void
+  openContext?: () => void
   openRun: (runId: string) => void
 }
 
@@ -110,6 +119,12 @@ export function MailSidebar({
   activeRunId,
   runsIndexActive,
   openRunsIndex,
+  notesCount = 0,
+  contextCount = 0,
+  notesActive = false,
+  contextActive = false,
+  openNotes,
+  openContext,
   openRun,
 }: MailSidebarProps): React.ReactElement {
   // Every count comes from the same resolver the list renders, so a badge
@@ -299,6 +314,32 @@ export function MailSidebar({
           </NavRailItem>
         )
       })()}
+      {openNotes ? (
+        <NavRailItem
+          type="button"
+          $active={notesActive}
+          aria-current={notesActive ? 'true' : undefined}
+          onClick={openNotes}
+          title="Messages you have read and marked"
+        >
+          <NotebookPen aria-hidden="true" />
+          Notes
+          {notesCount > 0 && <NavRailCount>{notesCount}</NavRailCount>}
+        </NavRailItem>
+      ) : null}
+      {openContext ? (
+        <NavRailItem
+          type="button"
+          $active={contextActive}
+          aria-current={contextActive ? 'true' : undefined}
+          onClick={openContext}
+          title="Messages kept as context for your assistants"
+        >
+          <Bookmark aria-hidden="true" />
+          Context
+          {contextCount > 0 && <NavRailCount>{contextCount}</NavRailCount>}
+        </NavRailItem>
+      ) : null}
       {scheduledCount > 0 &&
         specialRow(
           'scheduled',

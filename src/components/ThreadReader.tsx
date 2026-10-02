@@ -14,6 +14,7 @@ import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -382,6 +383,10 @@ export interface ThreadReaderProps {
     message: MailMessage,
     response?: CalendarInviteResponse,
   ) => Promise<void>
+  /** Opens the shown message in the reading room. */
+  onReadMessage?: () => void
+  /** How many notes the shown message already has in the reading room. */
+  readNoteCount?: number
 }
 
 /**
@@ -494,6 +499,8 @@ export function ThreadReader({
   inviteActionState,
   openCalendarInvite,
   openCalendarInviteForMessage,
+  onReadMessage,
+  readNoteCount = 0,
 }: ThreadReaderProps): React.ReactElement {
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [threadMenuOpen, setThreadMenuOpen] = useState(false)
@@ -1481,6 +1488,16 @@ export function ThreadReader({
               <Sparkles aria-hidden="true" />
               <ReaderToolbarLabel>ask</ReaderToolbarLabel>
             </ReaderToolbarButton>
+            {onReadMessage ? (
+              <ReaderToolbarButton
+                type="button"
+                onClick={onReadMessage}
+                title="Read this message like an article, and note it for your reply or for yourself"
+              >
+                <BookOpen aria-hidden="true" />
+                <ReaderToolbarLabel>{readNoteCount ? `read · ${readNoteCount}` : 'read'}</ReaderToolbarLabel>
+              </ReaderToolbarButton>
+            ) : null}
           </ReaderToolbarSwapLayer>
           <ReaderToolbarSwapLayer $shown={subjectInToolbar}>
             {/* The subject's standalone row is off screen — this is now its
@@ -1503,6 +1520,11 @@ export function ThreadReader({
             >
               <Forward aria-hidden="true" />
             </ReaderToolbarButton>
+            {onReadMessage ? (
+              <ReaderToolbarButton type="button" aria-label="Read like an article" onClick={onReadMessage}>
+                <BookOpen aria-hidden="true" />
+              </ReaderToolbarButton>
+            ) : null}
           </ReaderToolbarSwapLayer>
         </ReaderToolbarSwap>
         {selectedThread.status === 'archived' ||
