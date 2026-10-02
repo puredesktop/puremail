@@ -40,13 +40,13 @@ export function MailAnnotationDocument({source,identity,room,showPrivate,noteKin
  const extensions=useMemo(()=>[...buildExtensions({features:{comments:true,smartTypography:false}}),MailSourceLock],[])
  const changed=(html:string)=>{
   const parsed=new DOMParser().parseFromString(html,'text/html'),ids=new Set<string>()
-  const grouped=new Map<string,{quote:string;text:string}>()
+  const grouped=new Map<string,{quote:string;text:string;paragraph:Element|null}>()
   for(const mark of parsed.querySelectorAll<HTMLElement>('[data-comment-id]')){
    const id=mark.dataset.commentId!;ids.add(id)
    const old=grouped.get(id)
    const content=mark.cloneNode(true) as HTMLElement
    content.querySelectorAll('br').forEach(br=>br.replaceWith('\n'))
-   grouped.set(id,{quote:(old?.quote??'')+(content.textContent??''),text:mark.dataset.commentText??''})
+   grouped.set(id,{quote:(old?.quote??'')+(old&&old.paragraph!==mark.closest('p')?'\n\n':'')+(content.textContent??''),text:mark.dataset.commentText??'',paragraph:mark.closest('p')})
   }
   for(const [id,mark] of grouped){
    const old=notes.find(n=>n.id===id)
