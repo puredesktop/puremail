@@ -4,6 +4,10 @@ import { MailDrawerDrafts } from './mailDrawerDrafts'
 
 function fixture() {
   const store = demoMailStoreForNow(new Date('2026-09-10T12:00:00Z'))
+  const at = '2026-09-10T12:00:00Z'
+  store.accounts = [{id:'account',provider:'imap',name:'User',email:'user@example.test',syncState:'online'}]
+  store.threads = [{id:'thread',accountId:'account',mailboxId:'inbox',subject:'Review',participants:[{name:'Sender',email:'sender@example.test'}],labels:[],status:'inbox',priority:'none',summary:'Please review.',lastMessageAt:at,syncState:'synced'}]
+  store.messages = [{id:'message',threadId:'thread',from:{name:'Sender',email:'sender@example.test'},to:[{name:'User',email:'user@example.test'}],subject:'Review',body:'Please review.',receivedAt:at,attachments:[],read:true}]
   store.drafts = []
   const thread = store.threads.find(item => item.accountId === store.accounts[0].id)!
   return { store, threadId: thread.id, accountId: thread.accountId, requests: new MailDrawerDrafts() }

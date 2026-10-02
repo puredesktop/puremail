@@ -452,3 +452,8 @@ export function mailSystemNotice(notice: string): string {
   const failed = /missing|denied|failed|could not|cannot|not allowed|unavailable|error/i.test(notice)
   return relevant && failed ? notice : ''
 }
+
+/** Drafts is a virtual view: replies can still belong to an Inbox conversation. */
+export function openingThreadShouldOpenDraft(hasMessages: boolean, threadRole: string | undefined, viewRole: string | undefined): boolean {
+  return !hasMessages || threadRole === 'drafts' || viewRole === 'drafts'
+}
