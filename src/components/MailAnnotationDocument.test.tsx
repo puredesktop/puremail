@@ -34,3 +34,12 @@ it('persists plugin comments with original source offsets and selected privacy',
   expect(editor.getText()).toBe('Original message text.')
  }finally{await act(async()=>root.unmount());host.remove()}
 })
+it('persists one annotation spanning two source paragraphs',async()=>{
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host),addNote=vi.fn()
+ try{
+  await act(async()=>root.render(<MailAnnotationDocument source={'First paragraph.\n\nSecond paragraph.'} identity={{messageId:'m'} as never} room={{file:{byMessageId:{}},addNote,updateNote:vi.fn(),removeNote:vi.fn()} as never} showPrivate noteKind="reply"/>))
+  const editor=(host.querySelector('.tiptap') as HTMLElement&{editor:Editor}).editor
+  await act(async()=>{editor.commands.setTextSelection({from:1,to:editor.state.doc.content.size-1});editor.commands.setCommentMark({commentId:'both',commentText:'About both paragraphs'})})
+  expect(addNote).toHaveBeenCalledWith({messageId:'m'},expect.objectContaining({id:'both',quote:'First paragraph.\n\nSecond paragraph.',start:0,end:35}))
+ }finally{await act(async()=>root.unmount());host.remove()}
+})
