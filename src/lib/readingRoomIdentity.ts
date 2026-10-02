@@ -16,7 +16,7 @@ export function identityOf(message: MailMessage | null, record: MessageAnnotatio
     }
   }
   if (!record) return null
-  const { notes: _notes, context: _context, replyRequestedAt: _requested, updatedAt: _updated, ...identity } = record
+  const { notes: _notes, context: _context, replyIntent: _intent, replyRequestedAt: _requested, updatedAt: _updated, ...identity } = record
   return identity
 }
 

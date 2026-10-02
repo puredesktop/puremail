@@ -54,6 +54,7 @@ export function getMessageNotesHandler(context: MailAgentToolContext, args: Reco
     threadId: identity.threadId,
     subject: identity.subject,
     from: identity.from,
+    ...(record?.replyIntent?.trim() ? { whatTheReaderWantsToSay: record.replyIntent.trim() } : {}),
     notes: record ? orderedNotes(record).map(noteForAgent).filter(Boolean) : [],
     ...(counts.private ? { privateNotes: `${counts.private} private ${counts.private === 1 ? 'note' : 'notes'}; they are the reader’s own and are never shown to you or used in a reply.` } : {}),
     ...(record?.context ? { keptAsContext: { title: record.context.title, scope: record.context.scope } } : {}),

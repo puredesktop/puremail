@@ -35,8 +35,8 @@ import {
   Rule,
   SelectionBar,
   Sheet,
+  ReplyBox,
   Switch,
-  WholeNote,
 } from './readingRoomStyles'
 
 interface Pending {
@@ -136,9 +136,22 @@ export function ReadingRoom({
     setSelection({ kind: 'reply', quote: article.text.slice(start, end), start, end, x: rect.left + rect.width / 2 - box.left, y: rect.top - box.top })
   }
 
+  // Escape closes the nearest thing: the selection bar, then (when no note
+  // is being written and no dialog is open) the room itself.
+  const escape = useRef<() => void>(() => undefined)
+  escape.current = () => {
+    if (selection) {
+      setSelection(null)
+      return
+    }
+    if (pending || editing || keeping) return
+    const focused = document.activeElement
+    if (focused instanceof HTMLTextAreaElement || focused instanceof HTMLInputElement) return
+    onBack()
+  }
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelection(null)
+      if (event.key === 'Escape' && !event.defaultPrevented) escape.current()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -196,16 +209,7 @@ export function ReadingRoom({
           {kept ? <BookmarkCheck aria-hidden="true" /> : <Bookmark aria-hidden="true" />}
           {kept ? 'Kept as context' : 'Keep as context'}
         </BarButton>
-        <BarButton
-          type="button"
-          data-primary="true"
-          disabled={!replyCount || !record}
-          title={replyCount ? 'The assistant drafts a reply from your notes for the reply. Private notes are never sent.' : 'Add a note for the reply first'}
-          onClick={() => record && onDraftReply(record)}
-        >
-          <Reply aria-hidden="true" />
-          {replyCount ? `Draft a reply from ${replyCount} ${replyCount === 1 ? 'note' : 'notes'}` : 'Draft a reply'}
-        </BarButton>
+
       </RoomBar>
       {room.error ? <Notice role="status">{room.error}</Notice> : null}
 
@@ -282,6 +286,19 @@ export function ReadingRoom({
               <h2>Notes</h2>
               <span>blue ink for the reply, pencil for you</span>
             </MarginHead>
+            <ReplyPanel
+              key={identity.messageId}
+              intent={record?.replyIntent ?? ''}
+              replyCount={replyCount}
+              privateCount={counts.private}
+              requestedAt={record?.replyRequestedAt}
+              onSave={text => void room.setReplyIntent(identity, text)}
+              onDraft={text => {
+                void room.setReplyIntent(identity, text)
+                const base: MessageAnnotations = record ?? { ...identity, notes: [], updatedAt: new Date().toISOString() }
+                onDraftReply({ ...base, replyIntent: text.trim() || undefined })
+              }}
+            />
             {pending ? <PendingNote pending={pending} onSave={text => void save(pending, text)} onCancel={() => setPending(null)} /> : null}
             {!visible.length && !pending ? (
               <p style={{ margin: '0 14px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--platform-colors-text-tertiary)' }}>
@@ -343,20 +360,6 @@ export function ReadingRoom({
                 {counts.private} private {counts.private === 1 ? 'note' : 'notes'} hidden
               </p>
             ) : null}
-            <WholeNote>
-              <label htmlFor="reading-room-whole-note">A note on the whole message</label>
-              <InkEditor
-                key={`whole-${record?.notes.length ?? 0}`}
-                id="reading-room-whole-note"
-                initialText=""
-                initialKind="reply"
-                allowHighlight={false}
-                saveLabel="Add"
-                onSave={(text, kind) => {
-                  if (text.trim()) void save({ kind, quote: '', start: 0, end: 0 }, text)
-                }}
-              />
-            </WholeNote>
           </Margin>
         </RoomColumns>
       </RoomScroll>
@@ -374,6 +377,63 @@ export function ReadingRoom({
         />
       ) : null}
     </Room>
+  )
+}
+
+/**
+ * What the reader wants to say, written here in the room. The draft takes
+ * it with the whole message and the notes for the reply; private notes never.
+ */
+function ReplyPanel({
+  intent,
+  replyCount,
+  privateCount,
+  requestedAt,
+  onSave,
+  onDraft,
+}: {
+  intent: string
+  replyCount: number
+  privateCount: number
+  requestedAt?: string
+  onSave: (text: string) => void
+  onDraft: (text: string) => void
+}): React.ReactElement {
+  const [text, setText] = useState(intent)
+  const ready = text.trim().length > 0 || replyCount > 0
+  const notes = replyCount ? `${replyCount} ${replyCount === 1 ? 'note' : 'notes'} for the reply` : ''
+  return (
+    <ReplyBox>
+      <label htmlFor="reading-room-intent">Your reply</label>
+      <textarea
+        id="reading-room-intent"
+        rows={3}
+        value={text}
+        placeholder="What do you want to say? The gist of your answer, the tone, anything to include."
+        onChange={event => setText(event.target.value)}
+        onBlur={() => {
+          if (text !== intent) onSave(text)
+        }}
+        onKeyDown={event => {
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && ready) {
+            event.preventDefault()
+            onDraft(text)
+          }
+        }}
+      />
+      <p className="with">
+        {notes ? `The draft also answers your ${notes}, with the whole message in view.` : 'Select words in the message to note what to answer.'}
+        {privateCount ? ' Private notes stay with you.' : ''}
+      </p>
+      <div className="row">
+        {requestedAt ? <span className="done">Reply drafted {new Date(requestedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span> : null}
+        <span style={{ flex: 1 }} />
+        <BarButton type="button" data-primary="true" disabled={!ready} onClick={() => onDraft(text)} title="The assistant in the drawer writes the draft; you read it before anything is sent">
+          <Reply aria-hidden="true" />
+          {requestedAt ? 'Draft it again' : 'Draft the reply'}
+        </BarButton>
+      </div>
+    </ReplyBox>
   )
 }
 
