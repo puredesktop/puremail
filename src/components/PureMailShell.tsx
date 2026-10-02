@@ -97,7 +97,7 @@ import {
 import { mergeThreadFragment } from '../lib/mailStoreData'
 import { replyStateInStore } from '../lib/mailReplyState'
 import { MailDrawerDrafts, draftEditVersion } from '../lib/mailDrawerDrafts'
-import { sendPromptToDrawerAgent, toggleAgentDrawer } from '../bridge/platformBridge'
+import { osReveal, sendPromptToDrawerAgent, toggleAgentDrawer } from '../bridge/platformBridge'
 import {
   buildInviteRsvpDraft,
   isInviteRsvpResponse,
@@ -284,6 +284,11 @@ import {
   type SendStoreDraftResult,
 } from './RunScreen'
 import { RunsIndex } from './RunsIndex'
+import { ReadingRoom } from './ReadingRoom'
+import { identityOf } from '../lib/readingRoomIdentity'
+import { ContextIndex, NotesIndex } from './ReadingLibrary'
+import { useReadingRoom } from '../hooks/useReadingRoom'
+import { noteCounts, replyBrief, type MessageAnnotations, type MessageIdentity } from '../lib/readingRoom'
 import { RunSetupScreen } from './RunSetupScreen'
 import {
   activeRuns,
@@ -302,6 +307,12 @@ import {
 } from '../lib/mailRuns'
 
 type MailRailFilter = 'attachments'
+
+/** The reading room or one of its boxes, when it holds the content column. */
+type RoomScreenState =
+  | { kind: 'reading'; messageId: string; back: 'thread' | 'notes' | 'context' }
+  | { kind: 'notes' }
+  | { kind: 'context' }
 
 /** Which send-run surface holds the content column, if any. */
 type RunScreenState =
@@ -594,6 +605,10 @@ export function PureMailShell({
   // Send runs: the index, a run's loop, or a run's setup — replacing the
   // list/reader in the content column while open.
   const [runScreen, setRunScreen] = useState<RunScreenState | null>(null)
+  // The reading room and its Notes and Context boxes, which also replace
+  // the list/reader while open.
+  const [roomScreen, setRoomScreen] = useState<RoomScreenState | null>(null)
+  const readingRoom = useReadingRoom()
   const [attachmentPreview, setAttachmentPreview] =
     useState<AttachmentPreviewState | null>(null)
   // Keyed `${messageId}:${attachmentId}` — a failed remote fetch shows an
@@ -1500,7 +1515,7 @@ export function PureMailShell({
     return () => window.clearInterval(interval)
   }, [autoFetchEnabled, mailFetchIntervalMinutes, refreshMail])
 
-  const requestDraftInDrawer = async (threadId: string, brief?: string): Promise<void> => {
+  const requestDraftInDrawer = async (threadId: string, brief?: string): Promise<boolean> => {
     try {
       await toggleAgentDrawer({ open: true })
       await sendPromptToDrawerAgent({ sessionId: drawerSessionId, content: [
@@ -1508,8 +1523,10 @@ export function PureMailShell({
         JSON.stringify({ threadId, accountId: selectedAccountIdRef.current, instructions: brief }),
       ].join('\n') })
       setCommandNotice('Reply requested in the drawer. A draft will appear after it is committed.')
+      return true
     } catch (error) {
       setCommandNotice(error instanceof Error ? error.message : 'Could not reach the drawer.')
+      return false
     }
   }
 
@@ -2455,6 +2472,7 @@ export function PureMailShell({
     // selection change beside a persistent pane.
     setReading(true)
     setRunScreen(null)
+    setRoomScreen(null)
     if (thread.snoozeReturnedAt) {
       setStore(current => clearSnoozeReturnMarker(current, thread.id))
     }
@@ -2619,7 +2637,37 @@ export function PureMailShell({
   }
   const openRunsIndex = (): void => {
     setReading(false)
+    setRoomScreen(null)
     setRunScreen({ kind: 'index' })
+  }
+  const openRoomBox = (kind: 'notes' | 'context'): void => {
+    setReading(false)
+    setRunScreen(null)
+    setRoomScreen({ kind })
+  }
+  const openReadingRoom = (messageId: string, back: 'thread' | 'notes' | 'context'): void => {
+    setRunScreen(null)
+    setRoomScreen({ kind: 'reading', messageId, back })
+  }
+  const draftReplyFromNotes = (record: MessageAnnotations): void => {
+    const brief = replyBrief(record)
+    if (!brief) return
+    void requestDraftInDrawer(record.threadId, brief).then(sent => (sent ? readingRoom.markReplyRequested(record.messageId) : undefined))
+  }
+  const writeContextSummary = async (identity: MessageIdentity): Promise<void> => {
+    try {
+      await toggleAgentDrawer({ open: true })
+      await sendPromptToDrawerAgent({
+        sessionId: drawerSessionId,
+        content: [
+          'Write a one-sentence summary of this email for my kept context: what it is about and what is being asked. Read it first with getThread (threadId); use only what the message says. Then save it with keepAsContext, passing messageId and summary (keep any title, topics and sharing choices already set). Show me the sentence.',
+          JSON.stringify({ messageId: identity.messageId, threadId: identity.threadId, subject: identity.subject }),
+        ].join('\n'),
+      })
+      setCommandNotice('Asked the assistant for a sentence. It appears in Context once saved.')
+    } catch (error) {
+      setCommandNotice(error instanceof Error ? error.message : 'Could not reach the drawer.')
+    }
   }
   const openRunSetup = (runId: string): void => {
     closeComposeForRun()
@@ -3553,6 +3601,7 @@ export function PureMailShell({
 
   usePureMailAgentTools(Boolean(selectedAccount), {
     store,
+    readingRoom,
     getStore: () => storeRef.current,
     accountId: selectedAccount?.id,
     currentQuery,
@@ -3861,6 +3910,7 @@ export function PureMailShell({
       if (
         composeVisible ||
         runScreen !== null ||
+        roomScreen !== null ||
         (readerMode === 'reply' && activeReplyDraft && !activeReplyDraft.sentAt)
       ) {
         return
@@ -4064,6 +4114,7 @@ export function PureMailShell({
           exitReading={() => {
             setReading(false)
             setRunScreen(null)
+            setRoomScreen(null)
           }}
           openCompose={openCompose}
           unsubscribeCount={unsubscribeCandidates.length}
@@ -4077,12 +4128,18 @@ export function PureMailShell({
           runsIndexActive={runScreen?.kind === 'index'}
           openRunsIndex={openRunsIndex}
           openRun={openRun}
+          notesCount={Object.values(readingRoom.file.byMessageId).filter(record => record.notes.length).length}
+          contextCount={Object.values(readingRoom.file.byMessageId).filter(record => record.context).length}
+          notesActive={roomScreen?.kind === 'notes' || (roomScreen?.kind === 'reading' && roomScreen.back === 'notes')}
+          contextActive={roomScreen?.kind === 'context' || (roomScreen?.kind === 'reading' && roomScreen.back === 'context')}
+          openNotes={() => openRoomBox('notes')}
+          openContext={() => openRoomBox('context')}
         />
 
         {/* Region 3. The list and the reader are mutually exclusive
             full-width surfaces; compose replaces both while open. */}
         <ContentColumn>
-          {composeMode === 'full' || runScreen ? null : readingActive && selectedThread ? null : (
+          {composeMode === 'full' || runScreen || roomScreen ? null : readingActive && selectedThread ? null : (
             <>
         <ThreadListToolbar
           store={store}
@@ -4501,6 +4558,48 @@ export function PureMailShell({
             variant="full"
             onDock={() => setComposeMode('docked')}
           />
+        ) : roomScreen?.kind === 'reading' ? (
+          (() => {
+            const message = store.messages.find(item => item.id === roomScreen.messageId) ?? null
+            const record = readingRoom.file.byMessageId[roomScreen.messageId]
+            const identity = identityOf(message, record, selectedAccount?.id)
+            const back = () => setRoomScreen(roomScreen.back === 'thread' ? null : { kind: roomScreen.back })
+            if (!identity) return null
+            return (
+              <ReadingRoom
+                key={roomScreen.messageId}
+                message={message}
+                identity={identity}
+                room={readingRoom}
+                onBack={back}
+                onDraftReply={draftReplyFromNotes}
+                onWriteSummary={identity => void writeContextSummary(identity)}
+              />
+            )
+          })()
+        ) : roomScreen?.kind === 'notes' ? (
+          <NotesIndex
+            file={readingRoom.file}
+            onBack={() => setRoomScreen(null)}
+            onOpen={messageId => openReadingRoom(messageId, 'notes')}
+            onDraftReply={draftReplyFromNotes}
+          />
+        ) : roomScreen?.kind === 'context' ? (
+          <ContextIndex
+            file={readingRoom.file}
+            onBack={() => setRoomScreen(null)}
+            onOpen={messageId => openReadingRoom(messageId, 'context')}
+            onScope={(record, scope) => {
+              const identity = identityOf(null, record)
+              if (identity && record.context) void readingRoom.keepContext(identity, { ...record.context, scope })
+            }}
+            onRemove={record => {
+              const identity = identityOf(null, record)
+              if (identity) void readingRoom.keepContext(identity, undefined)
+            }}
+            onReveal={path => void osReveal(path)}
+            notice={readingRoom.error}
+          />
         ) : runScreen?.kind === 'index' ? (
           <RunsIndex
             runs={activeRuns(store)}
@@ -4570,6 +4669,15 @@ export function PureMailShell({
             selectedAccount={selectedAccount}
             selectedMessages={selectedMessages}
             selectedThreadReplyDrafts={selectedThreadReplyDrafts}
+            onReadMessage={() => {
+              const id = activeMessageTab?.id ?? selectedMessages.filter(item => !item.isDraft).at(-1)?.id
+              if (id) openReadingRoom(id, 'thread')
+            }}
+            readNoteCount={(() => {
+              const id = activeMessageTab?.id ?? selectedMessages.filter(item => !item.isDraft).at(-1)?.id
+              const counts = noteCounts(id ? readingRoom.file.byMessageId[id] : undefined)
+              return counts.reply + counts.private + counts.highlight
+            })()}
             activeMessageTab={activeMessageTab}
             activeReplyDraft={activeReplyDraft}
               selectedThreadDrafting={selectedThreadDrafting}

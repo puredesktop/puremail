@@ -60,6 +60,13 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   'previewRunItem',
   'addDraftsToRun',
   'archiveRun',
+  // The reading room: notes in two inks, and messages kept as context.
+  // Private notes are never returned by any tool.
+  'getMessageNotes',
+  'addMessageNote',
+  'listKeptContext',
+  'keepAsContext',
+  'removeKeptContext',
 ] as const
 
 export const PUREMAIL_AGENT_LOG_LABEL = 'puremail'
@@ -79,6 +86,8 @@ export class AgentMailToolError extends Error {
  */
 export interface MailAgentToolContext {
   store: MailStore
+  /** The reading room's notes and kept context. */
+  readingRoom?: import('../hooks/useReadingRoom').ReadingRoomStore
   /** Fresh state after asynchronous storage work. */
   getStore?: () => MailStore
   accountId: string | undefined

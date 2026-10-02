@@ -66,6 +66,13 @@ import {
   setRunTemplateHandler,
   skipRunItemHandler,
 } from '../agents/runHandlers'
+import {
+  addMessageNoteHandler,
+  getMessageNotesHandler,
+  keepAsContextHandler,
+  listKeptContextHandler,
+  removeKeptContextHandler,
+} from '../agents/readingRoomHandlers'
 
 /**
  * Registers PureMail's agent tools with the shell. Without this the tools
@@ -89,6 +96,11 @@ export function usePureMailAgentTools(
     errorType: AgentMailToolError,
     handlers: {
       getMailContext: async () => getMailContextHandler(contextRef.current),
+      getMessageNotes: async invoke => getMessageNotesHandler(contextRef.current, invoke.arguments ?? {}),
+      addMessageNote: async invoke => addMessageNoteHandler(contextRef.current, invoke.arguments ?? {}),
+      listKeptContext: async invoke => listKeptContextHandler(contextRef.current, invoke.arguments ?? {}),
+      keepAsContext: async invoke => keepAsContextHandler(contextRef.current, invoke.arguments ?? {}),
+      removeKeptContext: async invoke => removeKeptContextHandler(contextRef.current, invoke.arguments ?? {}),
       listThreads: async invoke =>
         listThreadsHandler(contextRef.current, invoke.arguments),
       searchAllMail: async invoke =>

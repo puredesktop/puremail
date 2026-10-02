@@ -1132,6 +1132,140 @@
             "required": ["runId"]
           },
           "requiresApproval": true
+        },
+        {
+          "name": "getMessageNotes",
+          "description": "Reads the reader\u2019s notes on one message from the reading room: notes for the reply (what to say about a passage) and highlights, in reading order. Private notes are never returned; the result only says how many there are. Pass messageId, or threadId for its latest message. Use this before drafting a reply from the reader\u2019s notes.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "threadId": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "requiresApproval": false,
+          "risk": "read"
+        },
+        {
+          "name": "addMessageNote",
+          "description": "Adds a note for the reply (kind \"reply\", with note: what to say) or a highlight (kind \"highlight\") to a message in the reading room. passage must be words copied exactly from the message; leave it out for a note on the whole message. You cannot write private notes: they are the reader\u2019s alone. Only add notes the person asked for.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "threadId": {
+                "type": "string"
+              },
+              "passage": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "reply",
+                  "highlight"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "requiresApproval": true,
+          "risk": "write"
+        },
+        {
+          "name": "listKeptContext",
+          "description": "Searches the messages the reader kept as context: each with its title, one-sentence summary, topics and only what the reader chose to include (the message text, their notes for the reply, and private notes only if they ticked them). Filter by query, topic or messageId. Use it when the person asks about something they may have kept, or when writing to someone they kept a message from. Always name the source: \u201cFrom your PureMail context: <title>\u201d.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "limit": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false
+          },
+          "requiresApproval": false,
+          "risk": "read"
+        },
+        {
+          "name": "keepAsContext",
+          "description": "Keeps a message as context, or changes what is kept: title, summary (one sentence, only what the message says), topics, scope (\"mail\": PureMail only; \"all\": also written as a Markdown file under Pure/Context/PureMail for any app\u2019s assistant), includeMessage and includeReplyNotes. Whether private notes go in is the reader\u2019s choice only and never changes here. Pass messageId. Ask before sharing with all apps.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "topics": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "mail",
+                  "all"
+                ]
+              },
+              "includeMessage": {
+                "type": "boolean"
+              },
+              "includeReplyNotes": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "messageId"
+            ],
+            "additionalProperties": false
+          },
+          "requiresApproval": true,
+          "risk": "write"
+        },
+        {
+          "name": "removeKeptContext",
+          "description": "Stops keeping a message as context and removes its shared file, if it had one. The message and its notes stay. Pass messageId; confirm with the person first.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "messageId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "messageId"
+            ],
+            "additionalProperties": false
+          },
+          "requiresApproval": true,
+          "risk": "write"
         }
       ]
     },
