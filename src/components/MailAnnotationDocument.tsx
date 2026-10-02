@@ -56,7 +56,7 @@ export function MailAnnotationDocument({source,identity,room,showPrivate,noteKin
    if(!match)continue
    void room.addNote(identity,{id,kind:noteKind,quote:match[0],start:match.index,end:match.index+match[0].length,text:mark.text,createdAt:new Date().toISOString()})
   }
-  for(const note of visible)if(resolveNote(article.text,note)&&!ids.has(note.id))void room.removeNote(identity.messageId,note.id)
+  for(const note of visible)if(value.includes(`data-comment-id="${escape(note.id)}"`)&&resolveNote(article.text,note)&&!ids.has(note.id))void room.removeNote(identity.messageId,note.id)
  }
  return <DocumentEditor className="mail-annotation-document" value={value} extensions={extensions} enableComments showToolbar={false} onChange={changed} />
 }
