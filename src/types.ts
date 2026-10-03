@@ -836,6 +836,7 @@ export interface MailProvider {
    * required methods".
    */
   readonly capabilities?: MailProviderCapabilities
+  testConnection?(): Promise<{ receiving: string; sending: string }>
   fetchStore(): Promise<MailStore>
   sync(store: MailStore): Promise<MailStore>
   send(input: SendDraftInput): Promise<MailMessage>
@@ -911,7 +912,7 @@ export interface MailProvider {
    * "removed at the provider", and re-imported the replacement as a brand
    * new record (identity churn mid-edit).
    */
-  updateDraft?(providerDraftId: string, draft: Draft): Promise<string | void | { providerDraftId: string; warning?: string; staleProviderDraftIds?: string[] }>
+  updateDraft?(providerDraftId: string, draft: Draft): Promise<string | void | { providerDraftId: string; warning?: string; staleProviderDraftIds?: string[]; attachments?: Attachment[] }>
   deleteDraft?(providerDraftId: string): Promise<void>
   /**
    * The provider's own drafts. Without this the draft sync was one-way by

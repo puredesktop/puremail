@@ -160,6 +160,18 @@ describe('mail persistence', () => {
     expect(store?.threads).toHaveLength(1)
   })
 
+  it('repairs historical attachment-preparation errors without clearing genuine send uncertainty', async () => {
+    files.set(MAIL_STORE_FILE, storeWith([]))
+    files.set(MAIL_DRAFTS_FILE, { drafts: [
+      { ...draft('attachment', 'Keep body'), sendState: 'uncertain', sendError: "Error invoking remote method 'shell:mailTransport:fetchAttachment': No message with uid 442 in Drafts" },
+      { ...draft('smtp', 'Keep body'), sendState: 'uncertain', sendError: 'SMTP socket timed out after submission' },
+    ] })
+    const { store } = await readPersistedMailStore()
+    expect(store?.drafts[0]).toMatchObject({ sendState: 'failed' })
+    expect(store?.drafts[0].sendError).toContain('reattach the missing file')
+    expect(store?.drafts[1]).toMatchObject({ sendState: 'uncertain' })
+  })
+
   it('round-trips a store through write and read', async () => {
     await writePersistedMailStore(storeWith([draft('d1', 'Round trip.')]))
     const { store, migratedFromLocalStorage } = await readPersistedMailStore()

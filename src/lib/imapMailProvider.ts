@@ -143,6 +143,7 @@ export interface ImapTransport {
 }
 
 export interface SmtpTransport {
+  verify?(): Promise<void>
   send(rawMime: string, from: string, to: string[]): Promise<void>
 }
 
@@ -327,6 +328,13 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
 
 export function bridgeSmtpTransport(config: BridgeTransportConfig): SmtpTransport {
   return {
+    async verify() {
+      await callMailTransport('MAIL_TRANSPORT_SMTP_SEND', {
+        profileId: config.profileId, smtp: config.smtp, username: config.username,
+        passwordSecretKey: config.passwordSecretKey,
+        verifyOnly: true, from: '', to: [], rawMime: '',
+      })
+    },
     async send(rawMime, from, to) {
       try {
       await callMailTransport('MAIL_TRANSPORT_SMTP_SEND', {
@@ -1063,10 +1071,18 @@ export class ImapMailProvider implements MailProvider {
   async updateDraft(
     providerDraftId: string,
     draft: Draft,
-  ): Promise<string | { providerDraftId: string; warning?: string; staleProviderDraftIds?: string[] }> {
+  ): Promise<string | { providerDraftId: string; warning?: string; staleProviderDraftIds?: string[]; attachments?: Attachment[] }> {
     const path = this.draftsFolderPath()
     const previousUid = ImapMailProvider.draftUid(providerDraftId)
-    const raw = await this.draftRaw(draft)
+    // IMAP replacement deletes the UID attachment references point at.
+    // Keep the fetched bytes locally before removing that message.
+    const attachments = await Promise.all(draft.attachments.map(async attachment => {
+      if (attachment.content || attachment.remote?.provider !== 'imap') return attachment
+      const hydrated = await this.getAttachmentContent(undefined as unknown as MailMessage, attachment)
+      const { remote: _remote, ...local } = hydrated
+      return local
+    }))
+    const raw = await this.draftRaw({ ...draft, attachments })
     let uid: number | void
     try { uid = await this.options.imap.append(path, raw) } catch (error) {
       throw new MailDraftSaveUncertain(`The account did not confirm the draft save. Check its Drafts folder before retrying. (${error instanceof Error ? error.message : 'Connection failed'})`)
@@ -1076,12 +1092,14 @@ export class ImapMailProvider implements MailProvider {
     }
     if (previousUid !== null && this.options.imap.deleteMessage) {
       try { await this.options.imap.deleteMessage(path, previousUid) } catch {
-        return { providerDraftId: `imap_draft_${uid}`, staleProviderDraftIds: [...(draft.staleProviderDraftIds ?? []), providerDraftId], warning: 'Your edited draft was saved, but the previous account copy could not be removed. Older copies in Drafts must not be sent.' }
+        return { attachments, providerDraftId: `imap_draft_${uid}`, staleProviderDraftIds: [...(draft.staleProviderDraftIds ?? []), providerDraftId], warning: 'Your edited draft was saved, but the previous account copy could not be removed. Older copies in Drafts must not be sent.' }
       }
     }
     // IMAP has no edit: the stored draft was REPLACED. Report the new id
     // so the caller re-points the local record at it.
-    return `imap_draft_${uid}`
+    return attachments.some((attachment, index) => attachment !== draft.attachments[index])
+      ? { providerDraftId: `imap_draft_${uid}`, attachments }
+      : `imap_draft_${uid}`
   }
 
   /**
@@ -1123,9 +1141,22 @@ export class ImapMailProvider implements MailProvider {
     await this.options.imap.deleteMessage(this.draftsFolderPath(), uid)
   }
 
+  async testConnection(): Promise<{ receiving: string; sending: string }> {
+    const [incoming, outgoing] = await Promise.allSettled([
+      this.options.imap.listFolders(),
+      this.options.smtp.verify ? this.options.smtp.verify() : Promise.reject(new Error('Outgoing connection testing is unavailable in this version.')),
+    ])
+    const result = (value: PromiseSettledResult<unknown>, success: string) => value.status === 'fulfilled'
+      ? success : `Failed: ${value.reason instanceof Error ? value.reason.message : String(value.reason)}`
+    return { receiving: result(incoming, 'IMAP connection verified'), sending: result(outgoing, 'SMTP authentication verified; no test email sent') }
+  }
+
   async send(input: SendDraftInput): Promise<MailMessage> {
     const messageId = input.draft.sendMessageId ?? `<puremail-${crypto.randomUUID()}@${this.options.email.split('@')[1] || 'localhost'}>`
-    const raw = await this.draftRaw(input.draft, messageId)
+    let raw: string
+    try { raw = await this.draftRaw(input.draft, messageId) } catch (error) {
+      throw new MailSendError(`Message not sent: ${error instanceof Error ? error.message : 'Attachments could not be prepared.'}`, 'not_sent')
+    }
     const warnings: string[] = []
     const recipients = [
       ...input.draft.to,
