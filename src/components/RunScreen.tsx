@@ -83,6 +83,7 @@ export type RunEditorPlumbing = Pick<
   | 'schedulePendingSend'
   | 'undoPendingSend'
   | 'markDraftSending'
+  | 'sendDraftThroughProvider'
   | 'setSelectedMailboxId'
   | 'setSelectedThreadId'
   | 'setCommandNotice'

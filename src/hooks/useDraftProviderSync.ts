@@ -1,3 +1,5 @@
+import { MailSendError } from '../lib/mailDelivery'
+import { draftContentRevision, MailDraftSaveUncertain } from '../lib/mailDeliveryStatus'
 import { useEffect, useRef, useState } from 'react'
 import { mailProviderSupports } from '../lib/mailProviderCapabilities'
 import type { Draft, MailProvider, MailStore } from '../types'
@@ -18,13 +20,13 @@ type DraftSyncProvider = Pick<
 
 /** A draft with nothing in it yet is not worth a row in the user's real Drafts. */
 function worthSyncing(draft: Draft): boolean {
-  if (draft.sentAt) return false
+  if (draft.sentAt || draft.providerSaveUncertain || draft.providerConflict || draft.sendState === 'uncertain') return false
   if (draft.syncState === 'synced') return false
   // 'failed' means we already tried and the provider would not take it.
   // Retrying on every render would append a duplicate per attempt on a
   // provider whose create half-succeeds. An edit resets it to 'pending',
   // which is the retry.
-  if (draft.syncState === 'failed') return false
+  if (draft.syncState === 'failed' || draft.syncState === 'conflict') return false
   // An attachment is content too: a draft that is only a file the agent
   // attached still belongs in the account's Drafts.
   return Boolean(
@@ -38,6 +40,14 @@ function sameRevision(left: Draft, right: Draft): boolean {
     syncState: _state,
     providerDraftId: _id,
     providerDraftMessageId: _message,
+    providerRevision: _revision,
+    providerConflict: _conflict,
+    providerSaveWarning: _saveWarning,
+    providerSaveUncertain: _saveUncertain,
+    staleProviderDraftIds: _staleIds,
+    sendState: _sendState,
+    sendMessageId: _sendId,
+    sendError: _sendError,
     ...draft
   }: Draft) => draft
   return JSON.stringify(content(left)) === JSON.stringify(content(right))
@@ -79,6 +89,8 @@ export function useDraftProviderSync(input: {
    * next sync then pulls back in as a new draft. Discard, and it returns.
    */
   forgetDraft: (draft: Draft) => void
+  prepareSend: (draft: Draft) => Promise<Draft>
+  releaseSend: (draftId: string) => void
 } {
   const { store, setStore, provider, onError, onNotice } = input
   // Account changes start a fresh lifecycle. Pending completions keep their
@@ -89,6 +101,10 @@ export function useDraftProviderSync(input: {
     inFlight: new Set<string>(),
     attempts: new Map<string, number>(),
     discarded: new Set<string>(),
+    sending: new Set<string>(),
+    latestIds: new Map<string, string>(),
+    latestPatches: new Map<string, Partial<Draft>>(),
+    waiters: new Map<string, Array<() => void>>(),
   })
   if (scopeRef.current.provider !== provider) {
     scopeRef.current = {
@@ -97,6 +113,10 @@ export function useDraftProviderSync(input: {
       inFlight: new Set(),
       attempts: new Map(),
       discarded: new Set(),
+      sending: new Set(),
+      latestIds: new Map(),
+      latestPatches: new Map(),
+      waiters: new Map(),
     }
   }
   const scope = scopeRef.current
@@ -156,7 +176,7 @@ export function useDraftProviderSync(input: {
     if (typeof window === 'undefined') return
     if (!provider || !mailProviderSupports(provider, 'drafts')) return
     const pending = store.drafts.filter(
-      draft => worthSyncing(draft) && !scope.inFlight.has(draft.id),
+      draft => worthSyncing(draft) && !scope.inFlight.has(draft.id) && !scope.sending.has(draft.id),
     )
     if (pending.length === 0) return
 
@@ -170,14 +190,18 @@ export function useDraftProviderSync(input: {
         )
         const active = providerRef.current
         if (!current || !worthSyncing(current) || !active) continue
-        if (scope.inFlight.has(current.id)) continue
+        if (scope.inFlight.has(current.id) || scope.sending.has(current.id)) continue
         if (scope.discarded.has(current.id)) continue
         scope.inFlight.add(current.id)
 
         const settle = (): void => {
           scope.inFlight.delete(current.id)
+          for (const resolve of scope.waiters.get(current.id) ?? []) resolve()
+          scope.waiters.delete(current.id)
         }
         const finish = (patch: Partial<Draft>): void => {
+          scope.latestPatches.set(current.id, { ...(scope.latestPatches.get(current.id) ?? {}), ...patch })
+          if (patch.providerDraftId) scope.latestIds.set(current.id, patch.providerDraftId)
           settle()
           scope.attempts.delete(current.id)
           // Discarded while this was in flight: the provider draft it just
@@ -198,6 +222,7 @@ export function useDraftProviderSync(input: {
               return {
                 ...item,
                 ...patch,
+                providerRevision: draftContentRevision(current),
                 syncState: sameRevision(item, current) ? 'synced' : 'pending',
               }
             }),
@@ -223,14 +248,15 @@ export function useDraftProviderSync(input: {
           scope.attempts.set(current.id, attempts)
           const reason =
             error instanceof Error ? error.message : 'the provider refused it'
-          if (attempts >= MAX_SYNC_ATTEMPTS) {
+          const uncertainSave = error instanceof MailDraftSaveUncertain || error instanceof MailSendError && error.outcome === 'uncertain'
+          if (attempts >= MAX_SYNC_ATTEMPTS || uncertainSave) {
             setStore(latest => ({
               ...latest,
               drafts: latest.drafts.map(item =>
                 item.id === current.id &&
                 !item.sentAt &&
                 sameRevision(item, current)
-                  ? { ...item, syncState: 'failed' as const }
+                  ? { ...item, syncState: 'failed' as const, providerSaveUncertain: uncertainSave, providerSaveWarning: uncertainSave ? reason : undefined }
                   : item,
               ),
             }))
@@ -252,17 +278,10 @@ export function useDraftProviderSync(input: {
           }
           void active
             .updateDraft(current.providerDraftId, current)
-            .then(replacementId =>
-              finish({
-                syncState: 'synced',
-                // IMAP updates REPLACE the stored draft; re-point the local
-                // record or the next sync deletes it as gone-at-provider
-                // and re-imports the replacement as a new record.
-                ...(typeof replacementId === 'string' && replacementId
-                  ? { providerDraftId: replacementId }
-                  : {}),
-              }),
-            )
+            .then(replacement => {
+              const replacementId = typeof replacement === 'string' ? replacement : replacement?.providerDraftId
+              finish({ syncState: 'synced', providerSaveWarning: typeof replacement === 'object' ? replacement.warning : current.providerSaveWarning, staleProviderDraftIds: typeof replacement === 'object' ? replacement.staleProviderDraftIds : current.staleProviderDraftIds, ...(replacementId ? { providerDraftId: replacementId } : {}) })
+            })
             .catch(fail)
           continue
         }
@@ -283,6 +302,19 @@ export function useDraftProviderSync(input: {
   }, [store.drafts, provider, setStore, store, scope, retryRevision])
 
   return {
+    prepareSend: async (draft: Draft): Promise<Draft> => {
+      scope.sending.add(draft.id)
+      while (scope.inFlight.has(draft.id)) {
+        await new Promise<void>(resolve => scope.waiters.set(draft.id, [...(scope.waiters.get(draft.id) ?? []), resolve]))
+      }
+      if (scopeRef.current !== scope || !scope.active) throw new Error('The mail account changed before sending. Nothing was sent.')
+      const providerDraftId = scope.latestIds.get(draft.id) ?? storeRef.current.drafts.find(item => item.id === draft.id)?.providerDraftId ?? draft.providerDraftId
+      return { ...draft, ...scope.latestPatches.get(draft.id), ...(providerDraftId ? { providerDraftId } : {}) }
+    },
+    releaseSend: (draftId: string) => {
+      scope.sending.delete(draftId)
+      retry(value => value + 1)
+    },
     forgetDraft: (draft: Draft) => {
       const active = providerRef.current
       if (!active || !mailProviderSupports(active, 'drafts')) return

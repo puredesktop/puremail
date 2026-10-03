@@ -1,3 +1,4 @@
+import { markDraftSendFailed } from '../lib/mailDeliveryStatus'
 import { useMailDrop } from './useMailDrop'
 import { prepareMailDrop, rasterizeMailSvg } from '../lib/mailDrop'
 import {
@@ -69,6 +70,7 @@ import type {
   Draft,
   MailAccount,
   MailProvider,
+  MailMessage,
   MailStore,
   MailThread,
 } from '../types'
@@ -269,6 +271,7 @@ export interface ComposeEditorProps {
   pendingSend: PendingSendState | null
   schedulePendingSend: (pending: PendingSendState, commit: () => void) => void
   undoPendingSend: (pendingId: string) => void
+  sendDraftThroughProvider: (provider: MailProvider, draft: Draft) => Promise<MailMessage>
   markDraftSending: (draftId: string, sending: boolean) => void
   setSelectedMailboxId: React.Dispatch<React.SetStateAction<string>>
   setSelectedThreadId: React.Dispatch<React.SetStateAction<string>>
@@ -319,10 +322,14 @@ export function ComposeEditor({
   schedulePendingSend,
   undoPendingSend,
   markDraftSending,
+  sendDraftThroughProvider,
   setSelectedMailboxId,
   setSelectedThreadId,
   setCommandNotice,
 }: ComposeEditorProps): React.ReactElement {
+  const reportSendFailure = (draftId: string, error: unknown): void => {
+    setStore(current => markDraftSendFailed(current, draftId, error))
+  }
   const composeRecipients = useMemo(
     () => parseComposeRecipients(composeTo),
     [composeTo],
@@ -997,7 +1004,7 @@ export function ComposeEditor({
         )
         if (!draft) return
         const provider =
-          activeProvider !== 'demo' ? mailProviderRef.current : undefined
+          activeProvider !== 'demo' && navigator.onLine !== false ? mailProviderRef.current : undefined
         const home = providerName(activeProvider)
         if (provider) {
           setStore(() => result.nextStore)
@@ -1005,8 +1012,7 @@ export function ComposeEditor({
           resetCompose()
           setComposeOpen(false)
           setCommandNotice(`Sending through ${home}…`)
-          void provider
-            .send({ draft, threadId: draft.threadId })
+          void sendDraftThroughProvider(provider, draft)
             .then(message => {
               setStore(current =>
                 sendDraft(current, result.draftId, undefined, {
@@ -1024,6 +1030,7 @@ export function ComposeEditor({
               recordReplySend(snapshot.subject)
             })
             .catch(error => {
+              reportSendFailure(result.draftId, error)
               setCommandNotice(
                 error instanceof Error
                   ? `Could not send through ${home} — the draft is saved on the thread. (${error.message})`
@@ -1036,6 +1043,7 @@ export function ComposeEditor({
         if (activeProvider !== 'demo') {
           // A real account whose provider is not ready — never fake a send.
           setStore(() => result.nextStore)
+          reportSendFailure(result.draftId, 'Mail is disconnected — message not sent.')
           resetCompose()
           setComposeOpen(false)
           setCommandNotice(
@@ -1201,7 +1209,7 @@ export function ComposeEditor({
       },
       () => {
         const provider =
-          activeProvider !== 'demo' ? mailProviderRef.current : undefined
+          activeProvider !== 'demo' && navigator.onLine !== false ? mailProviderRef.current : undefined
         if (provider) {
           // Compose must actually send through the provider — the local-only
           // path showed "Message sent." while the mail never left the machine.
@@ -1214,9 +1222,8 @@ export function ComposeEditor({
           markDraftSending(result.draftId, true)
           resetCompose()
           setComposeOpen(false)
-          setCommandNotice('Sending through Gmail…')
-          void provider
-            .send({ draft, threadId: draft.threadId })
+          setCommandNotice(`Sending through ${providerName(activeProvider)}…`)
+          void sendDraftThroughProvider(provider, draft)
             .then(message => {
               let sentMailboxId = ''
               setStore(current => {
@@ -1241,14 +1248,15 @@ export function ComposeEditor({
               })
               setSelectedMailboxId(sentMailboxId)
               setSelectedThreadId(result.threadId)
-              setCommandNotice('Message sent through Gmail.')
+              setCommandNotice(`Message sent through ${providerName(activeProvider)}.`)
               recordComposeSend(snapshot.subject)
             })
             .catch(error => {
+              reportSendFailure(result.draftId, error)
               setCommandNotice(
                 error instanceof Error
-                  ? `Could not send through Gmail — the draft is saved in Drafts. (${error.message})`
-                  : 'Could not send through Gmail — the draft is saved in Drafts.',
+                  ? `Could not send through ${providerName(activeProvider)} — the draft is saved in Drafts. (${error.message})`
+                  : `Could not send through ${providerName(activeProvider)} — the draft is saved in Drafts.`,
               )
             })
             .finally(() => markDraftSending(result.draftId, false))
@@ -1263,7 +1271,7 @@ export function ComposeEditor({
           setStore(current => {
             const result = createComposeDraftStore(current, snapshot)
             draftThreadId = result.threadId
-            return result.nextStore
+            return markDraftSendFailed(result.nextStore, result.draftId, 'Mail is disconnected — message not sent.')
           })
           setSelectedThreadId(draftThreadId)
           resetCompose()

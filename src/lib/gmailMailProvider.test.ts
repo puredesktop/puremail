@@ -1564,6 +1564,27 @@ describe('GmailMailProvider retry policy', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
+  it('does not fall back to a second send when drafts.send loses its response', async () => {
+    const paths: string[] = []
+    const fetch = vi.fn(async (request: { url: string }) => {
+      paths.push(request.url)
+      if (request.url.endsWith('/drafts/draft-on-account')) return { ok: true, status: 200, body: '{}' }
+      if (request.url.endsWith('/drafts/send')) throw new Error('Response lost after acceptance')
+      throw new Error('Unexpected second submission')
+    })
+    const mail = new GmailMailProvider({ email: 'alex@example.com', accessToken: async () => 'test', fetch, retryOptions: { sleep: async () => {} } })
+    await expect(mail.send({ draft: { ...emptyDraft, providerDraftId: 'draft-on-account' }, threadId: emptyDraft.threadId })).rejects.toThrow('Response lost')
+    expect(paths.filter(path => path.endsWith('/drafts/send'))).toHaveLength(1)
+    expect(paths.some(path => path.endsWith('/messages/send'))).toBe(false)
+  })
+
+  it('does not repeat a send after an ambiguous server error', async () => {
+    const fetch = vi.fn(async () => ({ ok: false, status: 503, body: 'unavailable' }))
+    const mail = new GmailMailProvider({ email: 'alex@example.com', accessToken: async () => 'test', fetch, retryOptions: { sleep: async () => {} } })
+    await expect(mail.send({ draft: emptyDraft, threadId: emptyDraft.threadId })).rejects.toThrow('Check Sent')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('still retries a send the server rejected with 429 (nothing was sent)', async () => {
     let sendCalls = 0
     const fetch = vi.fn(async (request: { url: string }) => {

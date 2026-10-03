@@ -164,6 +164,12 @@ export interface MailCalendarInvite {
 }
 
 export interface MailMessage {
+  /** SMTP/API acceptance, independently of filing the Sent copy. */
+  deliveryAccepted?: boolean
+  deliveryWarnings?: string[]
+  sentDraftId?: string
+  sentDraftProviderIds?: string[]
+  sentDraftProviderId?: string
   id: string
   threadId: string
   gmailMessageId?: string
@@ -262,6 +268,15 @@ export interface MailTask {
 }
 
 export interface Draft {
+  /** Persisted delivery failure; incoming sync does not clear this. */
+  providerConflict?: Pick<Draft, 'subject' | 'body' | 'bodyHtml' | 'to' | 'cc' | 'bcc' | 'attachments' | 'updatedAt'>
+  staleProviderDraftIds?: string[]
+  providerSaveUncertain?: boolean
+  providerSaveWarning?: string
+  providerRevision?: string
+  sendMessageId?: string
+  sendState?: 'failed' | 'uncertain'
+  sendError?: string
   id: string
   threadId: string
   to: MailContact[]
@@ -896,7 +911,7 @@ export interface MailProvider {
    * "removed at the provider", and re-imported the replacement as a brand
    * new record (identity churn mid-edit).
    */
-  updateDraft?(providerDraftId: string, draft: Draft): Promise<string | void>
+  updateDraft?(providerDraftId: string, draft: Draft): Promise<string | void | { providerDraftId: string; warning?: string; staleProviderDraftIds?: string[] }>
   deleteDraft?(providerDraftId: string): Promise<void>
   /**
    * The provider's own drafts. Without this the draft sync was one-way by

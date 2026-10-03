@@ -3,11 +3,12 @@ import {
   writePlatformStorageJson,
 } from '../bridge/platformBridge'
 import {
+  emptyMailStore,
   parsePersistedMailStore,
   parsePersistedMailStoreValue,
   persistableMailStore,
 } from './mailStoreData'
-import type { Draft, MailRun, MailStore } from '../types'
+import type { Draft, MailRun, MailStore, MailMessage } from '../types'
 
 export const MAIL_APP_SLUG = 'mail'
 
@@ -39,11 +40,14 @@ interface PersistedDraftsFile {
    * at. Absent in files written before runs existed.
    */
   runs?: MailRun[]
+  /** Delivery confirmations survive a failed mailbox-cache write. */
+  sentReceipts?: MailMessage[]
+  recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'>
 }
 
 function parseDraftsFile(
   value: unknown,
-): { drafts: Draft[]; runs: MailRun[] | null } | null {
+): { drafts: Draft[]; runs: MailRun[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null {
   if (!value || typeof value !== 'object') return null
   const file = value as PersistedDraftsFile
   const drafts = file.drafts
@@ -56,16 +60,20 @@ function parseDraftsFile(
         typeof (draft as Draft).id === 'string',
     ),
     runs: Array.isArray(file.runs) ? file.runs : null,
+    recovery: file.recovery && Array.isArray(file.recovery.accounts) && Array.isArray(file.recovery.mailboxes) && Array.isArray(file.recovery.threads) ? file.recovery : undefined,
+    sentReceipts: Array.isArray(file.sentReceipts) ? file.sentReceipts.filter(message => message && typeof message.id === 'string' && message.deliveryAccepted === true) : [],
   }
 }
 
 /** Drafts (and runs, when the drafts file carries them) over the cache. */
 function withDraftsFile(
   store: MailStore,
-  draftsFile: { drafts: Draft[]; runs: MailRun[] | null } | null,
+  draftsFile: { drafts: Draft[]; runs: MailRun[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null,
 ): MailStore {
   if (!draftsFile) return store
-  const merged: MailStore = { ...store, drafts: draftsFile.drafts }
+  const receipts = draftsFile.sentReceipts
+  const receiptIds = new Set(receipts.map(message => message.id))
+  const merged: MailStore = { ...store, drafts: draftsFile.drafts, messages: [...store.messages.filter(message => !receiptIds.has(message.id) && !receipts.some(receipt => receipt.gmailMessageId && receipt.gmailMessageId === message.gmailMessageId || receipt.messageIdHeader && receipt.messageIdHeader === message.messageIdHeader)), ...receipts] }
   if (draftsFile.runs) merged.runs = draftsFile.runs
   // The drafts file is raw JSON; run entries need the same tolerant pass
   // the cache gets.
@@ -107,7 +115,7 @@ export async function readPersistedMailStore(): Promise<{
   migratedFromLocalStorage: boolean
 }> {
   let cached: MailStore | null = null
-  let drafts: { drafts: Draft[]; runs: MailRun[] | null } | null = null
+  let drafts: { drafts: Draft[]; runs: MailRun[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null = null
 
   try {
     const [storeFile, draftsFile] = await Promise.all([
@@ -137,7 +145,7 @@ export async function readPersistedMailStore(): Promise<{
   if (!legacy) {
     // No cache file, but drafts may still be there — never drop them just
     // because the mailbox cache is missing.
-    return { store: null, migratedFromLocalStorage: false }
+    return { store: drafts ? withDraftsFile({ ...emptyMailStore(), ...drafts.recovery }, drafts) : null, migratedFromLocalStorage: false }
   }
   return {
     store: withDraftsFile(legacy, drafts),
@@ -165,7 +173,12 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
     await writePlatformStorageJson({
       appSlug: MAIL_APP_SLUG,
       fileName: MAIL_DRAFTS_FILE,
-      value: { drafts: persistable.drafts, runs: persistable.runs ?? [] },
+      value: {
+        drafts: persistable.drafts,
+        runs: persistable.runs ?? [],
+        recovery: { accounts: persistable.accounts, mailboxes: persistable.mailboxes, threads: persistable.threads.filter(thread => persistable.drafts.some(draft => draft.threadId === thread.id) || persistable.messages.some(message => message.deliveryAccepted && message.threadId === thread.id)) },
+        sentReceipts: persistable.messages.filter(message => message.deliveryAccepted).map(message => ({ ...message, attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) })),
+      },
     })
     draftsWritten = true
   } catch (cause) {

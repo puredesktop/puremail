@@ -996,6 +996,16 @@ describe('PureMail model', () => {
     ).toBe('pending')
   })
 
+  it('keeps uncertain sends and conflicting drafts out of sync retries', () => {
+    const store = demoMailStore()
+    for (const flags of [{ sendState: 'uncertain' as const }, { providerSaveUncertain: true }, { syncState: 'conflict' as const }]) {
+      const draft = { id: 'recovery', threadId: 'thread', to: [], subject: 'Review', body: 'Keep this', attachments: [], updatedAt: '2026-10-02T22:00:00Z', syncState: 'failed' as const, ...flags }
+      const current = { ...store, drafts: [draft] }
+      expect(recoverMailDraftSync(current, draft.id, 'retry').drafts[0]).toEqual(draft)
+      expect(retryMailSyncFailures(current).drafts[0]).toEqual(draft)
+    }
+  })
+
   it('adds and removes draft attachments without mutating the draft body', () => {
     const store = demoMailStore()
     const attachment = {

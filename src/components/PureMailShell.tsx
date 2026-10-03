@@ -1,3 +1,6 @@
+import { createMailDeliveryController } from '../lib/mailDelivery'
+import { MailDeliveryStatus } from './MailDeliveryStatus'
+import { markDraftSendFailed, draftContentRevision } from '../lib/mailDeliveryStatus'
 import type { InviteActionState } from '../types'
 import { useThreadMessageSelection } from './useThreadMessageSelection'
 import { mailSettingsPatch } from '../lib/mailSettingsPatch'
@@ -85,7 +88,7 @@ import {
   resolveMailTaskSourceTarget,
   snoozeThread,
   removeProviderAccountData,
-  retryMailSyncFailures,
+  recoverMailDraftSync,
   selectInviteMirrorCandidates,
   withMirroredInviteKeys,
   unarchiveThread,
@@ -637,6 +640,19 @@ export function PureMailShell({
   )
   const [focusedDraftId, setFocusedDraftId] = useState<string | null>(null)
   const [mailFetching, setMailFetching] = useState(initialSyncPending)
+  const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine !== false)
+  const [connectionChecked, setConnectionChecked] = useState(false)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+  const reportSendFailure = (draftId: string, error: unknown): void => {
+    setStore(current => markDraftSendFailed(current, draftId, error))
+  }
+  useEffect(() => {
+    const online = () => { setNetworkOnline(true); setConnectionChecked(false); void refreshMail('auto') }
+    const offline = () => setNetworkOnline(false)
+    window.addEventListener('online', online)
+    window.addEventListener('offline', offline)
+    return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline) }
+  }, [])
   const [lastMailFetchAt, setLastMailFetchAt] = useState<string | null>(
     initialProvider !== 'demo' && initialProvider && !initialSyncPending
       ? new Date().toISOString()
@@ -712,6 +728,7 @@ export function PureMailShell({
     schedulePendingSend,
     undoPendingSend,
     markDraftSending,
+    sendingDraftIds,
   } = usePendingSend({
     undoSendDelaySeconds: store.settings.undoSendDelaySeconds,
     setCommandNotice,
@@ -1141,7 +1158,7 @@ export function PureMailShell({
   // The store is written to the shell's filesystem JSON store, debounced and
   // off the render path, with drafts in their own file. See
   // useMailStorePersistence for why localStorage could not do this job.
-  const { persistFailure, flush: flushStorePersistence } =
+  const { persistFailure, flush: flushStorePersistence, flushForSend } =
     useMailStorePersistence(store)
 
   // Auto-mirror: Bridge/IMAP-delivered calendar invites flow into
@@ -1333,13 +1350,25 @@ export function PureMailShell({
   // own Drafts folder by the same rule, and edits after the first save reach
   // it too. Before this only two call sites ever created a provider draft and
   // nothing ever updated one.
-  const { forgetDraft } = useDraftProviderSync({
+  const { forgetDraft, prepareSend, releaseSend } = useDraftProviderSync({
     store,
     setStore,
     provider: providerBacked,
     onError: setCommandNotice,
     onNotice: setCommandNotice,
   })
+  const deliveryInputs = useRef({ prepareSend, releaseSend, flushForSend })
+  deliveryInputs.current = { prepareSend, releaseSend, flushForSend }
+  const deliveryController = useRef<ReturnType<typeof createMailDeliveryController> | null>(null)
+  if (!deliveryController.current) deliveryController.current = createMailDeliveryController({
+    read: () => storeRef.current,
+    update: setStore,
+    persist: snapshot => deliveryInputs.current.flushForSend(snapshot),
+    prepare: draft => deliveryInputs.current.prepareSend(draft),
+    release: id => deliveryInputs.current.releaseSend(id),
+    online: () => navigator.onLine !== false,
+  })
+  const sendDraftThroughProvider = (provider: MailProvider, draft: Draft) => deliveryController.current!(provider, draft)
 
   useEffect(() => {
     if (mailFetching || !selectedThreadId || !providerBacked?.fetchThreadById) return
@@ -1461,6 +1490,8 @@ export function PureMailShell({
         window.setTimeout(() => {
           void replayQueuedActionsNowRef.current()
         }, 0)
+        setConnectionChecked(true)
+        setConnectionError(null)
         const fetchedAt = new Date().toISOString()
         setLastMailFetchAt(fetchedAt)
         const failedCount = nextStore.syncCoverage?.failedCount ?? 0
@@ -1481,6 +1512,8 @@ export function PureMailShell({
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Could not fetch mail.'
+        setConnectionChecked(true)
+        setConnectionError(message)
         // A startup fetch that fails is not a broken inbox: the last synced
         // mail is already on screen. Say so, and how to retry — the account
         // stays its own provider so the next fetch retries against it.
@@ -1502,10 +1535,10 @@ export function PureMailShell({
   // ref makes a StrictMode re-run a no-op.
   const bootFetchRanRef = useRef(false)
   useEffect(() => {
-    if (!initialSyncPending || bootFetchRanRef.current) return
+    if (activeProvider === 'demo' || bootFetchRanRef.current) return
     bootFetchRanRef.current = true
     void refreshMail('boot')
-  }, [initialSyncPending, refreshMail])
+  }, [initialSyncPending, activeProvider, refreshMail])
 
   useEffect(() => {
     if (!autoFetchEnabled) return
@@ -2194,7 +2227,14 @@ export function PureMailShell({
       timestamp: new Date().toISOString(),
     })
     if (!rsvp) throw new Error('This invitation cannot be answered by this account.')
-    await provider.send({ draft: rsvp, threadId: message.threadId })
+    rsvp.id = `invite_rsvp_${account.id}_${invite.uid}_${response}`
+    if (storeRef.current.messages.some(item => item.deliveryAccepted && item.sentDraftId === rsvp.id)) return
+    const existing = storeRef.current.drafts.find(item => item.id === rsvp.id)
+    if (existing?.sendState === 'uncertain') throw new Error('The previous RSVP send was not confirmed. Check Sent before retrying.')
+    const savedRsvp = { ...existing, ...rsvp }
+    setStore(current => ({ ...current, drafts: [...current.drafts.filter(item => item.id !== rsvp.id), savedRsvp] }))
+    markDraftSending(rsvp.id, true)
+    try { await sendDraftThroughProvider(provider, savedRsvp) } finally { markDraftSending(rsvp.id, false) }
   }
 
   const [inviteActionState, setInviteActionState] = useState<InviteActionState | null>(null)
@@ -2801,7 +2841,8 @@ export function PureMailShell({
     if (provider && !mailProviderSupports(provider, 'compose')) {
       return { ok: false, reason: `${home} cannot send from here.` }
     }
-    if (!provider && activeProvider !== 'demo') {
+    if ((!provider || navigator.onLine === false) && activeProvider !== 'demo') {
+      reportSendFailure(finalized.id, 'Mail is disconnected — message not sent.')
       return {
         ok: false,
         reason: `${home} is not connected right now — nothing was sent.`,
@@ -2824,12 +2865,16 @@ export function PureMailShell({
       }
     }
     const commit = (): void => {
+      if (!storeRef.current.drafts.some(item => item.id === finalized.id)) {
+        options.onFailed?.('The draft was removed before sending. Nothing was sent.')
+        setCommandNotice('Send cancelled — the draft was removed before sending.')
+        return
+      }
       const now = new Date().toISOString()
       if (provider) {
         setStore(current => upsertFinalized(current, now))
         markDraftSending(finalized.id, true)
-        void provider
-          .send({ draft: finalized, threadId: finalized.threadId })
+        void sendDraftThroughProvider(provider, finalized)
           .then(message => {
             const sentMessageId = message.gmailMessageId ?? message.id
             setStore(current =>
@@ -2848,6 +2893,7 @@ export function PureMailShell({
           })
           .catch(error => {
             const reason = error instanceof Error ? error.message : 'Send failed.'
+            reportSendFailure(finalized.id, error)
             options.onFailed?.(reason)
             setCommandNotice(
               `Could not send through ${home} — the draft is still in Drafts. (${reason})`,
@@ -3420,12 +3466,12 @@ export function PureMailShell({
         `Sent scheduled message "${draft.subject}".`,
       )
     }
-    if (providerBacked) {
+    if (providerBacked && navigator.onLine !== false) {
       markDraftSending(draft.id, true)
-      void providerBacked
-        .send({ draft, threadId: draft.threadId })
+      void sendDraftThroughProvider(providerBacked, draft)
         .then(() => finishLocal())
         .catch(error => {
+          reportSendFailure(draft.id, error)
           setStore(current =>
             markScheduledSend(
               current,
@@ -3442,8 +3488,9 @@ export function PureMailShell({
       return
     }
     if (activeProvider !== 'demo') {
+      reportSendFailure(draft.id, 'Mail is disconnected — scheduled message not sent.')
       // A real account with no reachable provider must not pretend: the
-      // draft stays scheduled and retries on the next dispatch tick.
+      // draft stays saved; a failed delivery requires review before retry.
       setStore(current =>
         markScheduledSend(
           current,
@@ -4080,6 +4127,7 @@ export function PureMailShell({
     schedulePendingSend,
     undoPendingSend,
     markDraftSending,
+    sendDraftThroughProvider,
     setSelectedMailboxId,
     setSelectedThreadId,
     setCommandNotice,
@@ -4097,14 +4145,38 @@ export function PureMailShell({
     schedulePendingSend,
     undoPendingSend,
     markDraftSending,
+    sendDraftThroughProvider,
     setSelectedMailboxId,
     setSelectedThreadId,
     setCommandNotice,
   }
 
+  const deliveryStatus = activeProvider !== 'demo' && <MailDeliveryStatus
+        offline={!networkOnline}
+        connected={!!mailProvider}
+        checking={mailFetching}
+        checked={connectionChecked}
+        syncError={connectionError}
+        failedDrafts={store.drafts.filter(draft => draft.sendError && !draft.sentAt && !sendingDraftIds.includes(draft.id) && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId))}
+        sendingCount={sendingDraftIds.length}
+        draftSaveWarnings={store.drafts.filter(draft => draft.providerSaveWarning)}
+        onRetryDraftSave={draft => setStore(current => ({ ...current, drafts: current.drafts.map(item => item.id === draft.id ? { ...item, providerSaveUncertain: false, providerSaveWarning: undefined, syncState: 'pending' } : item) }))}
+        deliveryWarnings={store.messages.filter(message => message.deliveryWarnings?.length).flatMap(message => message.deliveryWarnings!.map(warning => `${message.subject}: ${warning}`))}
+        onResolveConflict={(draft, useRemote) => setStore(current => ({ ...current, drafts: current.drafts.map(item => {
+          if (item.id !== draft.id || !item.providerConflict) return item
+          const remote = item.providerConflict
+          const resolved = { ...item, ...(useRemote ? remote : {}), providerConflict: undefined, providerRevision: draftContentRevision({ ...item, ...remote }), syncState: useRemote ? 'synced' as const : 'pending' as const }
+          return { ...resolved, sendError: item.sendState === 'uncertain' ? 'The previous send is still unconfirmed. Check Sent before retrying.' : undefined }
+        }) }))}
+        onAllowRetry={draft => setStore(current => ({ ...current, drafts: current.drafts.map(item => item.id === draft.id ? { ...item, sendState: 'failed', sendError: 'You checked Sent and allowed another attempt. Open this draft to send it.' } : item) }))}
+        onCheck={() => void refreshMail('manual')}
+        onOpenDraft={draft => { setRoomScreen(null); openDraftInComposeWindow(draft) }}
+      />
+
   return (
     <MailFrame data-app="mail">
       {!readerHoldsTopBar && mailTopBar}
+      {roomScreen?.kind === 'reading' ? null : deliveryStatus}
 
       <MailBodyRow>
         {/* Region 2. The 232px nav rail: Compose, boxes, labels, views, and
@@ -4220,18 +4292,55 @@ export function PureMailShell({
               {syncSummary.conflict === 1 ? '' : 's'} and {syncSummary.failed}{' '}
               failed item{syncSummary.failed === 1 ? '' : 's'} need review.
             </Meta>
-            <Button
-              size="sm"
-              variant="subtle"
-              onClick={() => {
-                setStore(current => retryMailSyncFailures(current))
-                setCommandNotice(
-                  'Failed and conflicted sync items queued for retry.',
-                )
-              }}
-            >
-              Retry all
-            </Button>
+            <Meta>Review each item below. Retrying draft sync saves a draft; it does not send mail.</Meta>
+            {store.drafts.filter(draft => draft.syncState === 'failed' || draft.syncState === 'conflict').map(draft => (
+              <div key={draft.id} style={{ padding: '12px 0', borderTop: '1px solid var(--platform-colors-border, #ddd)' }}>
+                <strong>{draft.subject || '(No subject)'}</strong>
+                <Meta>Draft · {draft.syncState === 'conflict' ? 'Conflicting versions' : 'Save failed'}</Meta>
+                <Meta>{draft.sendError || draft.providerSaveWarning || (draft.providerConflict
+                  ? 'This draft changed in another mail client. Compare both versions before choosing one.'
+                  : 'The draft was not confirmed as synced. No detailed reason was saved for this older failure.')}</Meta>
+                <Button size="sm" variant="subtle" onClick={() => openDraftInComposeWindow(draft)}>Open draft</Button>{' '}
+                {!draft.providerConflict && draft.syncState !== 'conflict' && !draft.providerSaveUncertain && !draft.providerSaveWarning && draft.sendState !== 'uncertain' && (
+                  <Button size="sm" disabled={!networkOnline || !mailProvider} onClick={() => {
+                    setStore(current => recoverMailDraftSync(current, draft.id, 'retry'))
+                    setCommandNotice('Retrying this draft’s save to your account. No mail will be sent.')
+                  }}>Retry draft sync</Button>
+                )}
+                {draft.providerConflict && <details>
+                  <summary>Compare versions</summary>
+                  <p><strong>Your version</strong></p>
+                  <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{draft.body}</pre>
+                  <p><strong>Account version</strong></p>
+                  <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{draft.providerConflict.body}</pre>
+                  {[true, false].map(useRemote => <Button key={String(useRemote)} size="sm" variant="subtle" onClick={() => setStore(current => ({ ...current, drafts: current.drafts.map(item => {
+                    if (item.id !== draft.id || !item.providerConflict) return item
+                    const remote = item.providerConflict
+                    return { ...item, ...(useRemote ? remote : {}), providerConflict: undefined,
+                      providerRevision: draftContentRevision({ ...item, ...remote }),
+                      syncState: useRemote ? 'synced' : 'pending',
+                      sendError: item.sendState === 'uncertain' ? item.sendError : undefined }
+                  }) }))}>{useRemote ? 'Use account version' : 'Keep my version'}</Button>)}
+                </details>}
+                {(draft.providerSaveUncertain || draft.sendState === 'uncertain') && <Meta>Check the account’s {draft.sendState === 'uncertain' ? 'Sent' : 'Drafts'} folder first, then use the recovery action in the mail status bar.</Meta>}
+              </div>
+            ))}
+            {store.threads.filter(thread => thread.syncState === 'failed' || thread.syncState === 'conflict').map(thread => (
+              <div key={thread.id} style={{ padding: '12px 0' }}>
+                <strong>{thread.subject || '(No subject)'}</strong>
+                <Meta>Mailbox change · {thread.syncState}</Meta>
+                {(store.queuedActions ?? []).filter(action => action.threadId === thread.id).map(action => <Meta key={action.id}>{action.type}: {action.lastError || 'Waiting for the account to confirm this change.'}</Meta>)}
+                <Button size="sm" variant="subtle" onClick={() => setSelectedThreadId(thread.id)}>Open message</Button>{' '}
+                <Button size="sm" disabled={!networkOnline || !mailProvider || mailFetching} onClick={() => void refreshMail('manual')}>Check account sync</Button>
+              </div>
+            ))}
+            {store.tasks.filter(task => task.syncState === 'failed' || task.syncState === 'conflict').map(task => (
+              <div key={task.id} style={{ padding: '12px 0' }}>
+                <strong>{task.title}</strong>
+                <Meta>Task · {task.syncState}. Open its source message to review the task and its sync status.</Meta>
+                <Button size="sm" variant="subtle" onClick={() => setSelectedThreadId(task.source.threadId)}>Open source message</Button>
+              </div>
+            ))}
           </Section>
         )}
         {persistFailure && (
@@ -4580,6 +4689,7 @@ export function PureMailShell({
                 message={message}
                 identity={identity}
                 room={readingRoom}
+                deliveryStatus={deliveryStatus}
                 onBack={back}
                 onDraftReply={draftReplyFromNotes}
                 onWriteSummary={identity => void writeContextSummary(identity)}
@@ -4762,7 +4872,7 @@ export function PureMailShell({
       </MailBodyRow>
 
       <MailStatusBar>
-        {syncStatusLine(lastMailFetchAt, store.accounts.length)}
+        {activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider) ? 'Mail disconnected · showing saved mail' : syncStatusLine(lastMailFetchAt, store.accounts.length)}
       </MailStatusBar>
 
 

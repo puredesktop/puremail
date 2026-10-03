@@ -29,44 +29,28 @@ export function useMailStorePersistence(store: MailStore): {
   persistFailure: MailPersistFailure | null
   /** Force an immediate write — used before the window goes away. */
   flush: () => Promise<void>
+  flushForSend: (snapshot: MailStore) => Promise<void>
 } {
   const [persistFailure, setPersistFailure] =
     useState<MailPersistFailure | null>(null)
   const storeRef = useRef(store)
   storeRef.current = store
-  const writingRef = useRef(false)
-  const dirtyRef = useRef(false)
   const timerRef = useRef<number | null>(null)
-
-  const writeNow = useRef(async (): Promise<void> => {
-    if (writingRef.current) {
-      dirtyRef.current = true
-      return
-    }
-    writingRef.current = true
-    dirtyRef.current = false
-    try {
-      const result = await writePersistedMailStore(storeRef.current)
-      if (result.draftsWritten && result.cacheWritten) {
-        setPersistFailure(null)
-      } else {
-        setPersistFailure({
-          draftsLost: !result.draftsWritten,
-          message: result.error ?? 'The mail store could not be saved.',
-        })
+  const writeTail = useRef<Promise<void>>(Promise.resolve())
+  const writeNow = useRef((snapshot = storeRef.current, requireDrafts = false): Promise<void> => {
+    const next = writeTail.current.catch(() => {}).then(async () => {
+      try {
+        const result = await writePersistedMailStore(snapshot)
+        if (result.draftsWritten && result.cacheWritten) setPersistFailure(null)
+        else setPersistFailure({ draftsLost: !result.draftsWritten, message: result.error ?? 'The mail store could not be saved.' })
+        if (requireDrafts && !result.draftsWritten) throw new Error('Draft delivery state could not be saved. Nothing was sent.')
+      } catch (error) {
+        setPersistFailure({ draftsLost: true, message: error instanceof Error ? error.message : 'The mail store could not be saved.' })
+        if (requireDrafts) throw error
       }
-    } catch (error) {
-      setPersistFailure({
-        draftsLost: true,
-        message:
-          error instanceof Error
-            ? error.message
-            : 'The mail store could not be saved.',
-      })
-    } finally {
-      writingRef.current = false
-      if (dirtyRef.current) void writeNow.current()
-    }
+    })
+    writeTail.current = next
+    return next
   })
 
   useEffect(() => {
@@ -106,6 +90,10 @@ export function useMailStorePersistence(store: MailStore): {
 
   return {
     persistFailure,
+    flushForSend: async snapshot => {
+      if (timerRef.current !== null) { window.clearTimeout(timerRef.current); timerRef.current = null }
+      await writeNow.current(snapshot, true)
+    },
     flush: async () => {
       if (typeof window !== 'undefined' && timerRef.current !== null) {
         window.clearTimeout(timerRef.current)

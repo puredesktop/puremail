@@ -1,3 +1,5 @@
+import { MailDraftSaveUncertain } from './mailDeliveryStatus'
+import { MailSendError } from './mailDelivery'
 import { bridge } from '@purescience/platform-ui/bridge/client'
 import { PLATFORM_BRIDGE_METHODS } from '@purescience/platform-ui/bridge/methods'
 import {
@@ -339,7 +341,7 @@ export function bridgeSmtpTransport(config: BridgeTransportConfig): SmtpTranspor
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (message.includes('No stored password under secrets key')) {
-          throw new Error('The saved outgoing-mail password is missing or could not be unlocked. Open Mail settings, edit this connection, and re-save its IMAP and SMTP passwords. For Proton Bridge, use the passwords shown by Bridge. Then retry your response.')
+          throw new MailSendError('The saved outgoing-mail password is missing or could not be unlocked. Open Mail settings, edit this connection, and re-save its IMAP and SMTP passwords. For Proton Bridge, use the passwords shown by Bridge. Then retry your response.', 'not_sent')
         }
         throw error
       }
@@ -974,7 +976,7 @@ export class ImapMailProvider implements MailProvider {
     })
   }
 
-  private async draftRaw(draft: Draft): Promise<string> {
+  private async draftRaw(draft: Draft, messageId?: string): Promise<string> {
     const cc = draft.cc ?? []
     const bcc = draft.bcc ?? []
     const format = (contacts: MailContact[]): string =>
@@ -985,8 +987,14 @@ export class ImapMailProvider implements MailProvider {
             : contact.email,
         )
         .join(', ')
+    const threadMessages = (this.store?.messages ?? []).filter(message => message.threadId === draft.threadId && !message.isDraft).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+    const references = [...new Set(threadMessages.flatMap(message => [...(message.references ?? []), ...(message.messageIdHeader ? [message.messageIdHeader] : [])]))]
+    const inReplyTo = draft.sourceMessageId ? threadMessages.find(message => message.id === draft.sourceMessageId)?.messageIdHeader ?? references.at(-1) : references.at(-1)
     return buildMimeMessage({
       headerLines: [
+        `Date: ${new Date().toUTCString()}`,
+        ...(messageId ? [`Message-ID: ${messageId}`] : []),
+        ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${references.join(' ')}`] : []),
         `From: ${this.options.email}`,
         `To: ${format(draft.to)}`,
         ...(cc.length ? [`Cc: ${format(cc)}`] : []),
@@ -1034,9 +1042,13 @@ export class ImapMailProvider implements MailProvider {
 
   async createDraft(draft: Draft): Promise<string> {
     const path = this.draftsFolderPath()
-    const uid = await this.options.imap.append(path, await this.draftRaw(draft))
+    const raw = await this.draftRaw(draft)
+    let uid: number | void
+    try { uid = await this.options.imap.append(path, raw) } catch (error) {
+      throw new MailDraftSaveUncertain(`The account did not confirm the draft save. Check its Drafts folder before retrying. (${error instanceof Error ? error.message : 'Connection failed'})`)
+    }
     if (typeof uid !== 'number') {
-      throw new Error(
+      throw new MailDraftSaveUncertain(
         'This server did not report the stored draft’s id (APPENDUID), so PureMail cannot update or delete it later. The draft is kept locally.',
       )
     }
@@ -1051,15 +1063,21 @@ export class ImapMailProvider implements MailProvider {
   async updateDraft(
     providerDraftId: string,
     draft: Draft,
-  ): Promise<string> {
+  ): Promise<string | { providerDraftId: string; warning?: string; staleProviderDraftIds?: string[] }> {
     const path = this.draftsFolderPath()
     const previousUid = ImapMailProvider.draftUid(providerDraftId)
-    const uid = await this.options.imap.append(path, await this.draftRaw(draft))
+    const raw = await this.draftRaw(draft)
+    let uid: number | void
+    try { uid = await this.options.imap.append(path, raw) } catch (error) {
+      throw new MailDraftSaveUncertain(`The account did not confirm the draft save. Check its Drafts folder before retrying. (${error instanceof Error ? error.message : 'Connection failed'})`)
+    }
     if (typeof uid !== 'number') {
-      throw new Error('This server did not report the updated draft’s id.')
+      throw new MailDraftSaveUncertain('This server did not report the updated draft’s id. Check Drafts before retrying.')
     }
     if (previousUid !== null && this.options.imap.deleteMessage) {
-      await this.options.imap.deleteMessage(path, previousUid)
+      try { await this.options.imap.deleteMessage(path, previousUid) } catch {
+        return { providerDraftId: `imap_draft_${uid}`, staleProviderDraftIds: [...(draft.staleProviderDraftIds ?? []), providerDraftId], warning: 'Your edited draft was saved, but the previous account copy could not be removed. Older copies in Drafts must not be sent.' }
+      }
     }
     // IMAP has no edit: the stored draft was REPLACED. Report the new id
     // so the caller re-points the local record at it.
@@ -1106,7 +1124,9 @@ export class ImapMailProvider implements MailProvider {
   }
 
   async send(input: SendDraftInput): Promise<MailMessage> {
-    const raw = await this.draftRaw(input.draft)
+    const messageId = input.draft.sendMessageId ?? `<puremail-${crypto.randomUUID()}@${this.options.email.split('@')[1] || 'localhost'}>`
+    const raw = await this.draftRaw(input.draft, messageId)
+    const warnings: string[] = []
     const recipients = [
       ...input.draft.to,
       ...(input.draft.cc ?? []),
@@ -1119,10 +1139,18 @@ export class ImapMailProvider implements MailProvider {
       try {
         await this.options.imap.append(sent.path, raw)
       } catch {
-        /* the send succeeded; a missing sent copy must not fail it */
+        warnings.push('The server accepted this message, but saving its IMAP Sent copy failed. Do not resend it.')
+      }
+    } else warnings.push('The server accepted this message, but no Sent folder was available to save its copy. Do not resend it.')
+    for (const draftId of new Set([input.draft.providerDraftId, ...(input.draft.staleProviderDraftIds ?? [])].filter((id): id is string => Boolean(id)))) {
+      try { await this.deleteDraft(draftId) } catch {
+        warnings.push('The server accepted this message, but its old Drafts copy could not be removed. Do not resend the draft.')
       }
     }
     return {
+      messageIdHeader: messageId,
+      deliveryAccepted: true,
+      ...(warnings.length ? { deliveryWarnings: warnings } : {}),
       id: `imap_sent_${Date.now()}`,
       threadId: input.threadId,
       from: { name: this.options.name ?? 'Me', email: this.options.email },
