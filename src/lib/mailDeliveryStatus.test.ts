@@ -1,3 +1,4 @@
+import { mailConnectionsVerified, mailErrorToastText } from './mailDeliveryStatus'
 import { expect, it } from 'vitest'
 import { emptyMailStore, createComposedMessageDraft, mergeMailDrafts, persistableMailStore, sendDraft } from './mailModel'
 import { markDraftSendFailed } from './mailDeliveryStatus'
@@ -34,4 +35,16 @@ it('clears failed-draft feedback only after a confirmed send', () => {
   expect(sent.messages[0].optimistic).toBeUndefined()
   expect(persistableMailStore(sent).messages).toHaveLength(1)
   expect(persistableMailStore(sendDraft(store, draft.id)).messages).toHaveLength(0)
+})
+
+it('only marks connections healthy when both directions are verified', () => {
+  expect(mailConnectionsVerified({ receiving: 'IMAP connection verified', sending: 'SMTP authentication verified; no test email sent' })).toBe(true)
+  expect(mailConnectionsVerified({ receiving: 'IMAP connection verified', sending: 'Failed: SMTP authentication failed' })).toBe(false)
+  expect(mailConnectionsVerified({ receiving: 'IMAP connection verified', sending: 'Not verified' })).toBe(false)
+  expect(mailConnectionsVerified(null)).toBe(false)
+})
+
+it('keeps raw transport identifiers out of error toasts', () => {
+  expect(mailErrorToastText("Error invoking remote method 'shell:mailTransport:fetchAttachment': No message with uid 442 in Drafts")).toBe('An attachment is unavailable. Open the draft and reattach the missing file.')
+  expect(mailErrorToastText('SMTP connection test timed out after 35 seconds.')).toContain('Mail connection timed out')
 })

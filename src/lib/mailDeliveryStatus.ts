@@ -18,3 +18,19 @@ export function markDraftSendFailed(store: MailStore, draftId: string, error: un
     drafts: store.drafts.map(draft => draft.id === draftId ? { ...draft, sendError: reason } : draft),
   }
 }
+
+/** Keep transport internals in recovery details, not in the mail chrome. */
+export function mailErrorToastText(reason: string): string {
+  if (/fetchAttachment|No message with uid|attachment.*(download|content)|reattach/i.test(reason))
+    return 'An attachment is unavailable. Open the draft and reattach the missing file.'
+  if (/authentication|stored.*password|password.*missing|credentials/i.test(reason))
+    return 'Mail authentication failed. Check the account credentials in Mail settings.'
+  if (/timed? ?out|timeout/i.test(reason))
+    return 'Mail connection timed out. Check your connection or mail bridge and try again.'
+  return reason.replace(/^Failed:\s*/, '').replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').slice(0, 240)
+}
+
+export function mailConnectionsVerified(result: { receiving: string; sending: string } | null): boolean {
+  return !!result && [result.receiving, result.sending].every(value =>
+    /verified/i.test(value) && !/failed|not verified|unavailable|timed out|error/i.test(value))
+}
