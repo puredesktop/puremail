@@ -1142,9 +1142,17 @@ export class ImapMailProvider implements MailProvider {
   }
 
   async testConnection(): Promise<{ receiving: string; sending: string }> {
+    const bounded = async (check: Promise<unknown>): Promise<unknown> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        return await Promise.race([check, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Connection test timed out after 32 seconds.')), 32_000)
+        })])
+      } finally { if (timer) clearTimeout(timer) }
+    }
     const [incoming, outgoing] = await Promise.allSettled([
-      this.options.imap.listFolders(),
-      this.options.smtp.verify ? this.options.smtp.verify() : Promise.reject(new Error('Outgoing connection testing is unavailable in this version.')),
+      bounded(this.options.imap.listFolders()),
+      bounded(this.options.smtp.verify ? this.options.smtp.verify() : Promise.reject(new Error('Outgoing connection testing is unavailable in this version.'))),
     ])
     const result = (value: PromiseSettledResult<unknown>, success: string) => value.status === 'fulfilled'
       ? success : `Failed: ${value.reason instanceof Error ? value.reason.message : String(value.reason)}`
