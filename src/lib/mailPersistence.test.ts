@@ -89,6 +89,8 @@ describe('mail persistence', () => {
       drafts: [draft('d1', 'Approved, shipping Friday.')],
       // Send runs travel with the drafts they point at.
       runs: [],
+      sentReceipts: [],
+      recovery: { accounts: storeWith([]).accounts, mailboxes: storeWith([]).mailboxes, threads: storeWith([]).threads },
     })
     // The cache file must not carry a second copy: two copies can disagree.
     expect((files.get(MAIL_STORE_FILE) as MailStore).drafts).toEqual([])
@@ -140,10 +142,22 @@ describe('mail persistence', () => {
   it('reads drafts back even when the mailbox cache file is missing', async () => {
     files.set(MAIL_DRAFTS_FILE, { drafts: [draft('d1', 'Still here.')] })
     const { store } = await readPersistedMailStore()
-    // No cache file means no store to hydrate, but the drafts file survived
-    // and must not be silently discarded by the next successful write.
-    expect(store).toBeNull()
+    // The drafts file is recoverable even without a mailbox cache.
+    expect(store?.drafts[0].body).toBe('Still here.')
     expect(files.get(MAIL_DRAFTS_FILE)).toBeTruthy()
+  })
+
+  it('recovers accepted send receipts even when the mailbox cache cannot be written', async () => {
+    const current = storeWith([])
+    current.messages = [{ id: 'accepted', threadId: current.threads[0].id,
+      subject: 'Sent once', body: 'Hello', receivedAt: '2026-10-02T22:00:00Z', read: true,
+      from: { name: 'Me', email: 'me@example.com' }, to: [], attachments: [],
+      deliveryAccepted: true, sentDraftId: 'already-sent', messageIdHeader: '<stable@example.com>' }]
+    failing.add(MAIL_STORE_FILE)
+    await writePersistedMailStore(current)
+    const { store } = await readPersistedMailStore()
+    expect(store?.messages[0]).toMatchObject({ deliveryAccepted: true, sentDraftId: 'already-sent', messageIdHeader: '<stable@example.com>' })
+    expect(store?.threads).toHaveLength(1)
   })
 
   it('round-trips a store through write and read', async () => {

@@ -229,6 +229,42 @@ describe('ImapMailProvider against the fake transport', () => {
     expect(message.subject).toBe('Hello')
   })
 
+  it('removes the account draft only after SMTP acceptance and includes reply headers', async () => {
+    const { provider: mail, imap, smtp } = provider()
+    const store = await mail.fetchStore()
+    const draft = { id: 'reply', threadId: store.threads[0].id, providerDraftId: 'imap_draft_41', to: [{ name: 'Kim', email: 'kim@example.test' }], subject: 'Re: Lunch', body: 'Yes', attachments: [], updatedAt: '2026-07-05T10:00:00Z', syncState: 'synced' as const }
+    const result = await mail.send({ draft, threadId: draft.threadId })
+    expect(imap.deleted).toContainEqual({ folder: 'Drafts', uid: 41 })
+    expect(smtp.sent[0].raw).toContain('In-Reply-To: <reply@ext>')
+    expect(smtp.sent[0].raw).toContain('References: <root@ext> <reply@ext>')
+    expect(smtp.sent[0].raw).toContain(`Message-ID: ${result.messageIdHeader}`)
+    expect(result.deliveryAccepted).toBe(true)
+  })
+
+  it('keeps the draft when SMTP fails, without adding any Sent copy', async () => {
+    const imap = fakeImap()
+    const { provider: mail } = provider(imap, { ...fakeSmtp(), send: async () => { throw new Error('SMTP disconnected') } })
+    const store = await mail.fetchStore()
+    const draft = { id: 'reply', threadId: store.threads[0].id, providerDraftId: 'imap_draft_41', to: [{ name: 'Kim', email: 'kim@example.test' }], subject: 'Re: Lunch', body: 'Yes', attachments: [], updatedAt: '2026-07-05T10:00:00Z', syncState: 'synced' as const }
+    await expect(mail.send({ draft, threadId: draft.threadId })).rejects.toThrow('SMTP disconnected')
+    expect(imap.deleted).toEqual([])
+    expect(imap.appended).toEqual([])
+  })
+
+  it('reports acceptance with a visible warning when Sent filing or draft cleanup fails', async () => {
+    const imap = fakeImap()
+    imap.append = async () => { throw new Error('IMAP disconnected') }
+    imap.deleteMessage = async () => { throw new Error('IMAP disconnected') }
+    const { provider: mail, smtp } = provider(imap)
+    const store = await mail.fetchStore()
+    const draft = { id: 'reply', threadId: store.threads[0].id, providerDraftId: 'imap_draft_41', to: [{ name: 'Kim', email: 'kim@example.test' }], subject: 'Re: Lunch', body: 'Yes', attachments: [], updatedAt: '2026-07-05T10:00:00Z', syncState: 'synced' as const }
+    const result = await mail.send({ draft, threadId: draft.threadId })
+    expect(smtp.sent).toHaveLength(1)
+    expect(result.deliveryAccepted).toBe(true)
+    expect(result.deliveryWarnings).toHaveLength(2)
+    expect(result.deliveryWarnings?.join(' ')).toContain('Do not resend')
+  })
+
   it('appends a draft with its content attachments as MIME parts', async () => {
     const { provider: imapProvider, imap } = provider()
     await imapProvider.fetchStore()

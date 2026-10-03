@@ -63,7 +63,9 @@ export function ReadingRoom({
   onBack,
   onDraftReply,
   onWriteSummary,
+  deliveryStatus,
 }: {
+  deliveryStatus?: React.ReactNode
   message: MailMessage | null
   identity: MessageIdentity
   room: ReadingRoomStore
@@ -164,6 +166,7 @@ export function ReadingRoom({
           {replyCount ? `Draft a reply from ${replyCount} ${replyCount === 1 ? 'note' : 'notes'}` : 'Draft a reply'}
         </BarButton>
       </RoomBar>
+      {deliveryStatus}
       {room.error ? <Notice role="status">{room.error}</Notice> : null}
 
       <RoomScroll>

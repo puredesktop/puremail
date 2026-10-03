@@ -1,3 +1,4 @@
+import { MailDraftSaveUncertain } from '../lib/mailDeliveryStatus'
 // @vitest-environment happy-dom
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -49,7 +50,7 @@ function mountHook(input: {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
-  const api: { forgetDraft?: (item: Draft) => void } = {}
+  const api: { forgetDraft?: (item: Draft) => void; prepareSend?: (item: Draft) => Promise<Draft>; releaseSend?: (id: string) => void } = {}
   let store: MailStore = { ...emptyMailStore(), drafts: input.drafts }
   const notices: string[] = []
   const errors: string[] = []
@@ -58,7 +59,7 @@ function mountHook(input: {
   function Harness(): null {
     const [, redraw] = useState(0)
     rerender = () => redraw(value => value + 1)
-    const { forgetDraft } = useDraftProviderSync({
+    const { forgetDraft, prepareSend, releaseSend } = useDraftProviderSync({
       store,
       setStore: updater => {
         store = updater(store)
@@ -69,6 +70,8 @@ function mountHook(input: {
       onNotice: message => notices.push(message),
     })
     api.forgetDraft = forgetDraft
+    api.prepareSend = prepareSend
+    api.releaseSend = releaseSend
     return null
   }
 
@@ -99,6 +102,41 @@ function mountHook(input: {
 }
 
 describe('draft provider sync', () => {
+  it('does not append more copies after an unconfirmed draft save', async () => {
+    const createDraft = vi.fn(async () => { throw new MailDraftSaveUncertain('APPENDUID missing') })
+    const harness = mountHook({ drafts: [draft()], provider: { capabilities: { drafts: true }, createDraft } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(createDraft).toHaveBeenCalledTimes(1)
+    expect(harness.storeNow().drafts[0].syncState).toBe('failed')
+    expect(harness.storeNow().drafts[0].providerSaveWarning).toBe('APPENDUID missing')
+    harness.unmount()
+  })
+
+  it('retains the replacement id and stale copy after partial cleanup failure', async () => {
+    const updateDraft = vi.fn(async () => ({ providerDraftId: 'imap_draft_11', warning: 'Old copy remains', staleProviderDraftIds: ['imap_draft_10'] }))
+    const harness = mountHook({ drafts: [draft({ providerDraftId: 'imap_draft_10' })], provider: { capabilities: { drafts: true }, updateDraft } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(updateDraft).toHaveBeenCalledTimes(1)
+    expect(harness.storeNow().drafts[0]).toMatchObject({ providerDraftId: 'imap_draft_11', providerSaveWarning: 'Old copy remains', staleProviderDraftIds: ['imap_draft_10'], syncState: 'synced' })
+    harness.unmount()
+  })
+
+  it('waits for an in-flight draft replacement and sends using its latest id', async () => {
+    const pending = deferred<string>()
+    const updateDraft = vi.fn(() => pending.promise)
+    const harness = mountHook({ drafts: [draft({ providerDraftId: 'imap_draft_10' })], provider: { capabilities: { drafts: true }, updateDraft } })
+    await act(async () => { vi.advanceTimersByTime(2000) })
+    let prepared: Draft | undefined
+    const preparing = harness.api.prepareSend!(draft({ providerDraftId: 'imap_draft_10' })).then(value => { prepared = value })
+    expect(prepared).toBeUndefined()
+    await act(async () => { pending.resolve('imap_draft_11'); await preparing })
+    expect(prepared?.providerDraftId).toBe('imap_draft_11')
+    await act(async () => { harness.edit({ body: 'A newer edit' }); vi.advanceTimersByTime(2000) })
+    expect(updateDraft).toHaveBeenCalledTimes(1)
+    await act(async () => { harness.api.releaseSend!('draft_1') })
+    harness.unmount()
+  })
+
   it('saves edits made while the first save is in flight without creating a duplicate', async () => {
     const pending = deferred<string>()
     const createDraft = vi.fn(() => pending.promise)
