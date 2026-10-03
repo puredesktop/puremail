@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStore } from './mailStoreData'
+import { demoMailStore } from '../test/mailFixtures'
 import {
   isMachineEmail,
   selectContactFeedCandidates,

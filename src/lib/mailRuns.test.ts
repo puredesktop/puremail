@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStoreForNow, pruneOrphanedDraftThreads, sendDraft } from './mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
+import { pruneOrphanedDraftThreads, sendDraft } from './mailModel'
 import {
   addDraftsToRun,
   advanceRun,

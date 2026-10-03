@@ -13,7 +13,7 @@ describe('settings nav', () => {
     'utf8',
   )
   const renderedIds = [
-    ...source.matchAll(/<SettingsCard\s+id="([^"]+)"/g),
+    ...source.matchAll(/<(?:SettingsCard|div)\s+id="(settings-[^"]+)"/g),
   ].map(match => match[1])
 
   it('renders a card for every nav entry', () => {

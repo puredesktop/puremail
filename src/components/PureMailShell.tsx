@@ -3139,7 +3139,7 @@ export function PureMailShell({
   }
 
   const searchGmail =
-    activeProvider === 'gmail' && providerBacked
+    providerBacked
       ? (query: string) => providerBacked.search(query)
       : null
 

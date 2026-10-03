@@ -1,5 +1,5 @@
-import { MailDraftSaveUncertain } from '../lib/mailDeliveryStatus'
 // @vitest-environment happy-dom
+import { MailDraftSaveUncertain } from '../lib/mailDeliveryStatus'
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -102,6 +102,21 @@ function mountHook(input: {
 }
 
 describe('draft provider sync', () => {
+  it('does not retry an unconfirmed save when the draft was edited during that save', async () => {
+    const pending = deferred<string>()
+    const createDraft = vi.fn(() => pending.promise)
+    const harness = mountHook({ drafts: [draft()], provider: { capabilities: { drafts: true }, createDraft } })
+    try {
+      await act(async () => { vi.advanceTimersByTime(1500) })
+      harness.edit({ body: 'Keep the newer text', syncState: 'pending' })
+      await act(async () => { pending.reject(new MailDraftSaveUncertain('APPEND confirmation lost')) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+      expect(createDraft).toHaveBeenCalledTimes(1)
+      expect(harness.storeNow().drafts[0]).toMatchObject({ body: 'Keep the newer text', syncState: 'failed', providerSaveUncertain: true })
+      expect(harness.errors.join(' ')).toContain('APPEND confirmation lost')
+    } finally { harness.unmount() }
+  })
+
   it('does not append more copies after an unconfirmed draft save', async () => {
     const createDraft = vi.fn(async () => { throw new MailDraftSaveUncertain('APPENDUID missing') })
     const harness = mountHook({ drafts: [draft()], provider: { capabilities: { drafts: true }, createDraft } })

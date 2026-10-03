@@ -21,7 +21,8 @@
     "@tiptap/pm": "^3.0.0"
   },
   "devDependencies": {
-    "@swc/plugin-styled-components": "^12.9.0",
+    "@swc/core": "1.16.1",
+    "@swc/plugin-styled-components": "13.0.0",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react-swc": "^3.10.2",

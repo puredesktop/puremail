@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { demoMailStore } from '../lib/mailModel'
+import { demoMailStore } from '../test/mailFixtures'
 import {
   MAIL_LAYOUT_STORAGE_KEY,
   readLayoutState,

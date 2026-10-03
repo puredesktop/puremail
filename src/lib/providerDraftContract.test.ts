@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DemoMailProvider } from './demoMailProvider'
 import { GmailMailProvider } from './gmailMailProvider'
 import { ImapMailProvider } from './imapMailProvider'
-import { demoMailStoreForNow } from './mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
 import { mailProviderSupports } from './mailProviderCapabilities'
 import type { MailProvider } from '../types'
 

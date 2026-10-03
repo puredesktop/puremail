@@ -1,5 +1,5 @@
 import type { Attachment, MailContact, MailMessage, MailStore, MailThread } from '../types'
-import { demoMailStoreForNow } from './mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
 
 /**
  * Test fixture for AI triage: the demo store's account and mailboxes with a
