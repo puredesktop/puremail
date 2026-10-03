@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { DemoMailProvider } from './demoMailProvider'
+import { demoMailStore } from '../test/mailFixtures'
 import {
   archiveThread,
-  demoMailStore,
   updateDraftAttachments,
   updateDraftBody,
 } from './mailModel'
@@ -21,11 +21,11 @@ describe('DemoMailProvider', () => {
   it('fetches a provider-shaped local store', async () => {
     const provider = new DemoMailProvider()
     const store = await provider.fetchStore()
-    expect(store.accounts[0].provider).toBe('demo')
+    expect(store.accounts).toHaveLength(0)
     expect(store.threads).toHaveLength(0)
     expect(store.messages).toHaveLength(0)
     expect(store.drafts).toHaveLength(0)
-    expect(store.taskLists.some(list => list.source === 'mail')).toBe(true)
+    expect(store.taskLists).toHaveLength(0)
   })
 
   it('syncs pending local changes back to synced state', async () => {

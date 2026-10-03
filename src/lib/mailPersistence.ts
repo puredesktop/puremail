@@ -52,6 +52,7 @@ function parseDraftsFile(
   const file = value as PersistedDraftsFile
   const drafts = file.drafts
   if (!Array.isArray(drafts)) return null
+  if (drafts.some(draft => !draft || typeof draft !== 'object' || typeof draft.id !== 'string')) return null
   return {
     drafts: drafts.filter(
       (draft): draft is Draft =>
@@ -75,7 +76,27 @@ function withDraftsFile(
   if (!draftsFile) return store
   const receipts = draftsFile.sentReceipts
   const receiptIds = new Set(receipts.map(message => message.id))
-  const merged: MailStore = { ...store, drafts: draftsFile.drafts, messages: [...store.messages.filter(message => !receiptIds.has(message.id) && !receipts.some(receipt => receipt.gmailMessageId && receipt.gmailMessageId === message.gmailMessageId || receipt.messageIdHeader && receipt.messageIdHeader === message.messageIdHeader)), ...receipts] }
+  const gmailIds = new Set(receipts.map(message => message.gmailMessageId).filter(Boolean))
+  const messageIds = new Set(receipts.map(message => message.messageIdHeader).filter(Boolean))
+  const recoverMissing = <T extends { id: string }>(cached: T[], recovered: T[] = []): T[] => {
+    const ids = new Set(cached.map(item => item.id))
+    return [...cached, ...recovered.filter(item => !ids.has(item.id))]
+  }
+  const merged: MailStore = {
+    ...store,
+    // The draft write may be newer than a surviving cache. Restore missing
+    // homes too, otherwise its successfully saved writing cannot be opened.
+    accounts: recoverMissing(store.accounts, draftsFile.recovery?.accounts),
+    mailboxes: recoverMissing(store.mailboxes, draftsFile.recovery?.mailboxes),
+    threads: recoverMissing(store.threads, draftsFile.recovery?.threads),
+    drafts: draftsFile.drafts,
+    messages: [
+      ...store.messages.filter(message => !receiptIds.has(message.id) &&
+        !(message.gmailMessageId && gmailIds.has(message.gmailMessageId)) &&
+        !(message.messageIdHeader && messageIds.has(message.messageIdHeader))),
+      ...receipts,
+    ],
+  }
   if (draftsFile.runs) merged.runs = draftsFile.runs
   // The drafts file is raw JSON; run entries need the same tolerant pass
   // the cache gets.
@@ -119,21 +140,29 @@ export async function readPersistedMailStore(): Promise<{
   let cached: MailStore | null = null
   let drafts: { drafts: Draft[]; runs: MailRun[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null = null
 
-  try {
-    const [storeFile, draftsFile] = await Promise.all([
-      readPlatformStorageJson({
-        appSlug: MAIL_APP_SLUG,
-        fileName: MAIL_STORE_FILE,
-      }),
-      readPlatformStorageJson({
-        appSlug: MAIL_APP_SLUG,
-        fileName: MAIL_DRAFTS_FILE,
-      }),
-    ])
-    cached = parsePersistedMailStoreValue(storeFile.value)
-    drafts = parseDraftsFile(draftsFile.value)
-  } catch (error) {
-    console.warn('[puremail] stored mail files unreadable:', error)
+  const [storeFile, draftsFile] = await Promise.allSettled([
+    readPlatformStorageJson({
+      appSlug: MAIL_APP_SLUG,
+      fileName: MAIL_STORE_FILE,
+    }),
+    readPlatformStorageJson({
+      appSlug: MAIL_APP_SLUG,
+      fileName: MAIL_DRAFTS_FILE,
+    }),
+  ])
+  if (storeFile.status === 'fulfilled') {
+    cached = parsePersistedMailStoreValue(storeFile.value.value)
+  } else {
+    console.warn('[puremail] mailbox cache unreadable:', storeFile.reason)
+  }
+  // Only an absent file permits the legacy fallback. An unreadable drafts
+  // file must stop boot: starting empty would let autosave overwrite it.
+  if (draftsFile.status === 'rejected') {
+    throw new Error('Your saved drafts could not be read. They have not been changed. Try again when storage is available.')
+  }
+  drafts = parseDraftsFile(draftsFile.value.value)
+  if (draftsFile.value.value !== null && !drafts) {
+    throw new Error('Your saved drafts file could not be understood. It has not been changed. Restore a readable copy, then try again.')
   }
 
   if (cached) {
@@ -167,6 +196,11 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
   error?: string
 }> {
   const persistable = persistableMailStore(store)
+  const sentReceipts = persistable.messages.filter(message => message.deliveryAccepted)
+  const recoveryThreadIds = new Set([
+    ...persistable.drafts.map(draft => draft.threadId),
+    ...sentReceipts.map(message => message.threadId),
+  ])
   let draftsWritten = false
   let cacheWritten = false
   let error: string | undefined
@@ -178,8 +212,8 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
       value: {
         drafts: persistable.drafts,
         runs: persistable.runs ?? [],
-        recovery: { accounts: persistable.accounts, mailboxes: persistable.mailboxes, threads: persistable.threads.filter(thread => persistable.drafts.some(draft => draft.threadId === thread.id) || persistable.messages.some(message => message.deliveryAccepted && message.threadId === thread.id)) },
-        sentReceipts: persistable.messages.filter(message => message.deliveryAccepted).map(message => ({ ...message, attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) })),
+        recovery: { accounts: persistable.accounts, mailboxes: persistable.mailboxes, threads: persistable.threads.filter(thread => recoveryThreadIds.has(thread.id)) },
+        sentReceipts: sentReceipts.map(message => ({ ...message, attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) })),
       },
     })
     draftsWritten = true

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStore, mergeStarredThreadIds } from './mailModel'
+import { demoMailStore } from '../test/mailFixtures'
+import { mergeStarredThreadIds } from './mailModel'
 import {
   applyBulkTriageAction,
   bulkArchiveThreads,

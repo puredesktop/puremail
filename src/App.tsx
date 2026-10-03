@@ -51,8 +51,9 @@ export function App(): React.ReactElement {
       <AppFrame>
         <EmptyState
           tone="error"
-          title="PureMail boot failed"
+          title="Mail could not open"
           message={bootError.message}
+          action={{ label: 'Try again', onClick: rebootMail }}
         />
       </AppFrame>
     )

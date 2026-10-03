@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { demoMailStore } from '../test/mailFixtures'
 import {
   appendDraftAttachments,
   archiveThread,
@@ -31,7 +32,6 @@ import {
   deleteThread,
   deleteMailTask,
   deriveReplyIntentForThread,
-  demoMailStore,
   emptyMailStore,
   enqueueQaDraftRequest,
   isGeneratedDraft,

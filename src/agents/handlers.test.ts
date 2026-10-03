@@ -1,6 +1,6 @@
 import { draftEditVersion } from '../lib/mailDrawerDrafts'
 import { describe, expect, it } from 'vitest'
-import { demoMailStoreForNow } from '../lib/mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
 import { buildMailProposal, MailProposalError } from '../lib/mailProposal'
 import { PUREMAIL_AGENT_TOOL_NAMES, AgentMailToolError } from './catalog'
 import type { MailAgentToolContext } from './catalog'

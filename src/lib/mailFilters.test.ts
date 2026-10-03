@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStore } from './mailStoreData'
+import { demoMailStore } from '../test/mailFixtures'
 
 const NOW = new Date('2026-06-21T12:00:00.000Z')
 import {
@@ -430,7 +430,7 @@ describe('composeFilterQuery', () => {
     ).toBe('from:a@news.example')
     expect(
       composeFilterQuery({ senderEmail: 'a@news.example', scope: 'domain' }),
-    ).toBe('from:nytimes.com')
+    ).toBe('from:news.example')
     expect(
       composeFilterQuery({
         senderEmail: 'a@news.example',
@@ -438,7 +438,7 @@ describe('composeFilterQuery', () => {
         subjectContains: 'daily briefing',
         hasAttachment: true,
       }),
-    ).toBe('from:nytimes.com subject:"daily briefing" has:attachment')
+    ).toBe('from:news.example subject:"daily briefing" has:attachment')
   })
 })
 
