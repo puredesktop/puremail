@@ -95,6 +95,7 @@ export interface MailTopBarProps {
   mailFetchDisabled: boolean
   density: MailDensity
   setDensity: (density: MailDensity) => void
+  connectionControl?: React.ReactNode
   openSettings: () => void
 }
 
@@ -138,6 +139,7 @@ export function MailTopBar({
   density,
   setDensity,
   openSettings,
+  connectionControl,
 }: MailTopBarProps): React.ReactElement {
   const [builderOpen, setBuilderOpen] = useState(false)
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
@@ -546,6 +548,7 @@ export function MailTopBar({
         )}
       </TopSearchWrap>
       <TopBarSpacer />
+      {connectionControl}
       <TopBarIconButton
         type="button"
         $fetching={mailFetching}
