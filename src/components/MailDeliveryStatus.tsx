@@ -9,7 +9,7 @@ const Light = styled.span<{ $state: MailConnectionState }>`
   flex: none;
   border-radius: 50%;
   background: ${({ $state }) => $state === 'healthy'
-    ? 'var(--platform-colors-success, #2c8652)'
+    ? 'color-mix(in srgb, var(--platform-colors-success, #2c8652) 80%, #5ddd87)'
     : $state === 'error' ? 'var(--platform-colors-error, #a54536)'
     : 'var(--platform-colors-text-tertiary, #92959e)'};
 `
