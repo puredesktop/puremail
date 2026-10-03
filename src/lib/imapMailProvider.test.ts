@@ -112,6 +112,7 @@ function fakeImap(): ImapTransport & {
 
 function fakeSmtp(): SmtpTransport & {
   sent: Array<{ raw: string; from: string; to: string[] }>
+  verify?: () => Promise<void>
 } {
   const sent: Array<{ raw: string; from: string; to: string[] }> = []
   return {
@@ -506,6 +507,44 @@ describe('ImapMailProvider against the fake transport', () => {
     await expect(
       imapProvider.searchThreadSummaries('anything'),
     ).rejects.toThrow(/cannot search server-side/)
+  })
+
+  it('keeps attachment bytes when replacing and deleting the old draft UID', async () => {
+    const imap = fakeImap()
+    let oldExists = true
+    imap.fetchAttachment = async () => {
+      if (!oldExists) throw new Error('No message with uid 442 in Drafts')
+      return { base64: 'aGVsbG8=', contentType: 'text/plain', filename: 'notes.txt' }
+    }
+    imap.deleteMessage = async () => { oldExists = false }
+    const { provider: mail, smtp } = provider(imap)
+    await mail.fetchStore()
+    const draft = { id: 'draft', threadId: 'thread', providerDraftId: 'imap_draft_442', to: [{ name: 'Kim', email: 'kim@example.com' }], subject: 'Files', body: 'Hello', attachments: [{ id: 'old', name: 'notes.txt', mimeType: 'text/plain', sizeLabel: '5 B', remote: { provider: 'imap' as const, folderPath: 'Drafts', uid: 442, partId: '2' } }], updatedAt: '2026-10-02T22:00:00Z', syncState: 'pending' as const }
+    const updated = await mail.updateDraft(draft.providerDraftId, draft)
+    expect(typeof updated).toBe('object')
+    if (typeof updated !== 'object') throw new Error('Expected hydrated attachments')
+    expect(updated.attachments?.[0].content).toContain('aGVsbG8=')
+    expect(updated.attachments?.[0].remote).toBeUndefined()
+    await mail.send({ threadId: draft.threadId, draft: { ...draft, providerDraftId: updated.providerDraftId, attachments: updated.attachments! } })
+    expect(smtp.sent).toHaveLength(1)
+    expect(smtp.sent[0].raw).toContain('aGVsbG8=')
+  })
+
+  it('classifies an attachment failure before SMTP as definitely not sent', async () => {
+    const { provider: mail, smtp } = provider()
+    await mail.fetchStore()
+    await expect(mail.send({ threadId: 'thread', draft: { id: 'draft', threadId: 'thread', to: [], subject: 'Files', body: '', attachments: [{ id: 'gone', name: 'gone.pdf', mimeType: 'application/pdf', sizeLabel: '1 KB' }], updatedAt: '2026-10-02T22:00:00Z', syncState: 'pending' } })).rejects.toMatchObject({ outcome: 'not_sent' })
+    expect(smtp.sent).toHaveLength(0)
+  })
+
+  it('tests incoming and outgoing connections separately without sending', async () => {
+    const imap = fakeImap()
+    const smtp = fakeSmtp()
+    smtp.verify = async () => { throw new Error('SMTP authentication failed') }
+    const { provider: mail } = provider(imap, smtp)
+    await mail.fetchStore()
+    expect(await mail.testConnection()).toEqual({ receiving: 'IMAP connection verified', sending: 'Failed: SMTP authentication failed' })
+    expect(smtp.sent).toHaveLength(0)
   })
 
   it('updateDraft reports the replacement id after append+delete', async () => {

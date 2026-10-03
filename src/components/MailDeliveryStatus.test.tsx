@@ -41,3 +41,21 @@ it('makes mailbox connection failure persistent and offers an explicit check', a
     expect(host.textContent).not.toContain('sent.')
   } finally { await act(async () => root.unmount()); host.remove() }
 })
+
+it('keeps the connection test visible and distinguishes SMTP failure from receiving health', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host); const test = vi.fn()
+  const props = { connected: true, offline: false, checked: true, checking: false, syncError: null, failedDrafts: [], sendingCount: 0, onCheck: vi.fn(), onOpenDraft: vi.fn(), onTest: test }
+  try {
+    await act(async () => root.render(<MailDeliveryStatus {...props} />))
+    expect(host.textContent).toContain('Sending not checked')
+    await act(async () => host.querySelector('button')!.click())
+    expect(test).toHaveBeenCalledOnce()
+    await act(async () => root.render(<MailDeliveryStatus {...props} connectionTest={{ receiving: 'IMAP connection verified', sending: 'Failed: SMTP authentication failed' }} />))
+    expect(host.textContent).toContain('Receiving: IMAP connection verified')
+    expect(host.textContent).toContain('Sending: Failed: SMTP authentication failed')
+    expect(host.querySelector('[role="alert"]')).not.toBeNull()
+    await act(async () => root.render(<MailDeliveryStatus {...props} testing />))
+    expect(host.querySelector('button')!.disabled).toBe(true)
+  } finally { await act(async () => root.unmount()); host.remove() }
+})

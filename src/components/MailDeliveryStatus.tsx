@@ -17,7 +17,10 @@ const Status = styled.div<{ $warning: boolean }>`
   button { margin-left: 8px; }
 `
 
-export function MailDeliveryStatus({ offline, connected, checking, checked, syncError, failedDrafts, sendingCount, onCheck, onOpenDraft, onAllowRetry, onResolveConflict, deliveryWarnings = [], draftSaveWarnings = [], onRetryDraftSave }:{
+export function MailDeliveryStatus({ offline, connected, checking, checked, syncError, failedDrafts, sendingCount, onCheck, onOpenDraft, onAllowRetry, onResolveConflict, deliveryWarnings = [], draftSaveWarnings = [], onRetryDraftSave, connectionTest, onTest, testing }:{
+  connectionTest?: { receiving: string; sending: string } | null
+  onTest?: () => void
+  testing?: boolean
   offline: boolean
   connected: boolean
   checking: boolean
@@ -33,12 +36,15 @@ export function MailDeliveryStatus({ offline, connected, checking, checked, sync
   onCheck: () => void
   onOpenDraft: (draft: Draft) => void
 }) {
+  const testFailed = !!connectionTest && [connectionTest.receiving, connectionTest.sending].some(value => /failed|timed out|not verified/i.test(value))
   const connection = offline ? 'Offline — mail cannot be sent or received.'
     : !connected ? 'Mail account disconnected — messages cannot be sent.'
     : syncError ? `Cannot reach your mailbox — showing previously synced mail. ${syncError}`
     : checking || !checked ? 'Checking mail connection…' : null
-  if (!connection && !failedDrafts.length && !sendingCount && !deliveryWarnings.length && !draftSaveWarnings.length) return null
-  return <Status $warning={offline || !!syncError || !connected || failedDrafts.length > 0 || deliveryWarnings.length > 0 || draftSaveWarnings.length > 0} role={offline || syncError || !connected || failedDrafts.length || deliveryWarnings.length || draftSaveWarnings.length ? 'alert' : 'status'} aria-label="Mail connection and delivery">
+  if (!onTest && !connection && !failedDrafts.length && !sendingCount && !deliveryWarnings.length && !draftSaveWarnings.length) return null
+  return <Status $warning={testFailed || offline || !!syncError || !connected || failedDrafts.length > 0 || deliveryWarnings.length > 0 || draftSaveWarnings.length > 0} role={testFailed || offline || syncError || !connected || failedDrafts.length || deliveryWarnings.length || draftSaveWarnings.length ? 'alert' : 'status'} aria-label="Mail connection and delivery">
+    {onTest && <p><strong>{offline ? 'Offline' : syncError || !connected || testFailed ? 'Mail needs attention' : checked ? connectionTest && !testFailed ? 'Connections checked' : 'Receiving connected · Sending not checked' : 'Mail connection not yet checked'}</strong><Button size="sm" variant="text" disabled={offline || !connected || testing} onClick={onTest}>{testing ? 'Testing…' : 'Test receiving / sending'}</Button></p>}
+    {connectionTest && <p>Receiving: {connectionTest.receiving}<br />Sending: {connectionTest.sending}</p>}
     {connection && <p><strong>{connection}</strong>{!offline && <Button size="sm" variant="text" disabled={checking} onClick={onCheck}>Check connection</Button>}</p>}
     {sendingCount > 0 && <p>Sending {sendingCount === 1 ? 'message' : `${sendingCount} messages`}… awaiting confirmation.</p>}
     {failedDrafts.length > 0 && <p><strong>{failedDrafts.length === 1 ? '1 message needs attention — send not confirmed.' : `${failedDrafts.length} messages need attention — send not confirmed.`}</strong> Saved in Drafts. Nothing will be resent automatically.</p>}

@@ -58,7 +58,9 @@ function parseDraftsFile(
         typeof draft === 'object' &&
         draft !== null &&
         typeof (draft as Draft).id === 'string',
-    ),
+    ).map(draft => draft.sendState === 'uncertain' && draft.sendError?.includes("shell:mailTransport:fetchAttachment")
+      ? { ...draft, sendState: 'failed' as const, sendError: `Message not sent. An attachment could not be downloaded from its old Drafts copy. Open the draft and reattach the missing file. (${draft.sendError})` }
+      : draft),
     runs: Array.isArray(file.runs) ? file.runs : null,
     recovery: file.recovery && Array.isArray(file.recovery.accounts) && Array.isArray(file.recovery.mailboxes) && Array.isArray(file.recovery.threads) ? file.recovery : undefined,
     sentReceipts: Array.isArray(file.sentReceipts) ? file.sentReceipts.filter(message => message && typeof message.id === 'string' && message.deliveryAccepted === true) : [],

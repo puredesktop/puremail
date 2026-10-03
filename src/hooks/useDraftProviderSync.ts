@@ -222,6 +222,7 @@ export function useDraftProviderSync(input: {
               return {
                 ...item,
                 ...patch,
+                attachments: item.attachments.map(attachment => patch.attachments?.find(saved => saved.id === attachment.id) ?? attachment),
                 providerRevision: draftContentRevision(current),
                 syncState: sameRevision(item, current) ? 'synced' : 'pending',
               }
@@ -280,7 +281,7 @@ export function useDraftProviderSync(input: {
             .updateDraft(current.providerDraftId, current)
             .then(replacement => {
               const replacementId = typeof replacement === 'string' ? replacement : replacement?.providerDraftId
-              finish({ syncState: 'synced', providerSaveWarning: typeof replacement === 'object' ? replacement.warning : current.providerSaveWarning, staleProviderDraftIds: typeof replacement === 'object' ? replacement.staleProviderDraftIds : current.staleProviderDraftIds, ...(replacementId ? { providerDraftId: replacementId } : {}) })
+              finish({ syncState: 'synced', providerSaveWarning: typeof replacement === 'object' ? replacement.warning : current.providerSaveWarning, staleProviderDraftIds: typeof replacement === 'object' ? replacement.staleProviderDraftIds : current.staleProviderDraftIds, ...(typeof replacement === 'object' && replacement.attachments ? { attachments: replacement.attachments } : {}), ...(replacementId ? { providerDraftId: replacementId } : {}) })
             })
             .catch(fail)
           continue
@@ -309,7 +310,7 @@ export function useDraftProviderSync(input: {
       }
       if (scopeRef.current !== scope || !scope.active) throw new Error('The mail account changed before sending. Nothing was sent.')
       const providerDraftId = scope.latestIds.get(draft.id) ?? storeRef.current.drafts.find(item => item.id === draft.id)?.providerDraftId ?? draft.providerDraftId
-      return { ...draft, ...scope.latestPatches.get(draft.id), ...(providerDraftId ? { providerDraftId } : {}) }
+      return { ...draft, ...scope.latestPatches.get(draft.id), attachments: draft.attachments.map(attachment => scope.latestPatches.get(draft.id)?.attachments?.find(saved => saved.id === attachment.id) ?? attachment), ...(providerDraftId ? { providerDraftId } : {}) }
     },
     releaseSend: (draftId: string) => {
       scope.sending.delete(draftId)

@@ -642,6 +642,9 @@ export function PureMailShell({
   const [mailFetching, setMailFetching] = useState(initialSyncPending)
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine !== false)
   const [connectionChecked, setConnectionChecked] = useState(false)
+  const connectionTestGeneration = useRef(0)
+  const [connectionTest, setConnectionTest] = useState<{ receiving: string; sending: string } | null>(null)
+  const [testingConnection, setTestingConnection] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const reportSendFailure = (draftId: string, error: unknown): void => {
     setStore(current => markDraftSendFailed(current, draftId, error))
@@ -4151,7 +4154,30 @@ export function PureMailShell({
     setCommandNotice,
   }
 
+  useEffect(() => { connectionTestGeneration.current += 1; setConnectionTest(null); setTestingConnection(false) }, [selectedAccountId])
+
+  const testMailConnection = async (): Promise<void> => {
+    if (testingConnection || !mailProvider) return
+    const generation = connectionTestGeneration.current
+    setTestingConnection(true)
+    setConnectionTest(null)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const result = await Promise.race([
+        mailProvider.testConnection ? mailProvider.testConnection() : mailProvider.fetchStore().then(() => ({ receiving: 'Account API connection verified', sending: 'Outgoing SMTP test unavailable for this provider; a connection check does not prove delivery.' })),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Connection test timed out after 35 seconds. Check the account settings or local mail bridge.')), 35_000) }),
+      ])
+      if (generation === connectionTestGeneration.current) setConnectionTest(result)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Connection check failed.'
+      if (generation === connectionTestGeneration.current) setConnectionTest({ receiving: reason, sending: 'Not verified' })
+    } finally { if (timer) clearTimeout(timer); if (generation === connectionTestGeneration.current) setTestingConnection(false) }
+  }
+
   const deliveryStatus = activeProvider !== 'demo' && <MailDeliveryStatus
+        onTest={() => void testMailConnection()}
+        testing={testingConnection}
+        connectionTest={connectionTest}
         offline={!networkOnline}
         connected={!!mailProvider}
         checking={mailFetching}
