@@ -1170,7 +1170,7 @@ export class ImapMailProvider implements MailProvider {
       } finally { if (timer) clearTimeout(timer) }
     }
     const [incoming, outgoing] = await Promise.allSettled([
-      bounded(this.options.imap.listFolders()),
+      bounded(this.options.imap.connect().then(() => this.options.imap.listFolders())),
       bounded(this.options.smtp.verify ? this.options.smtp.verify() : Promise.reject(new Error('Outgoing connection testing is unavailable in this version.'))),
     ])
     const result = (value: PromiseSettledResult<unknown>, success: string) => value.status === 'fulfilled'

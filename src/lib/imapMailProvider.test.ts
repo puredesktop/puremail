@@ -651,6 +651,34 @@ describe('ImapMailProvider against the fake transport', () => {
     expect(smtp.sent).toHaveLength(0)
   })
 
+  it('opens IMAP when testing after an offline startup without fetching or sending mail', async () => {
+    const imap = fakeImap()
+    const listFolders = imap.listFolders.bind(imap)
+    imap.listFolders = async () => {
+      if (!imap.connected) throw new Error('Not connected. Call mailTransport.connect for this profile first.')
+      return listFolders()
+    }
+    imap.fetchMessages = async () => { throw new Error('A connection probe must not fetch messages') }
+    const smtp = fakeSmtp()
+    smtp.verify = async () => {}
+    const { provider: mail } = provider(imap, smtp)
+    expect(await mail.testConnection()).toEqual({ receiving: 'IMAP connection verified', sending: 'SMTP authentication verified; no test email sent' })
+    expect(imap.connected).toBe(true)
+    expect(smtp.sent).toHaveLength(0)
+  })
+
+  it('still checks SMTP when initial IMAP connection fails', async () => {
+    const imap = fakeImap()
+    imap.connect = async () => { throw new Error('connect ECONNREFUSED') }
+    const smtp = fakeSmtp()
+    let verified = false
+    smtp.verify = async () => { verified = true }
+    const { provider: mail } = provider(imap, smtp)
+    expect(await mail.testConnection()).toEqual({ receiving: 'Failed: connect ECONNREFUSED', sending: 'SMTP authentication verified; no test email sent' })
+    expect(verified).toBe(true)
+    expect(smtp.sent).toHaveLength(0)
+  })
+
   it('updateDraft reports the replacement id after append+delete', async () => {
     const imap = fakeImap()
     const { provider: imapProvider } = provider(imap)

@@ -4236,7 +4236,11 @@ export function PureMailShell({
         const verified = mailConnectionsVerified(result)
         if (verified) { setConnectionError(null) }
         const issues = storeRef.current.drafts.filter(draft => !draft.sentAt && (draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && storeRef.current.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId))
-        const failures = [!/^IMAP connection verified|^Account API connection verified/i.test(result.receiving) ? `Receiving: ${mailErrorToastText(result.receiving)}` : '', !/verified/i.test(result.sending) || /failed|not verified|unavailable|timed out|error/i.test(result.sending) ? `Sending: ${mailErrorToastText(result.sending)}` : ''].filter(Boolean)
+        const receivingFailure = !/^IMAP connection verified|^Account API connection verified/i.test(result.receiving) ? mailErrorToastText(result.receiving) : ''
+        const sendingFailure = !/verified/i.test(result.sending) || /failed|not verified|unavailable|timed out|error/i.test(result.sending) ? mailErrorToastText(result.sending) : ''
+        const failures = receivingFailure === sendingFailure
+          ? [receivingFailure].filter(Boolean)
+          : [receivingFailure ? `Receiving: ${receivingFailure}` : '', sendingFailure ? `Sending: ${sendingFailure}` : ''].filter(Boolean)
         setToast({ id: Date.now(), error: !verified || issues.length > 0,
           message: failures.length ? failures.join(' ') : issues.length ? `Connections verified. ${issues.length} draft${issues.length === 1 ? '' : 's'} still need attention.` : 'Receiving and sending connections verified.',
           ...(issues.length ? { actionLabel: 'Review', onAction: openMailRecovery } : {}) })
