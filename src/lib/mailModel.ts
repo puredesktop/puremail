@@ -3818,11 +3818,9 @@ export function mergeMailProviderSyncResult(
     ? dateFromInput(coverage.coveredFrom).getTime()
     : null
 
-  // A composed message starts life on a local thread. Once it is sent, the
-  // provider gives that message a real thread, and both were kept — the same
-  // message showing as two conversations in Sent, permanently, because a
-  // carried non-inbox thread is never dropped. When the provider's copy of a
-  // local thread's confirmed send arrives, the local thread has done its job.
+  // A send can start on a local conversation or an imported Draft-only one.
+  // When the provider puts every real message on another conversation, retire
+  // the old shell. Original history and newer unsent mail still need their home.
   const providerGmailMessageIds = new Set(
     incomingMessages.filter(message => !message.isDraft)
       .map(message => message.gmailMessageId)
@@ -3836,19 +3834,15 @@ export function mergeMailProviderSyncResult(
   )
   const supersededLocalThreadIds = new Set(
     currentStore.threads
-      .filter(
-        thread =>
-          !isProviderThreadId(thread.id) &&
-          // Never drop a thread that still holds unsent mail.
-          !hostsUnsentDraft.has(thread.id) &&
-          currentStore.messages.some(
-            message =>
-              message.threadId === thread.id &&
-              !message.isDraft &&
-              (message.gmailMessageId && providerGmailMessageIds.has(message.gmailMessageId) ||
-                message.messageIdHeader && providerRfcMessageIds.has(message.messageIdHeader)),
-          ),
-      )
+      .filter(thread => {
+        if (providerThreadIds.has(thread.id) || hostsUnsentDraft.has(thread.id)) return false
+        const messages = currentStore.messages.filter(message => message.threadId === thread.id && !message.isDraft)
+        return messages.length > 0 && messages.every(message => incomingMessages.some(remote =>
+          !remote.isDraft && remote.threadId !== thread.id &&
+          remoteAccounts.get(remote.threadId) === thread.accountId &&
+          (message.gmailMessageId && message.gmailMessageId === remote.gmailMessageId ||
+            message.messageIdHeader && message.messageIdHeader === remote.messageIdHeader)))
+      })
       .map(thread => thread.id),
   )
 
@@ -3860,6 +3854,12 @@ export function mergeMailProviderSyncResult(
     if (thread.id.startsWith('thread_compose_') && !currentStore.messages.some(message => message.threadId === thread.id)) return false
     if (acceptedReceipts.some(message => message.threadId === thread.id && !incomingMessages.some(remote => remote.messageIdHeader && remote.messageIdHeader === message.messageIdHeader || remote.gmailMessageId && remote.gmailMessageId === message.gmailMessageId))) return true
     const mailboxRole = mailboxRolesById.get(thread.mailboxId)
+    // Older syncs already moved the receipt but persisted an empty imported
+    // Sent shell. No content is lost by retiring it; failed fetch placeholders
+    // and pending local work remain protected.
+    if (mailboxRole === 'sent' && thread.syncState === 'synced' &&
+      !failedFetchThreadIds.has(thread.id) &&
+      !currentStore.messages.some(message => message.threadId === thread.id)) return false
     if (mailboxRole && mailboxRole !== 'inbox') return true
     if (failedFetchThreadIds.has(thread.id)) return true
     if (
