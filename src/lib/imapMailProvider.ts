@@ -575,25 +575,31 @@ export class ImapMailProvider implements MailProvider {
       ...this.folders.filter(folder => !folder.virtual),
       ...this.folders.filter(folder => folder.virtual),
     ]
+    let draftsCovered = foldersRealFirst.some(folder => folder.role === 'drafts')
     for (const folder of foldersRealFirst) {
       // Walk the window newest-first, a page at a time, until the folder
       // runs out. A cap that quietly cut the window was the whole bug.
       const envelopes: ImapEnvelope[] = []
       let beforeUid: number | undefined
+      let exhausted = false
       for (let page = 0; page < FOLDER_FETCH_MAX_PAGES; page += 1) {
         const batch = await this.options.imap.fetchMessages(
           folder.path,
           FOLDER_FETCH_PAGE,
-          windowStart,
+          // Unsent work has no expiry. A windowed Drafts read cannot prove
+          // an older draft was sent or deleted in another client.
+          folder.role === 'drafts' ? undefined : windowStart,
           beforeUid,
         )
-        if (batch.length === 0) break
+        if (batch.length === 0) { exhausted = true; break }
         envelopes.push(...batch)
         const lowest = Math.min(...batch.map(item => item.uid))
         // A page that could not go lower would repeat itself forever.
-        if (batch.length < FOLDER_FETCH_PAGE || (beforeUid !== undefined && lowest >= beforeUid)) break
+        if (batch.length < FOLDER_FETCH_PAGE) { exhausted = true; break }
+        if (beforeUid !== undefined && lowest >= beforeUid) break
         beforeUid = lowest
       }
+      if (folder.role === 'drafts' && !exhausted) draftsCovered = false
       for (const envelope of envelopes) {
         const handle = `uid_${folder.path}_${envelope.uid}`
         const messageId = normalizeMessageId(envelope.messageId)
@@ -755,7 +761,7 @@ export class ImapMailProvider implements MailProvider {
       messages,
       drafts,
       starredThreadIds,
-      syncCoverage: { messagesCoveredFrom: windowStart },
+      syncCoverage: { messagesCoveredFrom: windowStart, draftsCovered },
     }
     return this.store
   }

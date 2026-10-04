@@ -1071,3 +1071,69 @@ describe('opening server-only search results', () => {
     expect(new Set(hits.map(hit => hit.threadId)).size).toBe(2)
   })
 })
+
+describe('IMAP draft listing coverage', () => {
+  function pagedDrafts(total: number, repeat = false) {
+    const imap = fakeImap()
+    const calls: Array<{ folder: string; since?: string }> = []
+    const base = imap.boxes.get('INBOX')![0]!
+    const source = Array.from({ length: total }, (_, index) => ({ ...base,
+      uid: total - index, messageId: `<draft-${total - index}@audit.test>`,
+      date: '2020-01-01T12:00:00.000Z', flags: ['\\Draft'],
+    }))
+    imap.fetchMessages = async (folder: string, limit = 200, since?: string, before?: number) => {
+      calls.push({ folder, since })
+      if (folder !== 'Drafts') return imap.boxes.get(folder) ?? []
+      return source.filter(item => repeat || before === undefined || item.uid < before).slice(0, limit)
+    }
+    const mail = new ImapMailProvider({ email: 'alex@fastmail.example', settings: { fetchWindow: 'today' }, imap, smtp: { async send() {} } })
+    return { imap, mail, calls }
+  }
+
+  it('imports older drafts outside the message window and marks exhausted pagination complete', async () => {
+    const { mail, calls } = pagedDrafts(205)
+    const store = await mail.fetchStore()
+    expect(store.drafts).toHaveLength(205)
+    expect(store.syncCoverage?.draftsCovered).toBe(true)
+    expect(calls.filter(call => call.folder === 'Drafts').every(call => call.since === undefined)).toBe(true)
+    expect(calls.find(call => call.folder === 'INBOX')?.since).toBeTruthy()
+  })
+
+  it('removes a synced local draft after an authoritative external deletion', async () => {
+    const imap = fakeImap()
+    imap.boxes.set('Drafts', [{ ...imap.boxes.get('INBOX')![0]!, uid: 10, messageId: '<draft-removed@audit.test>', flags: ['\\Draft'] }])
+    const mail = provider(imap).provider
+    const before = await mail.fetchStore()
+    expect(before.drafts).toHaveLength(1)
+    imap.boxes.set('Drafts', [])
+    const after = await mail.fetchStore()
+    expect(after.syncCoverage?.draftsCovered).toBe(true)
+    expect(mergeMailProviderSyncResult(before, after).drafts).toHaveLength(0)
+  })
+
+  it.each([{ total: 2401, repeat: false }, { total: 400, repeat: true }])('preserves absent local drafts when pagination is incomplete: %j', async ({ total, repeat }) => {
+    const { mail } = pagedDrafts(total, repeat)
+    const partial = await mail.fetchStore()
+    expect(partial.syncCoverage?.draftsCovered).toBe(false)
+    const missing = { ...partial.drafts[0]!, id: 'absent-local', providerDraftId: 'imap_draft_999999', syncState: 'synced' as const }
+    const merged = mergeMailProviderSyncResult({ ...partial, drafts: [missing] }, partial)
+    expect(merged.drafts.some(draft => draft.id === missing.id)).toBe(true)
+  })
+
+  it('does not claim coverage when no Drafts folder is available', async () => {
+    const { imap, mail } = pagedDrafts(0)
+    const list = imap.listFolders.bind(imap)
+    imap.listFolders = async () => (await list()).filter(folder => folder.role !== 'drafts')
+    expect((await mail.fetchStore()).syncCoverage?.draftsCovered).toBe(false)
+  })
+
+  it('rejects an incomplete failed fetch instead of publishing an empty authoritative listing', async () => {
+    const { imap, mail } = pagedDrafts(0)
+    const fetch = imap.fetchMessages.bind(imap)
+    imap.fetchMessages = async folder => {
+      if (folder === 'Drafts') throw new Error('Draft listing disconnected')
+      return fetch(folder)
+    }
+    await expect(mail.fetchStore()).rejects.toThrow('Draft listing disconnected')
+  })
+})
