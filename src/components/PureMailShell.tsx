@@ -1,4 +1,5 @@
 import { createMailDeliveryController } from '../lib/mailDelivery'
+import { beginThreadReadSync } from '../lib/mailThreadReadSync'
 import { MailConnectionControl } from './MailDeliveryStatus'
 import { markDraftSendFailed, mailErrorToastText, mailConnectionsVerified } from '../lib/mailDeliveryStatus'
 import type { InviteActionState } from '../types'
@@ -1423,14 +1424,16 @@ export function PureMailShell({
       message => message.threadId === selectedThreadId && !message.read,
     )
     if (!hasUnread) return
-    setStore(current => markThreadRead(current, selectedThreadId, true))
+    const readChange = beginThreadReadSync(storeRef.current, selectedThreadId, true)
+    setStore(readChange.store)
     if (providerBacked) {
       void providerBacked
         .markThreadRead(selectedThreadId, true)
+        .then(() => setStore(readChange.acknowledge))
         .catch(error => {
           setCommandNotice(
             error instanceof Error
-              ? `Could not mark the thread read in Gmail; it may show unread again after the next fetch. (${error.message})`
+              ? `Could not mark the thread read at ${providerName(activeProvider)}; it may show unread again after the next fetch. (${error.message})`
               : `Could not mark the thread read at ${providerName(activeProvider)}; it may show unread again after the next fetch.`,
           )
         })
