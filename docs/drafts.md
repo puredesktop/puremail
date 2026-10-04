@@ -44,6 +44,11 @@ longer lists, but **only** when `syncCoverage.draftsCovered` says the fetch
 actually looked. A failed listing must report no coverage; read as "there are
 none" it would delete the user's drafts.
 
+IMAP reads Drafts independently of the incoming-message date window, because
+unsent work can be older than that window. Only an exhausted folder listing
+reports complete draft coverage; the paging safety limit, a repeated page, or
+a missing Drafts folder cannot prove an absent draft was sent or deleted.
+
 Discarding removes the draft at the provider too, and that is
 `useDraftProviderSync`'s job rather than the shell's — because only the thing
 holding the in-flight `createDraft` promise can delete a draft discarded
