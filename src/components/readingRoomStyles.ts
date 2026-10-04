@@ -1,10 +1,9 @@
 import { styled } from 'styled-components'
 
 /**
- * The reading room's look: a white sheet on the reader's quiet ground, a
- * reading serif, and two inks. Blue ink is for the reply; pencil (grey) is
- * the reader's own. The sheet stays white paper in every appearance, as mail
- * bodies do; the chrome around it follows the app's tokens.
+ * A sheet on quiet ground, a reading serif, and two inks. Blue is for the
+ * reply; pencil is the reader's own. Define the palette on the room itself:
+ * its expanded portal lives outside MailFrame and cannot inherit its tokens.
  */
 export const READING_SERIF = `'Newsreader', 'Iowan Old Style', 'Charter', 'Source Serif 4', Georgia, serif`
 export const INK = '#2c4f9e'
@@ -14,18 +13,41 @@ export const PENCIL = '#5d636b'
 export const PENCIL_TINT = '#efeee9'
 
 export const Room = styled.section`
+  --mail-room-ground: #e5e7e3;
+  --mail-room-paper: #ffffff;
+  --mail-room-text: #23272f;
+  --mail-room-heading: #15181e;
+  --mail-room-muted: #6e7480;
+  --mail-room-line: #c9ccd2;
+  --mail-room-panel: #f6f7f8;
+  --mail-room-ink: ${INK};
+  --mail-room-selection: #c9d8f4;
+  --mail-room-highlight: #f6edc9;
+  :root[data-platform-theme='dark'] & {
+    color-scheme: dark;
+    --mail-room-ground: var(--platform-colors-text-inverse, #142420);
+    --mail-room-paper: var(--platform-colors-elevated, #1b2b26);
+    --mail-room-text: var(--platform-colors-text, #f7f9f2);
+    --mail-room-heading: var(--platform-colors-text, #f7f9f2);
+    --mail-room-muted: var(--platform-colors-text-secondary, #b8c1b8);
+    --mail-room-line: var(--platform-colors-border, #45554e);
+    --mail-room-panel: var(--platform-colors-surface-hover, #2b3b34);
+    --mail-room-ink: var(--platform-colors-semantic-blue-text, #c9e0f1);
+    --mail-room-selection: var(--platform-colors-selection, #405c70);
+    --mail-room-highlight: var(--platform-colors-semantic-orange-muted, #53472f);
+  }
   &[data-expanded='true'] {
     position: fixed;
     inset: 0;
     z-index: calc(var(--platform-z-index-zi-app-modal, 1000) - 1);
-    background: var(--puremail-reader-bg, var(--platform-colors-background, #e5e7e3));
+    background: var(--mail-room-ground);
   }
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--puremail-reader-bg, #eceef1);
+  background: var(--mail-room-ground);
   color: var(--platform-colors-text);
   font-family: var(--platform-typography-font-family);
 `
@@ -70,7 +92,7 @@ export const BarButton = styled.button`
     background: transparent;
   }
   &[data-primary='true'] {
-    border-color: ${INK};
+    border-color: var(--mail-room-ink, ${INK});
     background: ${INK};
     color: #ffffff;
   }
@@ -95,7 +117,7 @@ export const Chip = styled.span`
   }
   &[data-ink='reply'] {
     background: color-mix(in srgb, ${INK} 13%, transparent);
-    color: ${INK};
+    color: var(--mail-room-ink, ${INK});
   }
   &[data-ink='private'] {
     background: color-mix(in srgb, ${PENCIL} 14%, transparent);
@@ -123,7 +145,7 @@ export const Switch = styled.span<{ $on: boolean }>`
     width: 11px;
     height: 11px;
     border-radius: 50%;
-    background: #ffffff;
+    background: var(--mail-room-paper, #ffffff);
     transition: left 120ms ease;
   }
 `
@@ -155,8 +177,8 @@ export const Sheet = styled.article`
   box-sizing: border-box;
   padding: 64px 76px 72px;
   border-radius: 3px;
-  background: #ffffff;
-  color: #23272f;
+  background: var(--mail-room-paper);
+  color: var(--mail-room-text);
   box-shadow: 0 1px 2px rgba(20, 25, 40, 0.05), 0 18px 48px -28px rgba(20, 25, 40, 0.28);
   @media (max-width: 760px) {
     padding: 40px 28px 48px;
@@ -168,32 +190,33 @@ export const Kicker = styled.div`
   font-weight: 500;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #6e7480;
+  color: var(--mail-room-muted);
 `
 
 export const Headline = styled.h1`
   margin: 14px 0 10px;
   font: 400 40px/1.14 ${READING_SERIF};
   letter-spacing: -0.01em;
-  color: #15181e;
+  color: var(--mail-room-heading);
   overflow-wrap: anywhere;
 `
 
 export const Dateline = styled.div`
   font-size: 13.5px;
-  color: #6e7480;
+  color: var(--mail-room-muted);
 `
 
 export const Rule = styled.div`
   width: 56px;
   height: 1px;
   margin: 30px 0;
-  background: #c9ccd2;
+  background: var(--mail-room-line);
 `
 
 export const Prose = styled.div<{ $fontSize: number }>`
   font: 400 ${({ $fontSize }) => $fontSize}px/1.72 ${READING_SERIF};
-  color: #23272f;
+  color: var(--mail-room-text);
+  --page: var(--mail-room-paper);
   overflow-wrap: break-word;
   --vs-body-font: ${READING_SERIF};
   --vs-font-size: ${({ $fontSize }) => $fontSize}px;
@@ -204,8 +227,26 @@ export const Prose = styled.div<{ $fontSize: number }>`
     border: 0; background: transparent; box-shadow: none; overflow: visible; font: inherit;
   }
   && .mail-annotation-document .tiptap,
-  && .mail-annotation-document .tiptap p { font: inherit; color: #23272f; background: transparent; }
+  && .mail-annotation-document .tiptap p { font: inherit; color: var(--mail-room-text); background: transparent; }
   && .mail-annotation-document .tiptap p { margin: 0 0 1.05em; }
+  && .mail-annotation-document .tiptap a { color: var(--mail-room-ink); }
+  && .mail-annotation-document .comment-mark[data-comment-author='For the reply'] {
+    --comment-mark-border: var(--mail-room-ink);
+    --comment-mark-bg: color-mix(in srgb, var(--mail-room-ink) 20%, transparent);
+  }
+  && .mail-annotation-document .comment-mark[data-comment-author='Private'] {
+    --comment-mark-border: var(--mail-room-muted);
+    --comment-mark-bg: color-mix(in srgb, var(--mail-room-muted) 18%, transparent);
+  }
+  && .mail-annotation-document textarea {
+    background: var(--mail-room-paper);
+    color: var(--mail-room-text);
+    border-color: var(--mail-room-line);
+  }
+  && .mail-annotation-document textarea::placeholder {
+    color: var(--mail-room-muted);
+    opacity: 0.8;
+  }
 
 
   p {
@@ -214,7 +255,7 @@ export const Prose = styled.div<{ $fontSize: number }>`
     &[data-preserve-lines='true'] { white-space: pre-line; }
   }
   a {
-    color: ${INK};
+    color: var(--mail-room-ink, ${INK});
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
   }
@@ -224,37 +265,37 @@ export const Prose = styled.div<{ $fontSize: number }>`
     cursor: pointer;
   }
   mark[data-ink='reply'] {
-    background: ${INK_TINT};
+    background: color-mix(in srgb, var(--mail-room-ink, ${INK}) 14%, var(--mail-room-paper, #fff));
     box-shadow: inset 0 -1.5px 0 #9fb3dc;
   }
   mark[data-ink='reply'][data-active='true'] {
-    background: ${INK_ACTIVE};
+    background: color-mix(in srgb, var(--mail-room-ink, ${INK}) 22%, var(--mail-room-paper, #fff));
     box-shadow: inset 0 -2px 0 ${INK};
   }
   mark[data-ink='private'] {
-    background: ${PENCIL_TINT};
+    background: color-mix(in srgb, var(--mail-room-muted, ${PENCIL}) 12%, var(--mail-room-paper, #fff));
     border-bottom: 1.5px dashed #9a9fa6;
   }
   mark[data-ink='private'][data-active='true'] {
-    background: #e3e1d8;
+    background: color-mix(in srgb, var(--mail-room-muted, ${PENCIL}) 20%, var(--mail-room-paper, #fff));
     border-bottom-color: #6a7078;
   }
   mark[data-ink='highlight'] {
-    background: #f6edc9;
+    background: var(--mail-room-highlight, #f6edc9);
   }
   mark[data-ink='highlight'][data-active='true'] {
-    background: #efdf9f;
+    background: var(--mail-room-highlight, #efdf9f);
   }
   sup {
     margin-left: 2px;
     font: 600 11px var(--platform-typography-font-family);
-    color: ${INK};
+    color: var(--mail-room-ink, ${INK});
   }
   sup[data-ink='private'] {
     color: #6a7078;
   }
   ::selection {
-    background: #c9d8f4;
+    background: var(--mail-room-selection);
   }
 `
 
@@ -266,7 +307,7 @@ export const SelectionBar = styled.div`
   gap: 2px;
   padding: 4px;
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--mail-room-paper, #ffffff);
   box-shadow: 0 2px 6px rgba(20, 25, 40, 0.1), 0 14px 32px -12px rgba(20, 25, 40, 0.35);
   transform: translate(-50%, calc(-100% - 10px));
   font-family: var(--platform-typography-font-family);
@@ -279,16 +320,16 @@ export const SelectionBar = styled.div`
     border: 0;
     border-radius: 8px;
     background: transparent;
-    color: #4f545c;
+    color: var(--mail-room-muted, #4f545c);
     font: 500 13px var(--platform-typography-font-family);
     cursor: pointer;
     white-space: nowrap;
   }
   button:hover {
-    background: #f1f3f6;
+    background: var(--mail-room-panel, #f1f3f6);
   }
   button[data-ink='reply'] {
-    color: ${INK};
+    color: var(--mail-room-ink, ${INK});
   }
   svg {
     width: 15px;
@@ -298,7 +339,7 @@ export const SelectionBar = styled.div`
     width: 1px;
     height: 20px;
     margin: 0 2px;
-    background: #e3e5ea;
+    background: var(--mail-room-line, #e3e5ea);
   }
 `
 
@@ -333,7 +374,7 @@ export const MarginHead = styled.div`
   }
   span {
     font-size: 12.5px;
-    color: var(--platform-colors-text-tertiary);
+    color: var(--mail-room-muted, var(--platform-colors-text-tertiary));
   }
 `
 
@@ -388,7 +429,7 @@ export const NoteCard = styled.div`
     padding: 0;
     border: 0;
     background: none;
-    color: var(--platform-colors-text-tertiary);
+    color: var(--mail-room-muted, var(--platform-colors-text-tertiary));
     font: italic 12.5px/1.4 var(--platform-typography-font-family);
     text-align: left;
     cursor: pointer;
@@ -406,7 +447,7 @@ export const NoteCard = styled.div`
   }
   &[data-ink='reply'] .text {
     font: italic 400 17px/1.45 ${READING_SERIF};
-    color: ${INK};
+    color: var(--mail-room-ink, ${INK});
   }
   &[data-ink='private'] .text,
   &[data-ink='highlight'] .text {
@@ -419,7 +460,7 @@ export const NoteCard = styled.div`
     align-items: center;
     gap: 5px;
     font-size: 11.5px;
-    color: var(--platform-colors-text-tertiary);
+    color: var(--mail-room-muted, var(--platform-colors-text-tertiary));
   }
   .private svg {
     width: 11px;
@@ -427,7 +468,7 @@ export const NoteCard = styled.div`
   }
   .lost {
     font-size: 12px;
-    color: var(--platform-colors-text-tertiary);
+    color: var(--mail-room-muted, var(--platform-colors-text-tertiary));
   }
   .actions {
     display: flex;
@@ -444,7 +485,7 @@ export const NoteCard = styled.div`
     border: 0;
     border-radius: 7px;
     background: transparent;
-    color: var(--platform-colors-text-tertiary);
+    color: var(--mail-room-muted, var(--platform-colors-text-tertiary));
     font: 500 12px var(--platform-typography-font-family);
     cursor: pointer;
   }
@@ -478,8 +519,12 @@ export const NoteEditor = styled.div`
     font: italic 400 16px/1.45 ${READING_SERIF};
   }
   textarea:focus {
-    outline: 2px solid color-mix(in srgb, ${INK} 45%, transparent);
+    outline: 2px solid color-mix(in srgb, var(--mail-room-ink, ${INK}) 45%, transparent);
     outline-offset: 0;
+  }
+  textarea::placeholder {
+    color: var(--mail-room-muted, var(--platform-colors-text-secondary));
+    opacity: 0.8;
   }
   .row {
     display: flex;
@@ -499,7 +544,7 @@ export const NoteEditor = styled.div`
   }
   .ink[aria-pressed='true'][data-ink='reply'] {
     background: color-mix(in srgb, ${INK} 14%, transparent);
-    color: ${INK};
+    color: var(--mail-room-ink, ${INK});
   }
   .ink[aria-pressed='true'][data-ink='private'] {
     background: color-mix(in srgb, ${PENCIL} 16%, transparent);
@@ -521,33 +566,37 @@ export const ReplyBox = styled.div`
   margin: 0 0 12px;
   padding: 14px 14px 12px;
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--mail-room-paper, #ffffff);
   box-shadow: 0 1px 2px rgba(20, 25, 40, 0.06);
   label {
     font: 400 19px/1.2 ${READING_SERIF};
-    color: #23272f;
+    color: var(--mail-room-text, #23272f);
   }
   textarea {
     box-sizing: border-box;
     width: 100%;
     min-height: 84px;
     padding: 9px 11px;
-    border: 1px solid #d5d9e0;
+    border: 1px solid var(--mail-room-line, #d5d9e0);
     border-radius: 9px;
-    background: #ffffff;
-    color: ${INK};
+    background: var(--mail-room-paper, #ffffff);
+    color: var(--mail-room-ink, ${INK});
     resize: vertical;
     font: italic 400 16.5px/1.5 ${READING_SERIF};
   }
   textarea:focus {
-    outline: 2px solid color-mix(in srgb, ${INK} 45%, transparent);
+    outline: 2px solid color-mix(in srgb, var(--mail-room-ink, ${INK}) 45%, transparent);
     outline-offset: 0;
+  }
+  textarea::placeholder {
+    color: var(--mail-room-muted);
+    opacity: 0.8;
   }
   .with {
     margin: 0;
     font-size: 12.5px;
     line-height: 1.45;
-    color: #6e7480;
+    color: var(--mail-room-muted, #6e7480);
   }
   .row {
     display: flex;
@@ -570,7 +619,7 @@ export const WholeNote = styled.div`
     margin-bottom: 8px;
     font-size: 12.5px;
     font-weight: 500;
-    color: var(--platform-colors-text-tertiary);
+    color: var(--mail-room-muted, var(--platform-colors-text-tertiary));
   }
 `
 
@@ -578,7 +627,7 @@ export const Notice = styled.div`
   margin: 0 24px 8px;
   padding: 8px 12px;
   border-radius: 9px;
-  background: var(--puremail-warning-bg);
-  color: var(--puremail-warning-text);
+  background: var(--puremail-warning-bg, var(--platform-colors-semantic-orange-muted));
+  color: var(--puremail-warning-text, var(--platform-colors-semantic-orange-text));
   font-size: 13px;
 `
