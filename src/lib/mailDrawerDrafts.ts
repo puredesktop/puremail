@@ -22,7 +22,7 @@ function sourceVersion(store: MailStore, threadId: string): string {
   const thread = store.threads.find(item => item.id === threadId)
   return JSON.stringify({
     account: store.accounts.find(item => item.id === thread?.accountId),
-    messages: store.messages.filter(item => item.threadId === threadId),
+    messages: store.messages.filter(item => item.threadId === threadId && !item.isDraft),
     subject: thread?.subject,
     drafts: store.drafts.filter(item => item.threadId === threadId).map(draft => ({
       id: draft.id, body: draft.body, bodyHtml: draft.bodyHtml, subject: draft.subject,

@@ -1,5 +1,6 @@
 import {
   cleanMailMessageText,
+  latestMessageForThread,
   deriveReplyIntentForThread,
   isOwnerContact,
   ownerIdentityRegistryForStore,
@@ -12,20 +13,10 @@ import {
 } from './mailModel'
 import type {
   Draft,
-  MailMessage,
   MailStore,
   RedraftReason,
   ReplyIntent,
 } from '../types'
-
-function latestThreadMessage(
-  messages: MailMessage[],
-  threadId: string,
-): MailMessage | undefined {
-  return messages
-    .filter(message => message.threadId === threadId)
-    .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0]
-}
 
 export function cleanModelDraft(raw: string): string {
   return raw
@@ -96,7 +87,7 @@ function buildDraftMessage(input: {
   } = input
   const thread = store.threads.find(item => item.id === threadId)
   if (!thread) throw new Error('Thread not found for LLM draft generation.')
-  const latest = latestThreadMessage(store.messages, threadId)
+  const latest = latestMessageForThread(store, threadId)
   const counterparty = resolveDraftCounterparty(store, thread).counterparty
   const account = store.accounts.find(item => item.id === thread.accountId)
   const voice = emailVoiceProfileForStore(store, thread.accountId)
@@ -111,7 +102,10 @@ function buildDraftMessage(input: {
   const priorMessages = latest
     ? store.messages
         .filter(
-          message => message.threadId === threadId && message.id !== latest.id,
+          message =>
+            message.threadId === threadId &&
+            !message.isDraft &&
+            message.id !== latest.id,
         )
         .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
         .slice(-3)

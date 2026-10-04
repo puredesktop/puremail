@@ -14,6 +14,22 @@ function fixture() {
 }
 
 describe('drawer reply lifecycle', () => {
+  it('keeps a synced draft out of reply context and repairs a previously stale source when regenerating', () => {
+    const f = fixture()
+    const first = f.requests.prepare(f.store, f.accountId, f.threadId)
+    const store = f.requests.commit(f.store, f.accountId, first.requestId, 'Hi,\n\nFirst version.').store
+    store.messages.push({ ...store.messages[0], id: 'provider-draft', isDraft: true,
+      from: { name: 'User', email: 'user@example.test' }, body: 'UNSENT draft sentinel',
+      receivedAt: '2026-09-10T13:00:00Z' })
+    store.drafts[0].sourceMessageId = 'provider-draft'
+    store.drafts[0].replyIntent = { ...store.drafts[0].replyIntent!, sourceMessageId: 'provider-draft' }
+    const next = f.requests.prepare(store, f.accountId, f.threadId)
+    expect(next.context).not.toContain('UNSENT draft sentinel')
+    // Replacing the provider copy during generation is bookkeeping, not a source edit.
+    store.messages[1] = { ...store.messages[1], id: 'replacement-provider-draft' }
+    const result = f.requests.commit(store, f.accountId, next.requestId, 'Hi,\n\nUpdated version.')
+    expect(result.store.drafts[0]).toMatchObject({ sourceMessageId: 'message', replyIntent: { sourceMessageId: 'message' } })
+  })
   it('prepares without writing, commits once and returns the actual unsent draft', () => {
     const f = fixture()
     const before = JSON.stringify(f.store)
