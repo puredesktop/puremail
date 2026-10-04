@@ -210,9 +210,9 @@ export function demoMailStoreForNow(now: DateInput = new Date()): MailStore { vo
 /**
  * Merge a single-thread fragment fetched on demand (a searchAllMail result
  * the sync window never covered) into the store. Replace-by-id so importing
- * a thread twice cannot duplicate it; sync remains authoritative for
- * everything it covers because ids and mailbox assignments come from the
- * same conversion.
+ * a thread twice cannot duplicate it. A unique account-scoped provider/RFC
+ * identity also replaces its accepted local send receipt, preserving the
+ * delivery and repair evidence until the provider confirms the Sent copy.
  */
 export function mergeThreadFragment(
   store: MailStore,
@@ -220,6 +220,61 @@ export function mergeThreadFragment(
 ): MailStore {
   const threadIds = new Set(fragment.threads.map(thread => thread.id))
   const messageIds = new Set(fragment.messages.map(message => message.id))
+  const accounts = new Map(store.threads.map(thread => [thread.id, thread.accountId]))
+  const incomingAccounts = new Map(fragment.threads.map(thread => [thread.id, thread.accountId]))
+  const keys = (message: MailMessage, account: string | undefined): string[] => !account || message.isDraft || message.optimistic ? [] : [
+    ...(message.gmailMessageId ? [JSON.stringify([account, 'gmail', message.gmailMessageId])] : []),
+    ...(message.messageIdHeader ? [JSON.stringify([account, 'rfc', message.messageIdHeader])] : []),
+  ]
+  const receipts = new Map<string, Set<MailMessage>>()
+  for (const message of store.messages) {
+    if (!message.deliveryAccepted) continue
+    for (const key of keys(message, accounts.get(message.threadId))) {
+      const matches = receipts.get(key) ?? new Set<MailMessage>()
+      matches.add(message)
+      receipts.set(key, matches)
+    }
+  }
+  const incomingCounts = new Map<string, number>()
+  for (const message of fragment.messages) for (const key of keys(message, incomingAccounts.get(message.threadId) ?? accounts.get(message.threadId))) {
+    incomingCounts.set(key, (incomingCounts.get(key) ?? 0) + 1)
+  }
+  const replacedReceipts = new Set<string>()
+  const candidatesByMessage = fragment.messages.map(message => {
+    const candidates = new Set<MailMessage>()
+    const identities = keys(message, incomingAccounts.get(message.threadId) ?? accounts.get(message.threadId))
+    // Reused/malformed identity headers must never consume a different receipt.
+    if (identities.some(key => incomingCounts.get(key) !== 1)) return undefined
+    for (const key of identities) for (const receipt of receipts.get(key) ?? []) candidates.add(receipt)
+    if (candidates.size !== 1) return undefined
+    const [receipt] = candidates
+    return receipt
+  })
+  const candidateCounts = new Map<MailMessage, number>()
+  for (const receipt of candidatesByMessage) if (receipt) candidateCounts.set(receipt, (candidateCounts.get(receipt) ?? 0) + 1)
+  const messages = fragment.messages.map((message, index) => {
+    const receipt = candidatesByMessage[index]
+    if (!receipt || candidateCounts.get(receipt) !== 1) return message
+    replacedReceipts.add(receipt.id)
+    const warnings = [...(receipt.deliveryWarnings ?? []), ...(message.deliveryWarnings ?? [])]
+      .filter(warning => !message.sentCopyPresent || !warning.includes('IMAP Sent copy'))
+    const sentCopyPresent = message.sentCopyPresent || receipt.sentCopyPresent
+    const rejected = [...new Set([...(receipt.deliveryRejectedRecipients ?? []), ...(message.deliveryRejectedRecipients ?? [])])]
+    const draftProviderIds = [...new Set([...(receipt.sentDraftProviderIds ?? []), ...(message.sentDraftProviderIds ?? [])])]
+    return {
+      ...message,
+      read: receipt.read,
+      deliveryAccepted: true,
+      sentCopyPresent,
+      sentCopyMime: sentCopyPresent ? undefined : receipt.sentCopyMime ?? message.sentCopyMime,
+      sentDraftId: receipt.sentDraftId ?? message.sentDraftId,
+      sentDraftProviderId: receipt.sentDraftProviderId ?? message.sentDraftProviderId,
+      sentDraftProviderIds: draftProviderIds.length ? draftProviderIds : undefined,
+      deliveryRejectedRecipients: rejected.length ? rejected : undefined,
+      deliveryWarnings: warnings.length ? [...new Set(warnings)] : undefined,
+      ...(receipt.bcc?.length ? { bcc: receipt.bcc } : {}),
+    }
+  })
   return {
     ...store,
     threads: [
@@ -227,8 +282,8 @@ export function mergeThreadFragment(
       ...fragment.threads,
     ],
     messages: [
-      ...store.messages.filter(message => !messageIds.has(message.id)),
-      ...fragment.messages,
+      ...store.messages.filter(message => !messageIds.has(message.id) && !replacedReceipts.has(message.id)),
+      ...messages,
     ],
   }
 }
