@@ -134,6 +134,28 @@ it('removes a synced draft sent or discarded in another client after full draft 
   expect(mergeMailDrafts([synced], [], true)).toHaveLength(0)
 })
 
+it.each(['pending', 'failed', 'conflict'] as const)('keeps %s local draft edits when the provider copy disappears', syncState => {
+  const f = fixture()
+  const local = { ...f.draft, providerDraftId: 'account-draft', body: 'Unpushed edits', syncState }
+  const merged = mergeMailDrafts([local], [], true)
+  expect(merged).toHaveLength(1)
+  expect(merged[0]).toMatchObject({ id: local.id, body: 'Unpushed edits', providerSaveUncertain: true })
+})
+
+it('keeps the conversation for retained local draft edits when it disappears remotely', () => {
+  const f = fixture()
+  const local = { ...f.read(),
+    accounts: [{ id: 'acc', email: 'me@example.test', name: 'Me', provider: 'imap' as const, syncState: 'online' as const }],
+    mailboxes: [{ id: 'inbox', accountId: 'acc', name: 'Inbox', role: 'inbox' as const, unreadCount: 0 }],
+    threads: f.read().threads.map(thread => ({ ...thread, accountId: 'acc', mailboxId: 'inbox', lastMessageAt: '2026-10-03T03:00:00Z' })),
+    drafts: [{ ...f.draft, providerDraftId: 'account-draft', body: 'Unpushed edits', syncState: 'pending' as const }],
+  }
+  const remote = { ...local, drafts: [], threads: [], messages: [], syncCoverage: { draftsCovered: true } }
+  const merged = mergeMailProviderSyncResult(local, remote, '2026-10-03T04:00:00Z')
+  expect(merged.drafts[0]?.body).toBe('Unpushed edits')
+  expect(merged.threads.map(thread => thread.id)).toContain(f.draft.threadId)
+})
+
 it('never submits an already confirmed draft again', async () => {
   const f = fixture(); const remote = vi.fn(async (draft: Draft) => accepted(draft))
   await f.send(provider(remote), f.draft)

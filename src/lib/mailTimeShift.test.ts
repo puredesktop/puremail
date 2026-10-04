@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStore } from './mailModel'
+import { demoMailStore } from '../test/mailFixtures'
 import { bulkSnoozeThreads } from './mailTriage'
 import { clearSnoozeReturnMarker, wakeDueSnoozes } from './mailSnooze'
 import {

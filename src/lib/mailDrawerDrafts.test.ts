@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { demoMailStoreForNow } from './mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
 import { MailDrawerDrafts } from './mailDrawerDrafts'
 
 function fixture() {

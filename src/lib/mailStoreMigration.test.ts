@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { demoMailStore } from '../test/mailFixtures'
 import {
-  demoMailStore,
   emptyMailStore,
   parsePersistedMailStore,
 } from './mailModel'

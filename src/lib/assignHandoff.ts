@@ -1,8 +1,13 @@
-import type { AssignHandoff } from '@purescience/platform-ui/components/agents/AssistantHeaderControls'
+import type { Attachment as AssistantAttachment } from '@purescience/platform-bridge/assistants/types'
 import { isDocumentAttachment } from './mailAttachments'
 import { contactLabel } from './mailPdf'
 import { stripHtmlToText } from './mailTextUtils'
 import type { Attachment, MailMessage, MailThread } from '../types'
+
+interface AssignHandoff {
+  attachments: AssistantAttachment[]
+  source: string
+}
 
 /**
  * What Mail hands the shell when a new mission is made from here: the open

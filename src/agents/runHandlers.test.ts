@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStoreForNow, sendDraft } from '../lib/mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
+import { sendDraft } from '../lib/mailModel'
 import { finalizeRunDraftForSend, noteTextFromBodyHtml } from '../lib/mailRuns'
 import { AgentMailToolError, type MailAgentToolContext } from './catalog'
 import { getMailContextHandler } from './handlers'

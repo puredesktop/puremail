@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStoreForNow } from '../lib/mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
 import { bytesToBase64 } from '../lib/mailAttachments'
 import type { Attachment, MailMessage, MailStore } from '../types'
 import { AgentMailToolError, type MailAgentToolContext } from './catalog'

@@ -9,7 +9,7 @@ import {
   unseenArrivalCount,
   withQueryTerm,
 } from './mailQuery'
-import { demoMailStore, demoMailStoreForNow } from './mailModel'
+import { demoMailStore, demoMailStoreForNow } from '../test/mailFixtures'
 import type { MailMessage, MailStore, MailThread } from '../types'
 
 const NOW = '2026-06-21T12:00:00.000Z'

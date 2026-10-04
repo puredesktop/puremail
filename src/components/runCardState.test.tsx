@@ -2,7 +2,7 @@
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
-import { demoMailStoreForNow } from '../lib/mailModel'
+import { demoMailStoreForNow } from '../test/mailFixtures'
 import { createRunTemplateDraft } from '../lib/mailRuns'
 import type { Draft, MailStore } from '../types'
 import {

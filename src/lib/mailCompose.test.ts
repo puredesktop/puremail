@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { demoMailStore } from './mailModel'
+import { demoMailStore } from '../test/mailFixtures'
 import {
   bodyMentionsAttachment,
   defaultSignatureForAccount,
@@ -194,7 +194,7 @@ describe('compose html helpers', () => {
   })
 
   it('wraps lines into paragraphs with empty lines preserved', () => {
-    expect(plainTextToComposeHtml('Hi\n\nBest,\nAdam')).toBe(
+    expect(plainTextToComposeHtml('Hi\n\nBest,\nUser')).toBe(
       '<p>Hi</p><p><br></p><p>Best,</p><p>User</p>',
     )
   })

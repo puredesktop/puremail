@@ -240,7 +240,11 @@ export function useDraftProviderSync(input: {
             item => item.id === current.id,
           )
           if (!latestDraft || latestDraft.sentAt) return
-          if (!sameRevision(latestDraft, current)) {
+          const uncertainSave = error instanceof MailDraftSaveUncertain || error instanceof MailSendError && error.outcome === 'uncertain'
+          // A lost acknowledgement applies to the attempt, regardless of
+          // edits made while it ran. Retrying that newer revision can create
+          // another account copy; preserve it and require reconciliation.
+          if (!uncertainSave && !sameRevision(latestDraft, current)) {
             scope.attempts.delete(current.id)
             retry(value => value + 1)
             return
@@ -249,15 +253,14 @@ export function useDraftProviderSync(input: {
           scope.attempts.set(current.id, attempts)
           const reason =
             error instanceof Error ? error.message : 'the provider refused it'
-          const uncertainSave = error instanceof MailDraftSaveUncertain || error instanceof MailSendError && error.outcome === 'uncertain'
           if (attempts >= MAX_SYNC_ATTEMPTS || uncertainSave) {
             setStore(latest => ({
               ...latest,
               drafts: latest.drafts.map(item =>
                 item.id === current.id &&
                 !item.sentAt &&
-                sameRevision(item, current)
-                  ? { ...item, syncState: 'failed' as const, providerSaveUncertain: uncertainSave, providerSaveWarning: uncertainSave ? reason : undefined }
+                (uncertainSave || sameRevision(item, current))
+                  ? { ...item, syncState: item.providerConflict || item.syncState === 'conflict' ? 'conflict' as const : 'failed' as const, providerSaveUncertain: uncertainSave, providerSaveWarning: uncertainSave ? reason : undefined }
                   : item,
               ),
             }))

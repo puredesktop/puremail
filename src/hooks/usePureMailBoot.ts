@@ -76,13 +76,6 @@ async function readPersistedStore(): Promise<MailStore | null> {
         // that open to "No message selected" and resist every delete.
         store ? pruneOrphanedDraftThreads(store) : null,
       )
-      .catch(error => {
-        console.warn(
-          '[puremail] persisted store unreadable; starting empty:',
-          error,
-        )
-        return null
-      })
   }
   return persistedStoreOnce
 }
