@@ -97,6 +97,7 @@ export interface MailTopBarProps {
   setDensity: (density: MailDensity) => void
   connectionControl?: React.ReactNode
   openSettings: () => void
+  openRecovery?: () => void
 }
 
 function accountInitials(account: MailAccount | null): string {
@@ -140,6 +141,7 @@ export function MailTopBar({
   setDensity,
   openSettings,
   connectionControl,
+  openRecovery,
 }: MailTopBarProps): React.ReactElement {
   const [builderOpen, setBuilderOpen] = useState(false)
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
@@ -579,17 +581,10 @@ export function MailTopBar({
       <BulkMenuWrap ref={accountMenuRef}>
         <TopAccountChip
           type="button"
-          aria-haspopup={store.accounts.length > 1 ? 'menu' : 'dialog'}
-          aria-expanded={
-            store.accounts.length > 1 ? accountMenuOpen : undefined
-          }
-          onClick={() => {
-            if (store.accounts.length > 1) {
-              setAccountMenuOpen(open => !open)
-            } else {
-              openSettings()
-            }
-          }}
+          aria-label="Mail account menu"
+          aria-haspopup="menu"
+          aria-expanded={accountMenuOpen}
+          onClick={() => setAccountMenuOpen(open => !open)}
         >
           <TopAccountAvatar aria-hidden="true">
             {accountInitials(selectedAccount)}
@@ -617,6 +612,10 @@ export function MailTopBar({
                   : account.email}
               </BulkMenuItem>
             ))}
+            {openRecovery && <BulkMenuItem role="menuitem" onClick={() => {
+              setAccountMenuOpen(false)
+              openRecovery()
+            }}>Mail recovery</BulkMenuItem>}
             <BulkMenuItem
               role="menuitem"
               onClick={() => {

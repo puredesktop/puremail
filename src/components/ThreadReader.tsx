@@ -2217,7 +2217,7 @@ export function ThreadReader({
               // a message actually fetched from Gmail (id `gmail_msg_*`)
               // earns it there — a local `msg_sent_*` copy must never make
               // that claim. That was the phantom-send lie.
-              const isUnconfirmedSend = Boolean(message.optimistic)
+              const isUnconfirmedSend = Boolean(message.optimistic && !message.deliveryAccepted)
               if (
                 message.id === selectedInviteMessage?.id &&
                 inviteBodyIsNotice &&

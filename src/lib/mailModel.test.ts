@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { demoMailStore } from '../test/mailFixtures'
+
 import {
   appendDraftAttachments,
+  applyMailCopyRepair,
   archiveThread,
   attachDraftToTask,
   blockRemoteImagesInMailHtml,
@@ -3414,4 +3416,49 @@ describe('merging provider drafts', () => {
     expect(mergeMailDrafts(drafts, [], true)).toEqual(drafts)
     expect(mergeMailDrafts(drafts, [remote()], true)).toHaveLength(2)
   })
+})
+
+it('repairs copy metadata only within the captured account and preserves fetched content', () => {
+  const fixture = demoMailStore()
+  const message = {
+    ...fixture.messages[0],
+    threadId: 'account-a-thread',
+    messageIdHeader: '<shared@example.test>',
+    sentCopyMime: 'retained MIME',
+    deliveryWarnings: ['Missing Sent copy'],
+  }
+  const other = {
+    ...message,
+    id: 'other-message',
+    threadId: 'account-b-thread',
+  }
+  const store = {
+    ...fixture,
+    threads: [
+      { ...fixture.threads[0], id: message.threadId, accountId: 'account-a' },
+      { ...fixture.threads[0], id: other.threadId, accountId: 'account-b' },
+    ],
+    messages: [message, other],
+  }
+  const repaired = {
+    ...message,
+    body: 'Stale provider body',
+    sentCopyPresent: true,
+    sentCopyMime: undefined,
+    deliveryWarnings: undefined,
+  }
+  const result = applyMailCopyRepair(store, 'account-a', repaired)
+  expect(result.messages[0]).toMatchObject({
+    body: message.body,
+    sentCopyPresent: true,
+  })
+  expect(result.messages[0].sentCopyMime).toBeUndefined()
+  expect(result.messages[0].deliveryWarnings).toBeUndefined()
+  expect(result.messages[1]).toBe(other)
+  expect(
+    applyMailCopyRepair(store, 'account-a', {
+      ...repaired,
+      messageIdHeader: undefined,
+    }),
+  ).toBe(store)
 })

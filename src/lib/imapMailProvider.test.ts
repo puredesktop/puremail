@@ -252,6 +252,85 @@ describe('ImapMailProvider against the fake transport', () => {
     expect(imap.appended).toEqual([])
   })
 
+  it('records rejected recipients after partial acceptance and preserves them through sync', async () => {
+    const { provider: mail } = provider(fakeImap(), { ...fakeSmtp(), send: async () => ({ rejected: ['rejected@example.test'] }) })
+    const store = await mail.fetchStore()
+    const draft = { id: 'reply', threadId: store.threads[0].id, to: [{ name: 'Kim', email: 'kim@example.test' }, { name: 'Rejected', email: 'rejected@example.test' }], subject: 'Re: Lunch', body: 'Yes', attachments: [], updatedAt: '2026-07-05T10:00:00Z', syncState: 'synced' as const }
+    const receipt = await mail.send({ draft, threadId: draft.threadId })
+    expect(receipt.deliveryAccepted).toBe(true)
+    expect(receipt.deliveryRejectedRecipients).toEqual(['rejected@example.test'])
+    expect(receipt.deliveryWarnings?.join(' ')).toContain('Do not resend the original')
+    const local = { ...store, messages: [receipt] }
+    const remote = { ...store, messages: [{ ...receipt, id: 'imap_msg_Sent_51', deliveryAccepted: undefined, deliveryRejectedRecipients: undefined, deliveryWarnings: undefined }] }
+    expect(mergeMailProviderSyncResult(local, remote).messages[0]).toMatchObject({ deliveryAccepted: true, deliveryRejectedRecipients: ['rejected@example.test'], deliveryWarnings: [expect.stringContaining('rejected@example.test')] })
+  })
+
+  it('keeps a mirrored sent message in the Sent view without duplicating its body', async () => {
+    const imap = fakeImap()
+    imap.boxes.set('Sent', [{ ...imap.boxes.get('INBOX')![0], uid: 9 }])
+    const { provider: mail } = provider(imap)
+    const store = await mail.fetchStore()
+    expect(store.messages.filter(message => message.messageIdHeader === '<root@ext>')).toHaveLength(1)
+    expect(store.messages.find(message => message.messageIdHeader === '<root@ext>')?.sentCopyPresent).toBe(true)
+  })
+
+  it('repairs a missing Sent copy and an old draft without SMTP submission', async () => {
+    const { provider: mail, imap, smtp } = provider()
+    const store = await mail.fetchStore()
+    const original = store.messages[0]
+    imap.boxes.set('Drafts', [{ ...imap.boxes.get('INBOX')![0], uid: 41 }])
+    const receipt = { ...original, deliveryAccepted: true, sentDraftProviderIds: ['imap_draft_41'], deliveryWarnings: ['Its IMAP Sent copy failed.', 'Its old Drafts copy remains.'] }
+    const [a, b] = await Promise.all([mail.repairSentRecord(receipt), mail.repairSentRecord(receipt)])
+    expect(a).toEqual(b)
+    expect(a.sentCopyPresent).toBe(true)
+    expect(a.deliveryWarnings).toBeUndefined()
+    expect(imap.appended).toHaveLength(1)
+    expect(imap.appended[0].raw).toContain(`Message-ID: ${receipt.messageIdHeader}`)
+    expect(imap.deleted).toContainEqual({ folder: 'Drafts', uid: 41 })
+    expect(smtp.sent).toHaveLength(0)
+  })
+
+  it('does not append a second Sent copy when SMTP already filed the Message-ID', async () => {
+    const imap = fakeImap()
+    const smtp = fakeSmtp()
+    const submit = smtp.send.bind(smtp)
+    smtp.send = async (...args) => {
+      await submit(...args)
+      imap.boxes.set('Sent', [{ ...imap.boxes.get('INBOX')![0], uid: 42, messageId: '<server-filed@example.test>' }])
+    }
+    const { provider: mail } = provider(imap, smtp)
+    const store = await mail.fetchStore()
+    const message = await mail.send({ threadId: store.threads[0].id, draft: { id: 'd', threadId: store.threads[0].id, to: [], subject: 'Sent once', body: 'Hi', attachments: [], updatedAt: '2026-10-03T00:00:00Z', syncState: 'synced', sendMessageId: '<server-filed@example.test>' } })
+    expect(smtp.sent).toHaveLength(1)
+    expect(imap.appended).toHaveLength(0)
+    expect(message.sentCopyPresent).toBe(true)
+  })
+
+  it('finds an accepted APPEND before retrying a repair whose acknowledgement was lost', async () => {
+    const imap = fakeImap()
+    const { provider: mail, smtp } = provider(imap)
+    const store = await mail.fetchStore()
+    const receipt = { ...store.messages[0], deliveryAccepted: true, deliveryWarnings: ['Its IMAP Sent copy failed.'] }
+    let appends = 0
+    imap.append = async () => {
+      appends += 1
+      imap.boxes.set('Sent', [{ ...imap.boxes.get('INBOX')![0], uid: 9 }])
+      throw new Error('Append acknowledgement lost')
+    }
+    await expect(mail.repairSentRecord(receipt)).rejects.toThrow('Append acknowledgement lost')
+    expect((await mail.repairSentRecord(receipt)).deliveryWarnings).toBeUndefined()
+    expect(appends).toBe(1)
+    expect(smtp.sent).toHaveLength(0)
+  })
+
+  it('refuses mailbox repair without a confirmed receipt', async () => {
+    const { provider: mail, imap, smtp } = provider()
+    const store = await mail.fetchStore()
+    await expect(mail.repairSentRecord(store.messages[0])).rejects.toThrow('no confirmed send receipt')
+    expect(imap.appended).toHaveLength(0)
+    expect(smtp.sent).toHaveLength(0)
+  })
+
   it('reports acceptance with a visible warning when Sent filing or draft cleanup fails', async () => {
     const imap = fakeImap()
     imap.append = async () => { throw new Error('IMAP disconnected') }

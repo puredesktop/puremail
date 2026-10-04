@@ -23,6 +23,16 @@ async function click(text: string) {
   await act(async () => button.click())
 }
 describe('server search results', () => {
+  it('keeps recovery reachable from the account menu after a toast is dismissed', async () => {
+    const p = props()
+    const openRecovery = vi.fn()
+    await act(async () => root.render(<MailTopBar {...p} openRecovery={openRecovery} />))
+    const account = container.querySelector('[aria-label="Mail account menu"]') as HTMLButtonElement | null
+    expect(account).toBeTruthy()
+    await act(async () => account!.click())
+    await click('Mail recovery')
+    expect(openRecovery).toHaveBeenCalledOnce()
+  })
   it('keeps the search open and shows an error when importing returns no message', async () => {
     const p = props()
     await act(async () => root.render(<MailTopBar {...p} />))

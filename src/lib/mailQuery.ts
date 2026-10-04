@@ -427,7 +427,8 @@ function termHolds(
         return threadHasUnsentDraft(store, thread.id)
       }
       const ids = mailboxIdsForToken(store, value)
-      return ids.has(thread.mailboxId)
+      const namesSent = store.mailboxes.some(mailbox => ids.has(mailbox.id) && mailbox.role === 'sent')
+      return ids.has(thread.mailboxId) || namesSent && messages.some(message => !message.isDraft && (message.sentCopyPresent || message.deliveryAccepted))
     }
     case 'from':
       return messages.some(message => contactMatches([message.from], value))

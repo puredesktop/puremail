@@ -982,7 +982,7 @@ export function ComposeEditor({
     snapshot: ComposeSendSnapshot,
   ): void => {
     const pendingId = `pending_reply_${Date.now()}`
-    const sentLabel = context.kind === 'forward' ? 'Forward' : 'Reply'
+    const sentLabel = context.kind === 'forward' ? 'Forward' : context.kind === 'draft' ? 'Message' : 'Reply'
     schedulePendingSend(
       {
         id: pendingId,

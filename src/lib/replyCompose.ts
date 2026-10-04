@@ -342,6 +342,11 @@ export function upsertReplyDraft(
       draftId: existing.id,
       store: {
         ...store,
+        threads: store.threads.map(thread => thread.id === existing.threadId && thread.id.startsWith('thread_compose_') ? {
+          ...thread, subject, summary: input.body.trim().slice(0, 160) || 'Draft message',
+          participants: [thread.participants[0], ...input.to, ...input.cc, ...input.bcc].filter(Boolean),
+          lastMessageAt: now,
+        } : thread),
         drafts: store.drafts.map(draft =>
           draft.id === existing.id ? updated : draft,
         ),

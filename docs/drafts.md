@@ -71,6 +71,42 @@ Keystrokes do not reach the store. `useDraftBodyBuffer` holds the composer body
 until typing pauses, blur, or send; writing per keypress re-serialised the whole
 mailbox on the main thread.
 
+An open compose window also snapshots its fields into the same draft store
+after a 350 ms pause; it does not wait for Close. The ordinary persistence and
+provider-sync hooks remain the only writers. Context changes caused by provider
+bookkeeping do not count as edits, and a pending autosave cannot resurrect a
+consumed draft or overwrite a conflict or an uncertain send.
+
+Compose identities are opaque UUIDs. Callers inside React state updaters mint
+the identity and timestamp before the updater so replaying it is deterministic.
+
+## Confirmed sending and recovery
+
+Electron does not preserve custom Error properties. Mail opts into structured
+SMTP outcomes through the generic transport: definite pre-submission failures
+and SMTP rejections are `not_sent`; an unexplained socket closure remains
+`uncertain`. A missing or malformed receipt never proves success. Legacy shells
+still reject failed calls, and legacy clients keep receiving rejected promises.
+
+SMTP acceptance is distinct from saving mailbox copies. An accepted message is
+not shown as “Sending”; partial recipient rejection is retained in its receipt
+and through sync. Its original draft is consumed so the accepted recipients
+cannot receive an automatic retry. Correct rejected addresses in a separate
+message.
+
+Before filing Sent, the IMAP provider searches the exact Message-ID; some SMTP
+services already file a copy. Sync keeps a mirrored Sent copy visible without
+duplicating the message and follows the provider thread when it replaces a
+local composed thread.
+
+Mail recovery remains reachable in the account menu after its toast closes.
+“Repair Sent / Drafts copies” searches the Message-ID, appends only a missing
+Sent copy, and removes only the recorded consumed draft UIDs. It never calls
+SMTP. A failed Sent append retains the exact transmitted MIME in the durable
+receipt so attachment bytes survive a restart; that MIME is released once the
+Sent copy is confirmed. Concurrent repairs share one job, and a repair after a
+lost APPEND acknowledgement searches again before writing.
+
 ## Rules for anything touching drafts
 
 - **`setStore` updaters must be pure.** No assigning to outer variables inside
@@ -97,6 +133,8 @@ mailbox on the main thread.
 | Draft records, send, merge | `lib/mailModel.ts` |
 | Provider sync loop | `hooks/useDraftProviderSync.ts` |
 | Composer buffer | `hooks/useDraftBodyBuffer.ts` |
+| Open composer snapshots | `hooks/useComposeDraftAutosave.ts` |
+| Provider thread replacement | `lib/mailReaderSelection.ts` |
 | Persistence | `lib/mailPersistence.ts`, `hooks/useMailStorePersistence.ts` |
 | Re-home undo (store v3) | `lib/mailStoreMigration.ts` |
 | Agent tools | `agents/handlers.ts`, `agents/catalog.ts` |
