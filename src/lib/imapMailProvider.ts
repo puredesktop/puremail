@@ -144,7 +144,7 @@ export interface ImapTransport {
 
 export interface SmtpTransport {
   verify?(): Promise<void>
-  send(rawMime: string, from: string, to: string[]): Promise<void>
+  send(rawMime: string, from: string, to: string[]): Promise<void | { rejected: string[] }>
 }
 
 /** One thin funnel so every transport method shares the bridge plumbing. */
@@ -327,17 +327,25 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
 }
 
 export function bridgeSmtpTransport(config: BridgeTransportConfig): SmtpTransport {
+  const checkResult = (raw: unknown): { rejected: string[] } => {
+    const result = raw as { ok?: boolean; outcome?: 'not_sent' | 'uncertain'; error?: string; rejected?: unknown } | null
+    if (result?.ok === false) throw new MailSendError(result.error || 'SMTP submission failed.', result.outcome === 'not_sent' ? 'not_sent' : 'uncertain')
+    if (result?.ok !== true) throw new MailSendError('The mail transport returned no send confirmation. Check Sent before retrying.', 'uncertain')
+    return { rejected: Array.isArray(result.rejected) ? result.rejected.filter((address): address is string => typeof address === 'string') : [] }
+  }
   return {
     async verify() {
-      await callMailTransport('MAIL_TRANSPORT_SMTP_SEND', {
+      checkResult(await callMailTransport('MAIL_TRANSPORT_SMTP_SEND', {
+        reportOutcome: true,
         profileId: config.profileId, smtp: config.smtp, username: config.username,
         passwordSecretKey: config.passwordSecretKey,
         verifyOnly: true, from: '', to: [], rawMime: '',
-      })
+      }))
     },
     async send(rawMime, from, to) {
       try {
-      await callMailTransport('MAIL_TRANSPORT_SMTP_SEND', {
+      return checkResult(await callMailTransport('MAIL_TRANSPORT_SMTP_SEND', {
+        reportOutcome: true,
         profileId: config.profileId,
         smtp: config.smtp,
         username: config.username,
@@ -345,7 +353,7 @@ export function bridgeSmtpTransport(config: BridgeTransportConfig): SmtpTranspor
         from,
         to,
         rawMime,
-      })
+      }))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (message.includes('No stored password under secrets key')) {
@@ -497,6 +505,7 @@ export class ImapMailProvider implements MailProvider {
   private store: MailStore | null = null
   private folders: ImapFolder[] = []
   private locations = new Map<string, ThreadLocation[]>()
+  private sentRepairJobs = new Map<string, Promise<MailMessage>>()
 
   constructor(private readonly options: ImapMailProviderOptions) {}
 
@@ -678,6 +687,7 @@ export class ImapMailProvider implements MailProvider {
         messages.push({
           id: messageId,
           threadId,
+          sentCopyPresent: role === 'sent' || (extraLocations.get(handle) ?? []).some(location => this.folders.some(item => item.path === location.folder && item.role === 'sent')),
           ...(envelope.messageId
             ? { messageIdHeader: envelope.messageId }
             : {}),
@@ -1171,12 +1181,17 @@ export class ImapMailProvider implements MailProvider {
       ...(input.draft.cc ?? []),
       ...(input.draft.bcc ?? []),
     ].map(contact => contact.email)
-    await this.options.smtp.send(raw, this.options.email, recipients)
-    // Best-effort sent copy; SMTP servers do not file one for us.
+    const submission = await this.options.smtp.send(raw, this.options.email, recipients)
+    const rejectedRecipients = submission?.rejected ?? []
+    if (rejectedRecipients.length) warnings.push(`Sent to the accepted recipients, but the mail server rejected: ${rejectedRecipients.join(', ')}. Do not resend the original message; write separately to these addresses after correcting them.`)
+    // Some SMTP services file Sent themselves; only append a missing copy.
     const sent = this.folderByRole('sent')
+    let sentCopyPresent = false
     if (sent) {
       try {
-        await this.options.imap.append(sent.path, raw)
+        const copies = await this.options.imap.fetchMessages(sent.path, 1, undefined, undefined, { name: 'Message-ID', value: messageId })
+        if (!copies.some(copy => copy.messageId === messageId)) await this.options.imap.append(sent.path, raw)
+        sentCopyPresent = true
       } catch {
         warnings.push('The server accepted this message, but saving its IMAP Sent copy failed. Do not resend it.')
       }
@@ -1189,6 +1204,9 @@ export class ImapMailProvider implements MailProvider {
     return {
       messageIdHeader: messageId,
       deliveryAccepted: true,
+      sentCopyPresent,
+      ...(!sentCopyPresent ? { sentCopyMime: raw } : {}),
+      ...(rejectedRecipients.length ? { deliveryRejectedRecipients: rejectedRecipients } : {}),
       ...(warnings.length ? { deliveryWarnings: warnings } : {}),
       id: `imap_sent_${Date.now()}`,
       threadId: input.threadId,
@@ -1203,6 +1221,54 @@ export class ImapMailProvider implements MailProvider {
       attachments: input.draft.attachments,
       read: true,
     }
+  }
+
+  repairSentRecord(message: MailMessage): Promise<MailMessage> {
+    if (!message.deliveryAccepted || !message.messageIdHeader) return Promise.reject(new Error('This message has no confirmed send receipt. Check Sent before any retry.'))
+    const key = message.messageIdHeader
+    const existing = this.sentRepairJobs.get(key)
+    if (existing) return existing
+    const job = this.repairAcceptedCopies(message).finally(() => this.sentRepairJobs.delete(key))
+    this.sentRepairJobs.set(key, job)
+    return job
+  }
+
+  private async repairAcceptedCopies(message: MailMessage): Promise<MailMessage> {
+    const sent = this.folderByRole('sent')
+    if (!sent) throw new Error('No Sent folder is available on this account.')
+    const copies = await this.options.imap.fetchMessages(sent.path, 1, undefined, undefined, { name: 'Message-ID', value: message.messageIdHeader! })
+    if (!copies.some(copy => copy.messageId === message.messageIdHeader)) {
+      const format = (contacts: MailContact[]) => contacts.map(contact => contact.name && contact.name !== contact.email ? `${contact.name} <${contact.email}>` : contact.email).join(', ')
+      const raw = message.sentCopyMime ?? buildMimeMessage({
+        headerLines: [
+          `Date: ${new Date(message.receivedAt).toUTCString()}`,
+          `Message-ID: ${message.messageIdHeader}`,
+          `From: ${this.options.email}`,
+          `To: ${format(message.to)}`,
+          ...(message.cc?.length ? [`Cc: ${format(message.cc)}`] : []),
+          ...(message.bcc?.length ? [`Bcc: ${format(message.bcc)}`] : []),
+          `Subject: ${message.subject}`,
+          ...(message.inReplyTo ? [`In-Reply-To: ${message.inReplyTo}`] : []),
+          ...(message.references?.length ? [`References: ${message.references.join(' ')}`] : []),
+        ],
+        body: message.body,
+        ...(message.bodyHtml ? { bodyHtml: message.bodyHtml } : {}),
+        attachments: await this.resolveOutgoingAttachments(message.attachments),
+      })
+      // If APPEND's acknowledgement is lost, the next repair searches this
+      // stable Message-ID again before appending. SMTP is never involved.
+      await this.options.imap.append(sent.path, raw)
+    }
+    const warnings = (message.deliveryWarnings ?? []).filter(warning => !warning.includes('IMAP Sent copy') && !warning.includes('no Sent folder') && !warning.includes('old Drafts copy'))
+    for (const draftId of new Set(message.sentDraftProviderIds ?? (message.sentDraftProviderId ? [message.sentDraftProviderId] : []))) {
+      const uid = ImapMailProvider.draftUid(draftId)
+      if (uid === null) continue
+      try {
+        const remaining = await this.options.imap.fetchMessages(this.draftsFolderPath(), 1, undefined, undefined, undefined, [uid])
+        if (remaining.some(copy => copy.uid === uid)) await this.deleteDraft(draftId)
+      } catch { warnings.push('The server accepted this message, but its old Drafts copy could not be removed. Do not resend the draft.') }
+    }
+    return { ...message, sentCopyPresent: true, sentCopyMime: undefined, deliveryWarnings: warnings.length ? [...new Set(warnings)] : undefined }
   }
 
   /**

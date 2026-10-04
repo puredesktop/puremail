@@ -65,6 +65,15 @@ export type { ReaderMailBody } from './mailTextUtils'
 
 export type DateInput = Date | string
 
+/** Apply copy-repair bookkeeping to this account's mirrors without replacing fetched content. */
+export function applyMailCopyRepair(store: MailStore, accountId: string, repaired: MailMessage): MailStore {
+  if (!repaired.messageIdHeader) return store
+  const threadIds = new Set(store.threads.filter(thread => thread.accountId === accountId).map(thread => thread.id))
+  return { ...store, messages: store.messages.map(message => threadIds.has(message.threadId) && message.messageIdHeader === repaired.messageIdHeader
+    ? { ...message, sentCopyPresent: repaired.sentCopyPresent, sentCopyMime: repaired.sentCopyMime, deliveryWarnings: repaired.deliveryWarnings }
+    : message) }
+}
+
 export const DEFAULT_FOLLOW_UP_SETTINGS: Required<FollowUpSettings> = {
   defaultDelayDays: 3,
   defaultMode: 'snooze_and_task',
@@ -449,17 +458,18 @@ export interface ComposedMessageInput {
   to: MailContact[]
 }
 
-/**
- * A brand-new outgoing message: its own thread in Drafts with no inbound
- * message behind it. Replies are drafted against a thread the user already
- * has; this exists so an agent can compose fresh mail without pretending
- * it is answering something. Nothing sends — the draft lands in Drafts for
- * the user to review, edit, send or discard.
- */
+/** Mint before a state updater so its replay preserves the same identity. */
+export function createComposedDraftIdentity(): { draftId: string; threadId: string } {
+  const key = crypto.randomUUID()
+  return { draftId: `draft_compose_${key}`, threadId: `thread_compose_${key}` }
+}
+
+/** A new outgoing message owns its conversation in Drafts. Nothing is sent. */
 export function createComposedMessageDraft(
   store: MailStore,
   input: ComposedMessageInput,
   now = new Date().toISOString(),
+  identity = createComposedDraftIdentity(),
 ): { draftId: string; store: MailStore; threadId: string } {
   const account =
     store.accounts.find(item => item.id === input.accountId) ??
@@ -472,12 +482,10 @@ export function createComposedMessageDraft(
     store.mailboxes.find(mailbox => mailbox.role === 'drafts')?.id ??
     store.mailboxes[0]?.id ??
     ''
-  const stamp = now.replace(/[^0-9]/g, '')
-  const draftId = `draft_compose_${stamp}`
+  const { draftId, threadId } = identity
   // Deliberately NOT thread_draft_*: that prefix marks a re-homed reply
   // draft, and pruneOrphanedDraftThreads deletes those when their draft
   // goes. A composed message is its own conversation.
-  const threadId = `thread_compose_${stamp}`
   const from: MailContact = {
     name: account?.name ?? 'Me',
     email: account?.email ?? '',
@@ -2035,7 +2043,7 @@ export function sendDraft(
     threadId: draft.threadId,
     ...(confirmedGmailId
       ? { gmailMessageId: confirmedGmailId }
-      : { optimistic: true }),
+      : options.sentMessage?.deliveryAccepted ? {} : { optimistic: true }),
     from: {
       name: account?.name ?? 'Me',
       email: account?.email ?? '',
@@ -3696,7 +3704,17 @@ export function mergeMailProviderSyncResult(
     if (!receipt && !uncertain) return message
     const providerDraftIds = receipt?.sentDraftProviderIds ?? (providerDraftId ? [providerDraftId] : [])
     const cleanupPending = staleDrafts.some(draft => draft.providerDraftId && providerDraftIds.includes(draft.providerDraftId))
-    return { ...message, deliveryAccepted: true, sentDraftId: receipt?.sentDraftId ?? uncertain?.id, sentDraftProviderId: providerDraftId, sentDraftProviderIds: providerDraftIds, deliveryWarnings: cleanupPending ? ['The account confirms this message was sent, but its old Drafts copy is still present. Do not resend it.'] : undefined }
+    const rejectedRecipients = receipt?.deliveryRejectedRecipients ?? []
+    const warnings = [
+      ...(receipt?.deliveryWarnings ?? []).filter(warning =>
+        !warning.includes('old Drafts copy') &&
+        (!warning.includes('IMAP Sent copy') || !message.sentCopyPresent) &&
+        !warning.includes('mail server rejected:')),
+      ...(rejectedRecipients.length ? [`Sent to the accepted recipients, but the mail server rejected: ${rejectedRecipients.join(', ')}. Do not resend the original message; write separately to these addresses after correcting them.`] : []),
+      ...(uncertain && !message.sentCopyPresent && providerStore.accounts.some(account => account.provider === 'imap') ? ['The account confirms this message was sent, but its IMAP Sent copy was not confirmed. Do not resend it.'] : []),
+      ...(cleanupPending ? ['The account confirms this message was sent, but its old Drafts copy is still present. Do not resend it.'] : []),
+    ]
+    return { ...message, ...(receipt?.bcc?.length ? { bcc: receipt.bcc } : {}), sentCopyMime: message.sentCopyPresent ? undefined : receipt?.sentCopyMime, deliveryAccepted: true, sentDraftId: receipt?.sentDraftId ?? uncertain?.id, sentDraftProviderId: providerDraftId, sentDraftProviderIds: providerDraftIds, deliveryRejectedRecipients: rejectedRecipients.length ? rejectedRecipients : undefined, deliveryWarnings: warnings.length ? [...new Set(warnings)] : undefined }
   })
   const mergedSettings = {
     ...providerStore.settings,
@@ -3746,12 +3764,13 @@ export function mergeMailProviderSyncResult(
   // carried non-inbox thread is never dropped. When the provider's copy of a
   // local thread's confirmed send arrives, the local thread has done its job.
   const providerGmailMessageIds = new Set(
-    providerStore.messages
+    incomingMessages.filter(message => !message.isDraft)
       .map(message => message.gmailMessageId)
       .filter((id): id is string => Boolean(id)),
   )
+  const providerRfcMessageIds = new Set(incomingMessages.filter(message => !message.isDraft).map(message => message.messageIdHeader).filter(Boolean))
   const hostsUnsentDraft = new Set(
-    currentStore.drafts
+    mergedDrafts
       .filter(draft => !draft.sentAt)
       .map(draft => draft.threadId),
   )
@@ -3765,8 +3784,9 @@ export function mergeMailProviderSyncResult(
           currentStore.messages.some(
             message =>
               message.threadId === thread.id &&
-              message.gmailMessageId &&
-              providerGmailMessageIds.has(message.gmailMessageId),
+              !message.isDraft &&
+              (message.gmailMessageId && providerGmailMessageIds.has(message.gmailMessageId) ||
+                message.messageIdHeader && providerRfcMessageIds.has(message.messageIdHeader)),
           ),
       )
       .map(thread => thread.id),
@@ -3777,6 +3797,7 @@ export function mergeMailProviderSyncResult(
     if (providerThreadIds.has(thread.id)) return false
     if (!providerAccountIds.has(thread.accountId)) return false
     if (retainedDraftThreadIds.has(thread.id)) return true
+    if (thread.id.startsWith('thread_compose_') && !currentStore.messages.some(message => message.threadId === thread.id)) return false
     if (acceptedReceipts.some(message => message.threadId === thread.id && !incomingMessages.some(remote => remote.messageIdHeader && remote.messageIdHeader === message.messageIdHeader || remote.gmailMessageId && remote.gmailMessageId === message.gmailMessageId))) return true
     const mailboxRole = mailboxRolesById.get(thread.mailboxId)
     if (mailboxRole && mailboxRole !== 'inbox') return true
@@ -3793,7 +3814,7 @@ export function mergeMailProviderSyncResult(
   const messageWindowStart = coverage?.messagesCoveredFrom
     ? Date.parse(coverage.messagesCoveredFrom) : NaN
   const fetchedMessageIds = new Set(incomingMessages.map(message => message.id))
-  const fetchedRfcIds = new Set(incomingMessages.filter(message => !message.isDraft).map(message => message.messageIdHeader).filter(Boolean))
+  const fetchedRfcIds = providerRfcMessageIds
   const carriedMessages = currentStore.messages.filter(
     message =>
       !fetchedMessageIds.has(message.id) &&

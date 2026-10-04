@@ -167,6 +167,12 @@ export interface MailMessage {
   /** SMTP/API acceptance, independently of filing the Sent copy. */
   deliveryAccepted?: boolean
   deliveryWarnings?: string[]
+  /** SMTP accepted other recipients but rejected these addresses. Never resend the original. */
+  deliveryRejectedRecipients?: string[]
+  /** Provider confirms an actual copy in its Sent folder, including mailbox mirrors. */
+  sentCopyPresent?: boolean
+  /** Exact transmitted MIME retained only while a confirmed send lacks a durable Sent copy. */
+  sentCopyMime?: string
   sentDraftId?: string
   sentDraftProviderIds?: string[]
   sentDraftProviderId?: string
@@ -840,6 +846,8 @@ export interface MailProvider {
   fetchStore(): Promise<MailStore>
   sync(store: MailStore): Promise<MailStore>
   send(input: SendDraftInput): Promise<MailMessage>
+  /** Repair mailbox copies of an already accepted send, without submitting it again. */
+  repairSentRecord?(message: MailMessage): Promise<MailMessage>
   getAttachmentContent?(
     message: MailMessage,
     attachment: Attachment,

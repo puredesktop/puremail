@@ -56,6 +56,8 @@ import {
 import { PUREMAIL_LOCAL_SETTINGS_KEY } from '../hooks/usePureMailBoot'
 import { useDraftProviderSync } from '../hooks/useDraftProviderSync'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
+import { useComposeDraftAutosave } from '../hooks/useComposeDraftAutosave'
+import { replacementMailThread } from '../lib/mailReaderSelection'
 import { usePendingSend } from '../hooks/usePendingSend'
 import {
   archiveThread,
@@ -79,12 +81,14 @@ import {
   mailSyncSummary,
   createCalendarDraftIntentFromThread,
   createComposedMessageDraft,
+  createComposedDraftIdentity,
   deleteThread,
   isProviderThreadId,
   pruneOrphanedDraftThreads,
   markThreadRead,
   moveThread,
   reapplyLocalMailChangesSinceSnapshot,
+  applyMailCopyRepair,
   qaStatusForDraft,
   resolveMailTaskSourceTarget,
   snoozeThread,
@@ -647,6 +651,7 @@ export function PureMailShell({
   const [connectionTest, setConnectionTest] = useState<{ receiving: string; sending: string } | null>(null)
   const [testingConnection, setTestingConnection] = useState(false)
   const [syncReviewOpen, setSyncReviewOpen] = useState(false)
+  const [repairingSentId, setRepairingSentId] = useState<string | null>(null)
   const notifiedMailIssues = useRef(new Set<string>())
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const reportSendFailure = (draftId: string, error: unknown): void => {
@@ -747,7 +752,7 @@ export function PureMailShell({
     ) ?? null
   const systemNotice = mailSystemNotice(commandNotice)
   const mailDraftNotice =
-    /draft|model/i.test(commandNotice) && commandNotice !== 'Ready'
+    /draft|model/i.test(commandNotice) && !/could not|failed|not sent|not confirmed|error/i.test(commandNotice) && commandNotice !== 'Ready'
       ? commandNotice
       : ''
   // Mail fetch feedback ("Fetching mail…", "Mail fetched", "Could not fetch
@@ -1022,7 +1027,10 @@ export function PureMailShell({
     setFocusedDraftId(null)
   }, [selectedThreadId])
 
+  const previousSelectionStoreRef = useRef(store)
   useEffect(() => {
+    const previousStore = previousSelectionStoreRef.current
+    previousSelectionStoreRef.current = store
     if (!selectedAccount) return
     // An empty selection is a state, not a stale id: closing the reader over
     // the list at narrow widths sets it, and re-picking a thread here put the
@@ -1034,13 +1042,10 @@ export function PureMailShell({
         thread.accountId === selectedAccount.id,
     )
     if (!threadBelongsToAccount) {
-      setSelectedThreadId(
-        store.threads.find(thread => thread.accountId === selectedAccount.id)
-          ?.id ?? '',
-      )
+      setSelectedThreadId(replacementMailThread(previousStore, store, selectedThreadId, selectedAccount.id))
       setFocusedMessageId(null)
     }
-  }, [selectedAccount, selectedThreadId, store.threads])
+  }, [selectedAccount, selectedThreadId, store])
 
   // One resolver, one list. The rail, the counts, and anything an agent
   // asks for all come from here, so they cannot drift apart.
@@ -1170,6 +1175,14 @@ export function PureMailShell({
   // useMailStorePersistence for why localStorage could not do this job.
   const { persistFailure, flush: flushStorePersistence, flushForSend } =
     useMailStorePersistence(store)
+
+  useComposeDraftAutosave({
+    active: composeHoldsDraft(composeMode), pending: pendingSend?.target === 'compose',
+    session: composeSession, accountId: selectedAccount?.id, signature: signatureValue,
+    context: composeContext, quote: composeQuote,
+    snapshot: { to: composeTo, cc: composeCc, bcc: composeBcc, subject: composeSubject, body: composeBody, bodyHtml: composeBodyHtml, attachments: composeAttachments },
+    storeRef, setStore, setContext: setComposeContext,
+  })
 
   // Auto-mirror: Bridge/IMAP-delivered calendar invites flow into
   // PureCalendar's intent file silently on sync, no click required.
@@ -1781,12 +1794,16 @@ export function PureMailShell({
    * ever silently clobbered.
    */
   const stashOpenCompose = (): void => {
+    const now = new Date().toISOString()
     if (composeContext) {
       const context = composeContext
+      const newDraftId = context.draftId ?? `draft_reply_${crypto.randomUUID()}`
       setStore(
         current =>
           upsertReplyDraft(current, {
             context,
+            now,
+            newDraftId,
             to: parseComposeRecipients(composeTo),
             cc: parseComposeRecipients(composeCc),
             bcc: parseComposeRecipients(composeBcc),
@@ -1803,6 +1820,7 @@ export function PureMailShell({
       setCommandNotice('Your open reply was saved as a draft on its thread.')
       return
     }
+    const identity = createComposedDraftIdentity()
     setStore(
       current =>
         createComposedMessageDraft(current, {
@@ -1814,7 +1832,7 @@ export function PureMailShell({
           body: composeBody,
           ...(composeBodyHtml ? { bodyHtml: composeBodyHtml } : {}),
           attachments: composeAttachments,
-        }).store,
+        }, now, identity).store,
     )
     setCommandNotice('Your open message was saved to Drafts.')
   }
@@ -1859,6 +1877,11 @@ export function PureMailShell({
               draft => !draft.id.startsWith('draft_forward'),
             )) ??
       null
+    if (existing && (existing.sendState === 'uncertain' || existing.providerConflict || existing.syncState === 'conflict')) {
+      openMailRecovery()
+      setToast({ id: Date.now(), error: true, message: existing.sendState === 'uncertain' ? 'Review the previous send before editing this draft.' : 'Compare the conflicting draft versions before editing.' })
+      return
+    }
     // The window already holds this very draft — just bring it back.
     if (
       existing &&
@@ -4083,6 +4106,7 @@ export function PureMailShell({
      while reading — there it joins the reading scroll flow and scrolls away
      with the content, returning when the reader scrolls back to the top. */
   const openMailRecovery = (): void => {
+    if (composeHoldsDraft(composeMode) && composeWindowHasContent() && !pendingSend) stashOpenCompose()
     setRoomScreen(null)
     setRunScreen(null)
     setReading(false)
@@ -4117,6 +4141,7 @@ export function PureMailShell({
         onTest={() => void testMailConnection()}
       />}
       openSettings={() => setMailSettingsOpen(true)}
+      openRecovery={openMailRecovery}
     />
   )
   /* Exactly when ThreadReader renders (only FULL compose replaces it —
@@ -4226,7 +4251,7 @@ export function PureMailShell({
     const drafts = store.drafts.filter(draft => !draft.sentAt && !sendingDraftIds.includes(draft.id) && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId))
     const issues = [
       ...drafts.filter(draft => draft.sendError || draft.providerSaveWarning || (draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId)).map(draft => ({ key: `${draft.id}:${draft.sendError ?? draft.providerSaveWarning ?? draft.syncState}`, message: draft.sendState === 'uncertain' ? 'Send not confirmed. Check Sent before trying again.' : draft.sendError ? `Message not sent. ${mailErrorToastText(draft.sendError)}` : 'A draft needs sync review.' })),
-      ...store.messages.filter(message => message.deliveryWarnings?.length && store.threads.some(thread => thread.id === message.threadId && thread.accountId === selectedAccountId)).map(message => ({ key: `${message.id}:${message.deliveryWarnings!.join()}`, message: 'Message sent, but its Sent or Drafts copy needs attention. Do not resend it.' })),
+      ...store.messages.filter(message => message.deliveryWarnings?.length && store.threads.some(thread => thread.id === message.threadId && thread.accountId === selectedAccountId)).map(message => ({ key: `${message.id}:${message.deliveryWarnings!.join()}`, message: message.deliveryRejectedRecipients?.length ? `Some recipients were rejected: ${message.deliveryRejectedRecipients.join(', ')}. Review before writing to them again.` : 'Message sent, but its Sent or Drafts copy needs attention. Do not resend it.' })),
       ...store.threads.filter(thread => thread.accountId === selectedAccountId && (thread.syncState === 'failed' || thread.syncState === 'conflict')).map(thread => ({ key: `${thread.id}:${thread.syncState}`, message: 'A mailbox change needs sync review.' })),
       ...store.tasks.filter(task => task.source.accountId === selectedAccountId && (task.syncState === 'failed' || task.syncState === 'conflict')).map(task => ({ key: `${task.id}:${task.syncState}`, message: 'A mail task needs sync review.' })),
       ...(persistFailure ? [{ key: `storage:${persistFailure.message}`, message: persistFailure.draftsLost ? 'Drafts could not be saved. Keep this window open and copy your unsent message.' : 'The local mail copy could not be saved. Your drafts are still saved.' }] : []),
@@ -4403,7 +4428,16 @@ export function PureMailShell({
                 <Button size="sm" disabled={!networkOnline || !mailProvider || mailFetching} onClick={() => void refreshMail('manual')}>Check account sync</Button>
               </div>
             ))}
-            {store.messages.filter(message => message.deliveryWarnings?.length && store.threads.some(thread => thread.id === message.threadId && thread.accountId === selectedAccountId)).map(message => <Meta key={message.id}><strong>{message.subject}</strong>: {message.deliveryWarnings!.join(' ')}</Meta>)}
+            {store.messages.filter(message => message.deliveryWarnings?.length && store.threads.some(thread => thread.id === message.threadId && thread.accountId === selectedAccountId)).map(message => <div key={message.id}>
+              <Meta><strong>{message.subject}</strong>: {message.deliveryWarnings!.join(' ')}</Meta>
+              {mailProvider?.repairSentRecord && message.deliveryWarnings!.some(warning => /IMAP Sent copy|old Drafts copy|no Sent folder/.test(warning)) && <Button size="sm" variant="subtle" disabled={!networkOnline || repairingSentId !== null} onClick={() => {
+                setRepairingSentId(message.id)
+                void mailProvider.repairSentRecord!(message).then(repaired => {
+                  setStore(current => applyMailCopyRepair(current, selectedAccountId, repaired))
+                  setCommandNotice(repaired.deliveryWarnings?.length ? 'The Sent copy is saved. Review the remaining mail recovery details.' : 'Sent and Drafts copies repaired. No email was sent.')
+                }).catch(error => setCommandNotice(`Could not repair the mailbox copies: ${mailErrorToastText(error instanceof Error ? error.message : String(error))}`)).finally(() => setRepairingSentId(null))
+              }}>{repairingSentId === message.id ? 'Repairing copies…' : 'Repair Sent / Drafts copies'}</Button>}
+            </div>)}
             {store.tasks.filter(task => task.source.accountId === selectedAccountId && (task.syncState === 'failed' || task.syncState === 'conflict')).map(task => (
               <div key={task.id} style={{ padding: '12px 0' }}>
                 <strong>{task.title}</strong>

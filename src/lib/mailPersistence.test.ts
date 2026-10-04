@@ -164,6 +164,15 @@ describe('mail persistence', () => {
     expect(store?.threads).toHaveLength(1)
   })
 
+  it('keeps the exact transmitted MIME when Sent filing fails, independently of the cache', async () => {
+    const current = storeWith([])
+    const raw = 'Message-ID: <accepted@example.test>\r\nSubject: With attachment\r\n\r\nExact sent bytes'
+    current.messages = [{ id: 'accepted', threadId: 'thread_1', subject: 'With attachment', body: 'Exact sent bytes', receivedAt: '2026-10-03T00:00:00Z', read: true, from: {name:'Me',email:'me@example.test'}, to: [], attachments: [], deliveryAccepted:true, sentCopyPresent:false, sentCopyMime:raw }]
+    failing.add(MAIL_STORE_FILE)
+    await writePersistedMailStore(current)
+    expect((await readPersistedMailStore()).store?.messages[0].sentCopyMime).toBe(raw)
+  })
+
   it('refuses to start an empty writable mailbox when the drafts file cannot be read', async () => {
     await writePersistedMailStore(storeWith([draft('d1', 'Keep this writing')]))
     unreadable.add(MAIL_DRAFTS_FILE)

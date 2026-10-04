@@ -29,6 +29,7 @@ it('saves uncertainty before submission and records confirmed delivery durably',
   }), f.draft)
   expect(f.read().drafts).toHaveLength(0)
   expect(persistableMailStore(f.read()).messages[0].deliveryAccepted).toBe(true)
+  expect(f.read().messages[0].optimistic).not.toBe(true)
   expect(f.persist).toHaveBeenCalledTimes(2)
 })
 

@@ -74,6 +74,15 @@ describe('mail query parsing', () => {
 })
 
 describe('resolveThreadQuery', () => {
+  it('shows mirrored Sent copies and accepted sends on an Inbox conversation, excluding unsent drafts', () => {
+    const store = baseStore()
+    const thread = store.threads.find(item => store.mailboxes.find(box => box.id === item.mailboxId)?.role === 'inbox')!
+    const message = store.messages.find(item => item.threadId === thread.id)!
+    const queried = (patch: Partial<MailMessage>) => resolveThreadQuery({ ...store, messages: store.messages.map(item => item.id === message.id ? { ...item, ...patch } : item) }, accountId(store), 'in:sent', NOW).threads.map(item => item.id)
+    expect(queried({ sentCopyPresent: true })).toContain(thread.id)
+    expect(queried({ deliveryAccepted: true })).toContain(thread.id)
+    expect(queried({ sentCopyPresent: true, isDraft: true })).not.toContain(thread.id)
+  })
   it('scopes to the account and excludes trash unless a mailbox is named', () => {
     const store = baseStore()
     const trashMailbox = store.mailboxes.find(
