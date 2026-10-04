@@ -49,6 +49,12 @@ it('keeps raw transport identifiers out of error toasts', () => {
   expect(mailErrorToastText('SMTP connection test timed out after 35 seconds.')).toContain('Mail connection timed out')
 })
 
+it('reports unavailable mail connections without transport instructions or suggesting a resend', () => {
+  for (const reason of ['Not connected. Call mailTransport.connect for this profile first.', 'Connection closed', 'Unexpected socket close', "Error invoking remote method 'shell:mailTransport:append': Error: connect ECONNREFUSED 127.0.0.1:3143", 'getaddrinfo ENOTFOUND mail.invalid']) {
+    expect(mailErrorToastText(reason)).toBe('Mail connection failed. Check your network or mail bridge.')
+  }
+})
+
 it('never lets a malformed stored draft Message-ID inject MIME headers', () => {
   const safe = imapDraftMessageId({ id: 'draft\r\nunsafe', providerDraftMessageIdHeader: '<evil@example.test>\r\nBcc: other@example.test' })
   expect(safe).toBe('<puremail-draft-draft%0D%0Aunsafe@puremail.local>')

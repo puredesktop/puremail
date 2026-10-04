@@ -35,6 +35,8 @@ export function mailErrorToastText(reason: string): string {
     return 'Mail authentication failed. Check the account credentials in Mail settings.'
   if (/timed? ?out|timeout/i.test(reason))
     return 'Mail connection timed out. Check your connection or mail bridge and try again.'
+  if (/not connected|connection (?:closed|refused|reset)|socket clos(?:e|ed)|ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|ENETUNREACH/i.test(reason))
+    return 'Mail connection failed. Check your network or mail bridge.'
   return reason.replace(/^Failed:\s*/, '').replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').slice(0, 240)
 }
 
