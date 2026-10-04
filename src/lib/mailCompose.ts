@@ -222,16 +222,11 @@ export function escapeComposeHtml(text: string): string {
 }
 
 /**
- * Plain text → composer HTML: one paragraph per line, empty lines kept as
- * empty paragraphs. Used to seed the rich composer (signatures, drafts
- * written before the rich composer existed).
+ * Plain text → composer HTML: one block with explicit line breaks,
+ * including empty lines. Paragraph elements introduce extra rendered breaks in
+ * Chromium, so reading innerText back would inflate a draft merely by
+ * opening it. Signatures and old plain-text drafts keep their line spacing.
  */
 export function plainTextToComposeHtml(text: string): string {
-  return text
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map(line =>
-      line.trim() ? `<p>${escapeComposeHtml(line)}</p>` : '<p><br></p>',
-    )
-    .join('')
+  return `<div>${escapeComposeHtml(text.replace(/\r\n/g, '\n')).replace(/\n/g, '<br>')}</div>`
 }
