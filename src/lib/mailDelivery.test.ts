@@ -33,6 +33,30 @@ it('saves uncertainty before submission and records confirmed delivery durably',
   expect(f.persist).toHaveBeenCalledTimes(2)
 })
 
+it('removes only the consumed provider draft from history when acceptance is recorded', async () => {
+  const f = fixture()
+  f.read().threads[0].syncState = 'synced'
+  f.draft.providerDraftMessageId = 'cached-draft'
+  f.draft.providerDraftMessageIdHeader = '<stable-draft@example.test>'
+  const cached = { ...accepted(f.draft), id: 'cached-draft', isDraft: true, messageIdHeader: '<stable-draft@example.test>' }
+  const replacement = { ...cached, id: 'replacement-draft' }
+  const newer = { ...cached, id: 'newer-unsent-reply', messageIdHeader: '<different-draft@example.test>' }
+  const otherThread = { ...cached, id: 'other-account-copy', threadId: 'other-thread' }
+  f.read().messages.push(cached, replacement, newer, otherThread)
+  await f.send(provider(async draft => accepted(draft)), f.draft)
+  const persisted = persistableMailStore(f.read())
+  expect(persisted.messages.filter(message => message.isDraft).map(message => message.id)).toEqual(['newer-unsent-reply', 'other-account-copy'])
+  expect(persisted.messages.filter(message => message.deliveryAccepted)).toHaveLength(1)
+  expect(persisted.threads[0].syncState).toBe('synced')
+})
+
+it.each(['pending', 'failed', 'conflict'] as const)('preserves unrelated %s thread work after confirmed delivery', async syncState => {
+  const f = fixture()
+  f.read().threads[0].syncState = syncState
+  await f.send(provider(async draft => accepted(draft)), f.draft)
+  expect(f.read().threads[0].syncState).toBe(syncState)
+})
+
 it('does not submit when saving the attempt fails', async () => {
   const f = fixture(); f.persist.mockRejectedValue(new Error('Disk unavailable'))
   const remote = vi.fn(async (draft: Draft) => accepted(draft))
