@@ -101,6 +101,14 @@ describe('mail persistence', () => {
     expect((files.get(MAIL_STORE_FILE) as MailStore).threads).toHaveLength(1)
   })
 
+  it('restores a definite draft-save failure after the toast and mailbox cache are gone', async () => {
+    const failed = { ...draft('d1', 'Keep my reply.'), syncState: 'failed' as const, providerSaveError: 'No message with uid 93 in Drafts.' }
+    await writePersistedMailStore(storeWith([failed]))
+    files.delete(MAIL_STORE_FILE)
+    const restored = await readPersistedMailStore()
+    expect(restored.store?.drafts[0]).toEqual(failed)
+  })
+
   it('round-trips send runs through the drafts file, tolerating older files without them', async () => {
     const run = {
       id: 'run_1',

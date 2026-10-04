@@ -4389,7 +4389,7 @@ export function PureMailShell({
               <div key={draft.id} style={{ padding: '12px 0', borderTop: '1px solid var(--platform-colors-border, #ddd)' }}>
                 <strong>{draft.subject || '(No subject)'}</strong>
                 <Meta>Draft · {draft.syncState === 'conflict' ? 'Conflicting versions' : 'Save failed'}</Meta>
-                <Meta>{draft.sendError || draft.providerSaveWarning || (draft.providerConflict
+                <Meta>{draft.sendError || draft.providerSaveWarning || (draft.providerSaveError ? mailErrorToastText(draft.providerSaveError) : undefined) || (draft.providerConflict
                   ? 'This draft changed in another mail client. Compare both versions before choosing one.'
                   : 'The draft was not confirmed as synced. No detailed reason was saved for this older failure.')}</Meta>
                 <Button size="sm" variant="subtle" onClick={() => openDraftInComposeWindow(draft)}>Open draft</Button>{' '}
