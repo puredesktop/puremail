@@ -217,6 +217,9 @@ describe('ImapMailProvider against the fake transport', () => {
     expect(imap.appended[0]?.folder).toBe('Drafts')
     expect(imap.appended[0]?.raw).toContain('Subject: Hello')
     expect(imap.appended[0]?.raw).toContain('multipart/alternative')
+    expect(imap.appended[0]?.raw).toContain('Message-ID: <puremail-draft-draft_1@puremail.local>')
+    await imapProvider.updateDraft(providerDraftId, { ...draft, body: 'Updated body.' })
+    expect(imap.appended[1]?.raw).toContain('Message-ID: <puremail-draft-draft_1@puremail.local>')
 
     const message = await imapProvider.send({
       draft,
@@ -427,10 +430,32 @@ describe('ImapMailProvider against the fake transport', () => {
     expect(store.drafts).toHaveLength(1)
     const draft = store.drafts[0]!
     expect(draft.providerDraftId).toBe('imap_draft_41')
+    expect(draft.providerDraftMessageIdHeader).toBe('<draft@local>')
     expect(draft.body).toBe('To be continued')
     expect(draft.syncState).toBe('synced')
     const message = store.messages.find(m => m.id === draft.providerDraftMessageId)
     expect(message?.isDraft).toBe(true)
+  })
+
+  it('preserves ambiguous Drafts copies with the same Message-ID', async () => {
+    const imap = fakeImap()
+    const base = { ...imap.boxes.get('INBOX')![0], messageId: '<duplicate-draft@example.test>', flags: ['\\Draft'] }
+    imap.boxes.set('Drafts', [{ ...base, uid: 41, body: 'First version' }, { ...base, uid: 42, body: 'Second version' }])
+    const { provider: mail } = provider(imap)
+    const store = await mail.fetchStore()
+    expect(store.drafts.map(draft => draft.providerDraftId)).toEqual(['imap_draft_41', 'imap_draft_42'])
+    expect(store.drafts.map(draft => draft.body)).toEqual(['First version', 'Second version'])
+  })
+
+  it('retains an external draft Message-ID across saving and gives Send a separate identity', async () => {
+    const { provider: mail, imap, smtp } = provider()
+    await mail.fetchStore()
+    const draft = { id: 'local', threadId: 'thread', providerDraftId: 'imap_draft_41', providerDraftMessageIdHeader: '<external-draft@example.test>', to: [{ name: 'Kim', email: 'kim@example.test' }], subject: 'Draft identity', body: 'Latest', attachments: [], updatedAt: '2026-07-05T10:00:00Z', syncState: 'synced' as const }
+    await mail.updateDraft(draft.providerDraftId, draft)
+    expect(imap.appended[0].raw).toContain('Message-ID: <external-draft@example.test>')
+    const sent = await mail.send({ draft, threadId: draft.threadId })
+    expect(sent.messageIdHeader).not.toBe(draft.providerDraftMessageIdHeader)
+    expect(smtp.sent[0].raw).toContain(`Message-ID: ${sent.messageIdHeader}`)
   })
 
   it('sends attachments in the MIME payload instead of dropping them', async () => {

@@ -4,6 +4,14 @@ import type { Draft } from '../types'
 /** An append may have landed; retrying it could create another draft. */
 export class MailDraftSaveUncertain extends Error {}
 
+/** Draft identity is separate from the Message-ID of a submitted message. */
+export function imapDraftMessageId(draft: Pick<Draft, 'id' | 'providerDraftMessageIdHeader'>): string {
+  const existing = draft.providerDraftMessageIdHeader?.trim().replace(/^</, '').replace(/>$/, '')
+  return existing && /^[^<>\s]+$/.test(existing)
+    ? `<${existing}>`
+    : `<puremail-draft-${encodeURIComponent(draft.id)}@puremail.local>`
+}
+
 /** Content-only baseline for detecting edits made in another mail client. */
 export function draftContentRevision(draft: Draft): string {
   const emails = (contacts: Draft['to']) => contacts.map(contact => contact.email.trim().toLowerCase()).sort()

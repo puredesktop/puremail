@@ -1,6 +1,6 @@
 import { createMailDeliveryController } from '../lib/mailDelivery'
 import { MailConnectionControl } from './MailDeliveryStatus'
-import { markDraftSendFailed, draftContentRevision, mailErrorToastText, mailConnectionsVerified } from '../lib/mailDeliveryStatus'
+import { markDraftSendFailed, mailErrorToastText, mailConnectionsVerified } from '../lib/mailDeliveryStatus'
 import type { InviteActionState } from '../types'
 import { useThreadMessageSelection } from './useThreadMessageSelection'
 import { mailSettingsPatch } from '../lib/mailSettingsPatch'
@@ -78,6 +78,7 @@ import {
   mailFetchWindowForStore,
   mailFetchWindowLabel,
   mergeMailProviderSyncResult,
+  resolveMailDraftConflict,
   mailSyncSummary,
   createCalendarDraftIntentFromThread,
   createComposedMessageDraft,
@@ -4407,14 +4408,7 @@ export function PureMailShell({
                   <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{draft.body}</pre>
                   <p><strong>Account version</strong></p>
                   <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{draft.providerConflict.body}</pre>
-                  {[true, false].map(useRemote => <Button key={String(useRemote)} size="sm" variant="subtle" onClick={() => setStore(current => ({ ...current, drafts: current.drafts.map(item => {
-                    if (item.id !== draft.id || !item.providerConflict) return item
-                    const remote = item.providerConflict
-                    return { ...item, ...(useRemote ? remote : {}), providerConflict: undefined,
-                      providerRevision: draftContentRevision({ ...item, ...remote }),
-                      syncState: useRemote ? 'synced' : 'pending',
-                      sendError: item.sendState === 'uncertain' ? item.sendError : undefined }
-                  }) }))}>{useRemote ? 'Use account version' : 'Keep my version'}</Button>)}
+                  {[true, false].map(useRemote => <Button key={String(useRemote)} size="sm" variant="subtle" onClick={() => setStore(current => resolveMailDraftConflict(current, draft.id, useRemote))}>{useRemote ? 'Use account version' : 'Keep my version'}</Button>)}
                 </details>}
                 {(draft.providerSaveUncertain || draft.sendState === 'uncertain') && <Meta>Check the account’s {draft.sendState === 'uncertain' ? 'Sent' : 'Drafts'} folder first, before allowing another attempt.</Meta>}
               </div>
