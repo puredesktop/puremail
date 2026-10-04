@@ -2080,12 +2080,24 @@ export function sendDraft(
     } : {}),
   }
 
+  // After acceptance the editable record no longer hides its provider copy.
+  // Consume that exact cached draft too, including older IMAP UID copies,
+  // while leaving another unsent reply in the same conversation intact.
+  const messages = message.deliveryAccepted || confirmedGmailId
+    ? store.messages.filter(item => !(
+        item.isDraft && item.threadId === draft.threadId && (
+          item.id === draft.providerDraftMessageId ||
+          item.messageIdHeader === imapDraftMessageId(draft)
+        )
+      ))
+    : store.messages
+
   return {
     ...store,
     messages:
       options.appendMessage === false
-        ? store.messages
-        : [...store.messages, message],
+        ? messages
+        : [...messages, message],
     drafts: options.keepDraft
       ? store.drafts.map(item =>
           item.id === draftId
@@ -2118,7 +2130,7 @@ export function sendDraft(
         mailboxId: sentMailboxId,
         lastMessageAt: now,
         status: 'waiting',
-        syncState: 'pending',
+        syncState: message.deliveryAccepted || confirmedGmailId ? item.syncState : 'pending',
       }
     }),
   }
