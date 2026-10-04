@@ -294,7 +294,7 @@ export function latestInboundMessage(
   ownerEmail: string,
 ): MailMessage | null {
   const own = ownerEmail.trim().toLowerCase()
-  const sorted = [...messages].sort((a, b) =>
+  const sorted = messages.filter(message => !message.isDraft).sort((a, b) =>
     b.receivedAt.localeCompare(a.receivedAt),
   )
   return (
@@ -1678,7 +1678,7 @@ export function resolveDraftCounterparty(
 ): DraftCounterpartyResolution {
   const registry = ownerIdentityRegistryForStore(store)
   const threadMessages = store.messages
-    .filter(message => message.threadId === thread.id)
+    .filter(message => message.threadId === thread.id && !message.isDraft)
     .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
   const counterpartyMessage = threadMessages.find(
     message => !isOwnerContact(message.from, registry),
@@ -1704,7 +1704,7 @@ function latestThreadMessage(
   threadId: string,
 ): MailMessage | undefined {
   return messages
-    .filter(message => message.threadId === threadId)
+    .filter(message => message.threadId === threadId && !message.isDraft)
     .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0]
 }
 
@@ -1956,11 +1956,7 @@ export function latestMessageForThread(
   store: MailStore,
   threadId: string,
 ): MailMessage | null {
-  return (
-    store.messages
-      .filter(message => message.threadId === threadId)
-      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0] ?? null
-  )
+  return latestThreadMessage(store.messages, threadId) ?? null
 }
 
 export function draftSourceChangedSinceCreation(
@@ -2736,7 +2732,7 @@ export function threadContextSummaryForThread(
   const thread = store.threads.find(item => item.id === threadId)
   if (!thread) return saved ?? null
   const messages = store.messages.filter(
-    message => message.threadId === threadId,
+    message => message.threadId === threadId && !message.isDraft,
   )
   const latest = latestThreadMessage(store.messages, threadId)
   const latestText = cleanMailMessageText(latest).text
@@ -3111,9 +3107,7 @@ export function createAutoDraftForThread(
 ): Draft | null {
   const body = generatedBody?.trim()
   if (!body) return null
-  const latestMessage = messages
-    .filter(message => message.threadId === thread.id)
-    .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0]
+  const latestMessage = latestThreadMessage(messages, thread.id)
   const recipient =
     recipientOverride ?? latestMessage?.from ?? thread.participants[0]
   const sourceExcerpt = sourceExcerptForDraft(latestMessage)

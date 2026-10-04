@@ -2698,6 +2698,10 @@ describe('PureMail reliability safeguards', () => {
       'msg_own_reply',
     )
     expect(latestInboundMessage([], 'alex@example.com')).toBeNull()
+    const providerDraft = { ...ownLater, id: 'provider_draft', isDraft: true, receivedAt: '2026-06-28T09:00:00.000Z' }
+    expect(latestInboundMessage([inbound, providerDraft], 'alex@example.com')?.id).toBe(inbound.id)
+    expect(latestInboundMessage([ownLater, providerDraft], 'alex@example.com')?.id).toBe(ownLater.id)
+    expect(latestInboundMessage([providerDraft], 'alex@example.com')).toBeNull()
   })
 
   it('reply-all drafts keep the other recipients on Cc without the account owner', () => {
