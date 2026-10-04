@@ -1,5 +1,6 @@
 import { createMailDeliveryController } from '../lib/mailDelivery'
 import { beginThreadReadSync } from '../lib/mailThreadReadSync'
+import { reconcileComposeAttachments } from '../lib/composeAttachments'
 import { MailConnectionControl } from './MailDeliveryStatus'
 import { markDraftSendFailed, mailErrorToastText, mailConnectionsVerified } from '../lib/mailDeliveryStatus'
 import type { InviteActionState } from '../types'
@@ -710,27 +711,12 @@ export function PureMailShell({
       return
     }
     if (seen.attachments === composeContextDraftAttachments) return
-    const seenIds = new Set(seen.attachments.map(item => item.id))
-    const nowIds = new Set(composeContextDraftAttachments.map(item => item.id))
-    const added = composeContextDraftAttachments.filter(
-      item => !seenIds.has(item.id),
-    )
-    const removedIds = seen.attachments
-      .filter(item => !nowIds.has(item.id))
-      .map(item => item.id)
+    const previous = seen.attachments
     composeSeenAttachmentsRef.current = {
       draftId: composeContextDraftId,
       attachments: composeContextDraftAttachments,
     }
-    if (added.length === 0 && removedIds.length === 0) return
-    setComposeAttachments(current => {
-      const currentIds = new Set(current.map(item => item.id))
-      const kept = current.filter(item => !removedIds.includes(item.id))
-      const fresh = added.filter(item => !currentIds.has(item.id))
-      return fresh.length || kept.length !== current.length
-        ? [...kept, ...fresh]
-        : current
-    })
+    setComposeAttachments(current => reconcileComposeAttachments(current, previous, composeContextDraftAttachments))
   }, [composeContextDraftId, composeContextDraftAttachments])
   useEffect(() => {
     mailProviderRef.current = mailProvider

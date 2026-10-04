@@ -15,7 +15,7 @@ import {
 import { useMailStorePersistence } from './useMailStorePersistence'
 import { writePersistedMailStore } from '../lib/mailPersistence'
 import { emptyMailStore } from '../lib/mailModel'
-import type { MailStore } from '../types'
+import type { Attachment, MailStore } from '../types'
 import type { ComposeReplyContext } from '../lib/replyCompose'
 vi.mock('../lib/mailPersistence', () => ({
   writePersistedMailStore: vi.fn(async () => ({
@@ -86,6 +86,8 @@ async function fixture() {
       ),
     subject: (subject: string) =>
       act(async () => setSnapshot(value => ({ ...value, subject }))),
+    attachments: (attachments: Attachment[]) =>
+      act(async () => setSnapshot(value => ({ ...value, attachments }))),
     modify: (change: (store: MailStore) => MailStore) =>
       act(async () => setStore(change)),
     close: () => act(async () => setActive(false)),
@@ -145,6 +147,19 @@ it('does not turn provider bookkeeping into another edit or remote save loop', a
   } finally {
     await f.unmount()
   }
+})
+
+it('keeps hydrated attachment bytes when an older editor snapshot autosaves a later body edit', async () => {
+  const f = await fixture()
+  const remote: Attachment = { id: 'file', name: 'notes.txt', mimeType: 'text/plain', sizeLabel: '4 B', remote: { provider: 'imap', folderPath: 'Drafts', uid: 143, partId: '2' } }
+  const hydrated: Attachment = { id: 'file', name: 'notes.txt', mimeType: 'text/plain', sizeLabel: '4 B', content: 'dGVzdA==' }
+  try {
+    await f.attachments([remote]); await f.tick(350)
+    await f.modify(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, attachments: [hydrated], providerDraftId: 'imap_draft_146', syncState: 'synced' })) }))
+    await f.edit('Latest edited body'); await f.tick(350)
+    expect(f.read().drafts[0]).toMatchObject({ body: 'Latest edited body', providerDraftId: 'imap_draft_146', attachments: [hydrated] })
+    expect(f.read().drafts[0].attachments[0].remote).toBeUndefined()
+  } finally { await f.unmount() }
 })
 
 it.each(['discard', 'send'] as const)(
