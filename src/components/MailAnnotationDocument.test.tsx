@@ -31,7 +31,7 @@ it('persists plugin comments with original source offsets and selected privacy',
   const editor=(host.querySelector('.tiptap') as HTMLElement&{editor:Editor}).editor
   await act(async()=>{editor.commands.setTextSelection({from:1,to:17});editor.commands.setCommentMark({commentId:'new',commentText:'Keep this private'})})
   expect(addNote).toHaveBeenCalledWith({messageId:'m'},expect.objectContaining({id:'new',kind:'private',quote:'Original\nmessage',start:0,end:16,text:'Keep this private'}))
-  expect(editor.getText()).toBe('Original message text.')
+  expect(editor.getText()).toBe('Original\nmessage text.')
  }finally{await act(async()=>root.unmount());host.remove()}
 })
 it('persists one annotation spanning two source paragraphs',async()=>{

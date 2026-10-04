@@ -1,6 +1,6 @@
 import { MailAnnotationDocument } from './MailAnnotationDocument'
 import { createPortal } from 'react-dom'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Bookmark, BookmarkCheck, Lock, Maximize2, Minimize2, PenLine, Reply } from 'lucide-react'
 import type { MailMessage } from '../types'
 import { readerMailBody } from '../lib/mailTextUtils'
@@ -30,6 +30,7 @@ import {
   RoomBar,
   RoomColumns,
   RoomScroll,
+  ReplyBox,
   Rule,
   Sheet,
   Switch,
@@ -85,19 +86,86 @@ export function ReadingRoom({
   const [keeping, setKeeping] = useState(false)
   const notes = record ? orderedNotes(record, article.text) : []
   const counts = noteCounts(record)
+  const [replyText, setReplyText] = useState(record?.replyIntent ?? '')
+  const [replyBusy, setReplyBusy] = useState(false)
+  const [replyError, setReplyError] = useState<string | null>(null)
+  const replyEdited = useRef(false)
+  const replyTextRef = useRef(replyText)
+  const drafting = useRef(false)
+  const savedReply = useRef({ messageId: identity.messageId, text: record?.replyIntent ?? '' })
+  const pendingReply = useRef<{ messageId: string; text: string; promise: Promise<void> } | null>(null)
+  const messageIdRef = useRef(identity.messageId)
+  messageIdRef.current = identity.messageId
+  replyTextRef.current = replyText
+  useEffect(() => {
+    replyEdited.current = false
+    savedReply.current = { messageId: identity.messageId, text: record?.replyIntent ?? '' }
+    setReplyText(record?.replyIntent ?? '')
+    setReplyError(null)
+  }, [identity.messageId])
+  useEffect(() => {
+    if (!replyEdited.current) {
+      savedReply.current = { messageId: identity.messageId, text: record?.replyIntent ?? '' }
+      setReplyText(record?.replyIntent ?? '')
+    }
+  }, [record?.replyIntent])
+
+  const saveReply = async (): Promise<boolean> => {
+    try {
+      if (replyEdited.current && (pendingReply.current || savedReply.current.messageId !== identity.messageId || savedReply.current.text !== replyText || replyError)) {
+        let pending = pendingReply.current
+        if (!pending || pending.messageId !== identity.messageId || pending.text !== replyText) {
+          // Optimistic record updates are not a disk acknowledgement. Reuse the
+          // blur write and serialize newer text behind it before leaving/drafting.
+          const promise = (pending?.promise ?? Promise.resolve()).catch(() => undefined).then(() => room.setReplyIntent(identity, replyText))
+          pending = { messageId: identity.messageId, text: replyText, promise }
+          pendingReply.current = pending
+        }
+        try {
+          await pending.promise
+          savedReply.current = { messageId: identity.messageId, text: replyText }
+        } finally {
+          if (pendingReply.current === pending) pendingReply.current = null
+        }
+      }
+      if (messageIdRef.current !== identity.messageId || replyTextRef.current !== replyText) return false
+      setReplyError(null)
+      return true
+    } catch (cause) {
+      setReplyError(cause instanceof Error ? cause.message : String(cause))
+      return false
+    }
+  }
+  const leave = async (): Promise<void> => {
+    if (!await saveReply()) return
+    setExpanded(false)
+    onBack()
+  }
+  const draft = async (): Promise<void> => {
+    if (drafting.current) return
+    drafting.current = true
+    setReplyBusy(true)
+    try {
+      if (await saveReply()) {
+        onDraftReply({ ...(record ?? { ...identity, notes: [], updatedAt: new Date().toISOString() }), replyIntent: replyText.trim() || undefined })
+      }
+    } finally {
+      drafting.current = false
+      setReplyBusy(false)
+    }
+  }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
-        setExpanded(false)
-        onBack()
+        void leave()
       }
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [onBack])
+  }, [onBack, replyText, record, replyError])
 
   const save = async (passage: Pending, text: string) => {
     const note: MessageNote = { id: newId(), kind: passage.kind, quote: passage.quote, start: passage.start, end: passage.end, text: text.trim(), createdAt: new Date().toISOString() }
@@ -111,7 +179,7 @@ export function ReadingRoom({
   const content = (
     <Room aria-label="Reading room" data-expanded={expanded}>
       <RoomBar>
-        <BarButton type="button" data-quiet="true" onClick={onBack}>
+        <BarButton type="button" data-quiet="true" onClick={() => void leave()}>
           <ArrowLeft aria-hidden="true" />
           Back to mail
         </BarButton>
@@ -155,16 +223,6 @@ export function ReadingRoom({
           {kept ? <BookmarkCheck aria-hidden="true" /> : <Bookmark aria-hidden="true" />}
           {kept ? 'Kept as context' : 'Keep as context'}
         </BarButton>
-        <BarButton
-          type="button"
-          data-primary="true"
-          disabled={!replyCount || !record}
-          title={replyCount ? 'The assistant drafts a reply from your notes for the reply. Private notes are never sent.' : 'Add a note for the reply first'}
-          onClick={() => record && onDraftReply(record)}
-        >
-          <Reply aria-hidden="true" />
-          {replyCount ? `Draft a reply from ${replyCount} ${replyCount === 1 ? 'note' : 'notes'}` : 'Draft a reply'}
-        </BarButton>
       </RoomBar>
       {deliveryStatus}
       {room.error ? <Notice role="status">{room.error}</Notice> : null}
@@ -179,6 +237,28 @@ export function ReadingRoom({
               {identity.from.name ? ` · ${identity.from.email}` : ''}
             </Dateline>
             <Rule />
+            <ReplyBox>
+              <label htmlFor="reading-room-intent">Your reply</label>
+              <textarea id="reading-room-intent" rows={3} value={replyText}
+                placeholder="What do you want to say?"
+                onChange={event => { replyEdited.current = true; setReplyText(event.target.value) }}
+                onBlur={() => void saveReply()}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && (replyText.trim() || replyCount)) {
+                    event.preventDefault()
+                    void draft()
+                  }
+                }} />
+              <p className="with">{replyCount ? `${replyCount} ${replyCount === 1 ? 'note' : 'notes'} for the reply will also be included.` : 'Add your answer here, or annotate the message below.'} Private notes stay with you.</p>
+              {replyError ? <p role="alert">{replyError}</p> : null}
+              <div className="row">
+                {record?.replyRequestedAt ? <span className="done">Draft requested</span> : null}
+                <span style={{ flex: 1 }} />
+                <BarButton type="button" data-primary="true" disabled={replyBusy || (!replyText.trim() && !replyCount)} onClick={() => void draft()}>
+                  <Reply aria-hidden="true" />{replyBusy ? 'Saving…' : record?.replyRequestedAt ? 'Draft it again' : 'Draft the reply'}
+                </BarButton>
+              </div>
+            </ReplyBox>
             {generalOpen || notes.some(note=>!note.quote) ? <WholeNote>
               <label htmlFor="reading-room-whole-note">General note</label>
               {notes.filter(note=>!note.quote&&(showPrivate||note.kind!=='private')).map(note=><NoteCard key={note.id} data-ink={note.kind}><div className="body"><p className="text">{note.text}</p>{editingGeneral===note.id ? <InkEditor initialText={note.text} initialKind={note.kind} allowHighlight={false} onCancel={()=>setEditingGeneral(null)} onSave={(text,kind)=>{void room.updateNote(identity.messageId,note.id,{text:text.trim(),kind});setEditingGeneral(null)}}/> : null}<div className="actions"><span>{note.kind==='private'?'Private':'For the reply'}</span><button type="button" onClick={()=>setEditingGeneral(note.id)}>Edit</button><button type="button" onClick={()=>void room.removeNote(identity.messageId,note.id)}>Delete</button></div></div></NoteCard>)}

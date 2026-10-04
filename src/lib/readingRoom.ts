@@ -53,6 +53,8 @@ export interface MessageAnnotations {
   /** The article text when first annotated, so notes and context outlive the mail cache. */
   article: string
   notes: MessageNote[]
+  /** What the reader wants the reply to say overall, written in the room. */
+  replyIntent?: string
   context?: KeptContext
   replyRequestedAt?: string
   updatedAt: string
@@ -99,9 +101,17 @@ export function articleOf(source: string): Article {
   const paragraphs: ArticleParagraph[] = []
   let offset = 0
   for (const block of blocks) {
-    const runs: ArticleRun[] = plainTextSegments(block).map(segment =>
+    const raw: ArticleRun[] = plainTextSegments(block).map(segment =>
       segment.kind === 'link' ? { text: segment.text, href: segment.href } : { text: segment.text },
     )
+    // Links are found on the lines as sent; only then are wrapped lines rejoined.
+    const soft = softBreaks(raw.map(run => run.text).join(''))
+    let at = 0
+    const runs = raw.map(run => {
+      const text = run.text.replace(/\n/g, (char, index: number) => soft.has(at + index) ? ' ' : char)
+      at += run.text.length
+      return { ...run, text }
+    })
     const text = runs.map(run => run.text).join('')
     if (!text.trim()) continue
     if (paragraphs.length) offset += 2
@@ -111,12 +121,46 @@ export function articleOf(source: string): Article {
   return { text: paragraphs.map(paragraph => paragraph.text).join('\n\n'), paragraphs }
 }
 
+const LIST_LINE = /^\s*(?:[*•\-–>]|\d+[.)]|[a-z][.)])\s+/i
+
+/**
+ * The line breaks in a paragraph that only wrapped the text. Many mail
+ * programs send plain text cut at about 72 to 78 characters, so a paragraph
+ * arrives as a column of short lines. A break is a wrap when the line before
+ * it runs close to the paragraph's longest line and the next line does not
+ * start a list item. Short lines (a sign-off, an address, a poem) and lines
+ * ending in a colon keep their breaks. Each wrap becomes one space, so every
+ * offset in the text stays where it was.
+ */
+export function softBreaks(paragraph: string): Set<number> {
+  const breaks = new Set<number>()
+  const lines = paragraph.split('\n')
+  if (lines.length < 2) return breaks
+  const longest = lines.reduce((max, line) => Math.max(max, line.trimEnd().length), 0)
+  if (longest < 50) return breaks
+  let offset = 0
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const line = lines[index].trimEnd()
+    const next = lines[index + 1]
+    offset += lines[index].length
+    const wraps = line.length >= Math.max(40, longest - 28) && !/:$/.test(line) && next.trim().length > 0 && !LIST_LINE.test(next)
+    if (wraps) breaks.add(offset)
+    offset += 1
+  }
+  return breaks
+}
+
 /** Where a note's passage is in the article now, or null when it can no longer be found. */
 export function resolveNote(articleText: string, note: Pick<MessageNote, 'quote' | 'start' | 'end'>): { start: number; end: number } | null {
   if (!note.quote) return null
   if (articleText.slice(note.start, note.end) === note.quote) return { start: note.start, end: note.end }
+  // A passage noted before wrapped lines were rejoined holds newlines where the text now has spaces.
+  const flat = (value: string) => value.replace(/\s/g, ' ')
+  if (flat(articleText.slice(note.start, note.end)) === flat(note.quote)) return { start: note.start, end: note.end }
   const at = articleText.indexOf(note.quote)
-  return at === -1 ? null : { start: at, end: at + note.quote.length }
+  if (at !== -1) return { start: at, end: at + note.quote.length }
+  const loose = flat(articleText).indexOf(flat(note.quote))
+  return loose === -1 ? null : { start: loose, end: loose + note.quote.length }
 }
 
 export interface ArticlePiece extends ArticleRun {
@@ -193,8 +237,8 @@ export function recordFor(file: AnnotationsFile, identity: MessageIdentity, now:
 
 function withRecord(file: AnnotationsFile, record: MessageAnnotations): AnnotationsFile {
   const byMessageId = { ...file.byMessageId }
-  // A record with nothing in it is not kept: no notes, no context.
-  if (!record.notes.length && !record.context) delete byMessageId[record.messageId]
+  // A record with nothing in it is not kept: no notes, no reply intent, no context.
+  if (!record.notes.length && !record.context && !record.replyIntent?.trim()) delete byMessageId[record.messageId]
   else byMessageId[record.messageId] = record
   return { ...file, byMessageId }
 }
@@ -225,6 +269,14 @@ export function setContext(file: AnnotationsFile, identity: MessageIdentity, con
   return withRecord(file, { ...record, context, updatedAt: now })
 }
 
+export function setReplyIntent(file: AnnotationsFile, identity: MessageIdentity, text: string, now: string): AnnotationsFile {
+  const record = recordFor(file, identity, now)
+  const replyIntent = text.trim() ? text : undefined
+  if ((record.replyIntent ?? '') === (replyIntent ?? '')) return file
+  const { replyIntent: _old, ...rest } = record
+  return withRecord(file, { ...rest, ...(replyIntent ? { replyIntent } : {}), updatedAt: now })
+}
+
 export function markReplyRequested(file: AnnotationsFile, messageId: string, now: string): AnnotationsFile {
   const record = file.byMessageId[messageId]
   return record ? withRecord(file, { ...record, replyRequestedAt: now, updatedAt: now }) : file
@@ -238,10 +290,13 @@ export function markReplyRequested(file: AnnotationsFile, messageId: string, now
  */
 export function replyBrief(record: MessageAnnotations): string {
   const notes = orderedNotes(record).filter(note => note.kind === 'reply' && note.text.trim())
-  if (!notes.length) return ''
+  const intent = record.replyIntent?.trim() ?? ''
+  if (!notes.length && !intent) return ''
   const lines = [
-    `Reply to the message from ${record.from.name || record.from.email} ("${record.subject}"), using only the reader's notes below. Each note says what to answer; keep the reader's voice, short and warm. Do not add facts, dates or commitments the notes do not contain.`,
+    `Reply to the message from ${record.from.name || record.from.email} ("${record.subject}"). Read the whole message and its thread for context, then write the reply the reader describes below, answering each of their notes. Keep the reader's voice, short and warm. Do not add facts, dates or commitments that neither the message nor the reader's words contain.`,
   ]
+  if (intent) lines.push(`What the reader wants to say: ${intent}`)
+  if (notes.length) lines.push('Their notes on the message:')
   notes.forEach((note, index) => {
     lines.push(note.quote ? `${index + 1}. On the passage "${note.quote}": ${note.text.trim()}` : `${index + 1}. On the whole message: ${note.text.trim()}`)
   })
@@ -405,7 +460,7 @@ export function parseAnnotationsFile(value: unknown): AnnotationsFile {
               : {}),
           }
         : undefined
-    if (!notes.length && !context) continue
+    if (!notes.length && !context && !text(record.replyIntent).trim()) continue
     file.byMessageId[messageId] = {
       messageId,
       threadId: text(record.threadId),
@@ -416,6 +471,7 @@ export function parseAnnotationsFile(value: unknown): AnnotationsFile {
       article: text(record.article),
       notes,
       ...(context ? { context } : {}),
+      ...(text(record.replyIntent).trim() ? { replyIntent: text(record.replyIntent) } : {}),
       ...(text(record.replyRequestedAt) ? { replyRequestedAt: text(record.replyRequestedAt) } : {}),
       updatedAt: text(record.updatedAt),
     }

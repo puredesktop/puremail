@@ -29,9 +29,8 @@ export function MailAnnotationDocument({source,identity,room,showPrivate,noteKin
  const value=useMemo(()=>{
   const marks=visible.flatMap(n=>{const at=resolveNote(article.text,n);return at?[{id:n.id,kind:n.kind,...at}]:[]})
   return article.paragraphs.map(p=>`<p>${paragraphPieces(p,marks).map(piece=>{
-   const preserve=p.text.split('\n').filter(line=>/^\s*(?:[-*•]|\d+[.)])\s/.test(line)).length>1
-   let text=escape(piece.text)
-   if(preserve)text=text.replace(/\n/g,'<br>')
+   // Reflow has already removed soft wrapping. Keep the remaining intentional breaks.
+   let text=escape(piece.text).replace(/\n/g,'<br>')
    if(piece.href)text=`<a href="${escape(piece.href)}">${text}</a>`
    const note=visible.find(n=>n.id===piece.noteId)
    return note?`<span data-comment-id="${escape(note.id)}" data-comment-text="${escape(note.text)}" data-comment-type="general" data-comment-author="${note.kind==='private'?'Private':'For the reply'}" data-comment-created-at="${escape(note.createdAt)}">${text}</span>`:text
