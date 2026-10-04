@@ -43,6 +43,13 @@ const note = (article: string, kind: MessageNote['kind'], quote: string, text: s
 }
 
 describe('the reading room', () => {
+  it('rejoins wrapping after emoji without changing annotation offsets', () => {
+    const source = '🙂 This is a sufficiently long line of mail that was wrapped by the sender\nand this is the continuation of that same paragraph.'
+    const article = articleOf(source)
+    expect(article.text).toBe(source.replace('\n', ' '))
+    const quote = source.slice(4)
+    expect(resolveNote(article.text, { quote, start: 4, end: source.length })).toEqual({ start: 4, end: source.length })
+  })
   it('reads a message as paragraphs, with links as their labels', () => {
     const article = articleOf(body)
     expect(article.paragraphs).toHaveLength(4)

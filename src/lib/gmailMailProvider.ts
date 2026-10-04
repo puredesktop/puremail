@@ -1,3 +1,4 @@
+import { MailSendError } from './mailDelivery'
 import {
   withHttpRetry,
   type HttpRetryOptions,
@@ -637,12 +638,9 @@ export class GmailMailProvider implements MailProvider {
    * re-read on EVERY attempt — the shell refreshes it transparently, which
    * is what makes the policy's one 401 retry actually recover.
    *
-   * `idempotent: false` (the send path) changes ONE thing: a THROWN network
-   * error is not retried. A connection that dies after POST /messages/send
-   * is ambiguous — Gmail may have accepted the message before the failure,
-   * and retrying could deliver the email twice. Error RESPONSES (429/5xx/
-   * 401) are still retried even for send, because a response proves the
-   * server rejected the request and nothing was sent.
+   * Non-idempotent submissions never retry thrown network errors or 5xx:
+   * the server may have accepted the message before acknowledgement failed.
+   * Explicit rejection responses (429/401) can use the shared retry policy.
    */
   private async request<T>(
     path: string,
@@ -650,6 +648,7 @@ export class GmailMailProvider implements MailProvider {
   ): Promise<T> {
     const idempotent = init.idempotent ?? true
     let networkFailure: unknown = null
+    let serverFailure: GmailNetworkResponse | null = null
     const attemptFetch = async (): Promise<GmailNetworkResponse> =>
       this.options.fetch({
         url: path.startsWith('https://') ? path : gmailPath(path),
@@ -663,7 +662,10 @@ export class GmailMailProvider implements MailProvider {
     const response = await withHttpRetry(async () => {
       if (idempotent) return attemptFetch()
       try {
-        return await attemptFetch()
+        const result = await attemptFetch()
+        // A 5xx after a submission can be ambiguous; never submit again.
+        if (result.status >= 500) { serverFailure = result; return { ...result, status: 0 } }
+        return result
       } catch (error) {
         networkFailure = error
         // Status 0 is not a retryable status, so withHttpRetry returns this
@@ -671,9 +673,12 @@ export class GmailMailProvider implements MailProvider {
         return { ok: false, status: 0, body: '' }
       }
     }, this.options.retryOptions)
-    if (networkFailure !== null) throw networkFailure
+    if (networkFailure !== null) throw new MailSendError(networkFailure instanceof Error ? networkFailure.message : String(networkFailure), 'uncertain')
+    if (serverFailure !== null) throw new MailSendError('Gmail did not confirm the send. Check Sent before retrying.', 'uncertain')
     if (!response.ok) {
-      throw new Error(`Gmail API error (${response.status}): ${response.body}`)
+      const message = `Gmail API error (${response.status}): ${response.body}`
+      if (!idempotent) throw new MailSendError(message, 'not_sent')
+      throw new Error(message)
     }
     return response.body ? (JSON.parse(response.body) as T) : ({} as T)
   }
@@ -1063,6 +1068,7 @@ export class GmailMailProvider implements MailProvider {
       [],
     )
     const headerLines = [
+      ...(input.draft.sendMessageId ? [`Message-ID: ${input.draft.sendMessageId}`] : []),
       `To: ${formatAddressList(input.draft.to)}`,
       ...(cc.length ? [`Cc: ${formatAddressList(cc)}`] : []),
       ...(bcc.length ? [`Bcc: ${formatAddressList(bcc)}`] : []),
@@ -1095,6 +1101,8 @@ export class GmailMailProvider implements MailProvider {
       attachments: input.draft.attachments,
       read: true,
       gmailMessageId: sent.id,
+      ...(input.draft.sendMessageId ? { messageIdHeader: input.draft.sendMessageId } : {}),
+      deliveryAccepted: true,
     }
     if (this.store) {
       this.store = {
@@ -1399,9 +1407,8 @@ export class GmailMailProvider implements MailProvider {
    *
    * The draft is updated with the current content first: the local copy may
    * have been edited since it was last pushed, and sending the provider's
-   * older text would send the wrong email. If either step fails, fall back to
-   * `messages.send` and delete the draft afterwards, so a Gmail-side problem
-   * costs a ghost draft at worst, never an unsent reply.
+   * older text would send the wrong email. A failure stays a failure; an
+   * uncertain submission must never fall back to a second send.
    */
   private async sendRaw(
     input: SendDraftInput,
@@ -1410,31 +1417,15 @@ export class GmailMailProvider implements MailProvider {
   ): Promise<{ id: string; threadId?: string }> {
     const providerDraftId = input.draft.providerDraftId
     if (providerDraftId) {
-      try {
-        await this.request(`/drafts/${encodeURIComponent(providerDraftId)}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            id: providerDraftId,
-            message: {
-              ...(gmailThreadId ? { threadId: gmailThreadId } : {}),
-              raw: encodeRfc822(raw),
-            },
-          }),
-        })
-        return await this.request<{ id: string; threadId?: string }>(
-          '/drafts/send',
-          {
-            method: 'POST',
-            body: JSON.stringify({ id: providerDraftId }),
-            idempotent: false,
-          },
-        )
-      } catch (error) {
-        console.warn(
-          '[puremail] gmail drafts.send failed; falling back to messages.send:',
-          error,
-        )
-      }
+      try { await this.request(`/drafts/${encodeURIComponent(providerDraftId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ id: providerDraftId, message: { ...(gmailThreadId ? { threadId: gmailThreadId } : {}), raw: encodeRfc822(raw) } }),
+      }) } catch (error) { throw new MailSendError(error instanceof Error ? error.message : 'Draft could not be updated. Nothing sent.', 'not_sent') }
+      // No messages.send fallback after drafts.send: loss of its response
+      // does not prove loss of the message, and a fallback could send twice.
+      return this.request<{ id: string; threadId?: string }>('/drafts/send', {
+        method: 'POST', body: JSON.stringify({ id: providerDraftId }), idempotent: false,
+      })
     }
     const sent = await this.request<{ id: string; threadId?: string }>(
       '/messages/send',
@@ -1509,6 +1500,7 @@ export class GmailMailProvider implements MailProvider {
         : undefined)
     const created = await this.request<{ id: string }>('/drafts', {
       method: 'POST',
+      idempotent: false,
       body: JSON.stringify({
         message: {
           ...(gmailThreadId ? { threadId: gmailThreadId } : {}),

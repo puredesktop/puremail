@@ -1,3 +1,4 @@
+import { draftContentRevision } from './mailDeliveryStatus'
 import {
   calendarDraftResourceId,
   type CalendarDraftIntent,
@@ -1374,7 +1375,7 @@ export function recoverMailDraftSync(
   return {
     ...store,
     drafts: store.drafts.map(draft =>
-      draft.id === draftId
+      draft.id === draftId && !draft.providerConflict && draft.syncState !== 'conflict' && !draft.providerSaveUncertain && !draft.providerSaveWarning && draft.sendState !== 'uncertain'
         ? {
             ...draft,
             syncState: recoveredMailSyncState(draft.syncState, action),
@@ -1397,7 +1398,7 @@ export function retryMailSyncFailures(store: MailStore): MailStore {
     })),
     drafts: store.drafts.map(draft => ({
       ...draft,
-      syncState: recoveredMailSyncState(draft.syncState, 'retry'),
+      syncState: draft.syncState === 'conflict' || draft.providerConflict ? 'conflict' : draft.providerSaveWarning || draft.providerSaveUncertain || draft.sendState === 'uncertain' ? draft.syncState : recoveredMailSyncState(draft.syncState, 'retry'),
     })),
   }
 }
@@ -1991,6 +1992,7 @@ export function removeDraftAttachment(
  * on every IMAP account, one provider later.
  */
 export function isUnconfirmedGmailSend(message: MailMessage): boolean {
+  if (message.deliveryAccepted) return false
   return (
     (message.threadId.startsWith('gmail_thread_') ||
       message.threadId.startsWith('imap_thread_')) &&
@@ -2005,6 +2007,7 @@ export function sendDraft(
   now = new Date().toISOString(),
   options: {
     appendMessage?: boolean
+    sentMessage?: MailMessage
     keepDraft?: boolean
     sentMessageId?: string
     /**
@@ -2045,6 +2048,11 @@ export function sendDraft(
     receivedAt: now,
     attachments: draft.attachments,
     read: true,
+    ...(options.sentMessage ? {
+      ...options.sentMessage,
+      id: `msg_sent_${draft.id}_${now.replace(/[^0-9]/g, '')}`,
+      threadId: draft.threadId,
+    } : {}),
   }
 
   return {
@@ -3566,8 +3574,8 @@ export function mergeStarredThreadIds(
  *   locally: the thread is where the user pressed Reply, and adopting the
  *   provider's (often synthetic, over IMAP) id moves the draft off the
  *   open conversation.
- * - A local draft the provider no longer lists was sent or discarded there,
- *   and goes — but only when the fetch actually listed drafts.
+ * - A fully synced draft absent from a complete listing was sent or discarded
+ *   there. Unpushed local edits remain recoverable and pause account writes.
  * - A local draft with no `providerDraftId` has never been pushed and is
  *   never touched.
  */
@@ -3591,15 +3599,32 @@ export function mergeMailDrafts(
     }
     const remote = providerById.get(local.providerDraftId)
     if (!remote) {
+      if (draftsCovered && !local.sentAt && (local.syncState !== 'synced' || local.providerSaveUncertain || local.providerConflict)) {
+        merged.push({
+          ...local,
+          syncState: local.providerConflict || local.syncState === 'conflict' ? 'conflict' : 'failed',
+          providerSaveUncertain: true,
+          providerSaveWarning: local.providerSaveWarning ?? 'The account no longer lists this draft. Your local edits are kept. Check Drafts and Sent before saving another account copy.',
+        })
+        continue
+      }
       // Sent or deleted at the provider — unless we never looked, in which
       // case dropping it would delete the user's draft over a failed request.
-      if (draftsCovered && !local.sentAt) continue
+      if (draftsCovered && !local.sentAt && !local.sendError) continue
       merged.push(local)
       continue
     }
     claimed.add(local.providerDraftId)
+    const providerDraftMessageId = remote.providerDraftMessageId ?? local.providerDraftMessageId
+    const remoteRevision = draftContentRevision(remote)
+    if (local.syncState === 'conflict' || local.providerConflict) {
+      merged.push({ ...local, providerDraftMessageId })
+      continue
+    }
     if (local.syncState === 'pending' || local.syncState === 'failed') {
-      merged.push(local)
+      if (local.providerRevision && remoteRevision !== local.providerRevision && remoteRevision !== draftContentRevision(local)) {
+        merged.push({ ...local, providerDraftMessageId, providerConflict: { subject: remote.subject, body: remote.body, bodyHtml: remote.bodyHtml, to: remote.to, cc: remote.cc, bcc: remote.bcc, attachments: remote.attachments, updatedAt: remote.updatedAt }, syncState: 'conflict', sendError: 'This draft was also edited in another mail app. Review both versions before sending.', draftWarnings: [...(local.draftWarnings ?? []), 'The account has different draft text. Automatic overwrite is paused.'] })
+      } else merged.push({ ...local, providerDraftMessageId })
       continue
     }
     // `syncState` alone is not enough to protect the user's text. A draft
@@ -3608,13 +3633,15 @@ export function mergeMailDrafts(
     // provider's body then blanks what was just typed, so the provider
     // only wins when its copy is genuinely NEWER.
     if (remote.updatedAt <= local.updatedAt) {
-      merged.push(local)
+      merged.push({ ...local, providerDraftMessageId, providerRevision: local.providerRevision ?? remoteRevision })
       continue
     }
     // Keep the local record's identity and PureMail-side metadata; take the
     // provider's content.
     merged.push({
       ...local,
+      providerDraftMessageId,
+      providerRevision: remoteRevision,
       to: remote.to,
       ...(remote.cc ? { cc: remote.cc } : {}),
       subject: remote.subject,
@@ -3636,7 +3663,7 @@ export function mergeMailDrafts(
 
   for (const remote of providerDrafts) {
     if (!remote.providerDraftId || claimed.has(remote.providerDraftId)) continue
-    merged.push(remote)
+    merged.push({ ...remote, providerRevision: draftContentRevision(remote) })
   }
   return merged
 }
@@ -3646,6 +3673,31 @@ export function mergeMailProviderSyncResult(
   providerStore: MailStore,
   now: DateInput = new Date(),
 ): MailStore {
+  const acceptedReceipts = currentStore.messages.filter(message => message.deliveryAccepted)
+  const confirmedUncertain = currentStore.drafts.filter(draft => draft.sendState === 'uncertain' && draft.sendMessageId && providerStore.messages.some(message => !message.isDraft && message.messageIdHeader === draft.sendMessageId))
+  const consumedDraftIds = new Set([
+    ...acceptedReceipts.flatMap(message => message.sentDraftProviderIds ?? (message.sentDraftProviderId ? [message.sentDraftProviderId] : [])),
+    ...confirmedUncertain.map(draft => draft.providerDraftId),
+  ].filter((id): id is string => Boolean(id)))
+  const staleDrafts = providerStore.drafts.filter(draft => draft.providerDraftId && consumedDraftIds.has(draft.providerDraftId))
+  const staleDraftMessageIds = new Set(staleDrafts.map(draft => draft.providerDraftMessageId).filter(Boolean))
+  const incomingDrafts = providerStore.drafts.filter(draft => !draft.providerDraftId || !consumedDraftIds.has(draft.providerDraftId))
+  const mergedDrafts = mergeMailDrafts(
+    currentStore.drafts.filter(draft => !confirmedUncertain.includes(draft)),
+    incomingDrafts,
+    Boolean(providerStore.syncCoverage?.draftsCovered),
+  )
+  const retainedDraftThreadIds = new Set(mergedDrafts.filter(draft => !draft.sentAt).map(draft => draft.threadId))
+  const incomingMessages = providerStore.messages.filter(message => !message.isDraft || !staleDraftMessageIds.has(message.id)).map(message => {
+    if (message.isDraft) return message
+    const receipt = acceptedReceipts.find(local => local.gmailMessageId && local.gmailMessageId === message.gmailMessageId || local.messageIdHeader && local.messageIdHeader === message.messageIdHeader)
+    const uncertain = confirmedUncertain.find(draft => draft.sendMessageId === message.messageIdHeader)
+    const providerDraftId = receipt?.sentDraftProviderId ?? uncertain?.providerDraftId
+    if (!receipt && !uncertain) return message
+    const providerDraftIds = receipt?.sentDraftProviderIds ?? (providerDraftId ? [providerDraftId] : [])
+    const cleanupPending = staleDrafts.some(draft => draft.providerDraftId && providerDraftIds.includes(draft.providerDraftId))
+    return { ...message, deliveryAccepted: true, sentDraftId: receipt?.sentDraftId ?? uncertain?.id, sentDraftProviderId: providerDraftId, sentDraftProviderIds: providerDraftIds, deliveryWarnings: cleanupPending ? ['The account confirms this message was sent, but its old Drafts copy is still present. Do not resend it.'] : undefined }
+  })
   const mergedSettings = {
     ...providerStore.settings,
     ...currentStore.settings,
@@ -3724,6 +3776,8 @@ export function mergeMailProviderSyncResult(
     if (supersededLocalThreadIds.has(thread.id)) return false
     if (providerThreadIds.has(thread.id)) return false
     if (!providerAccountIds.has(thread.accountId)) return false
+    if (retainedDraftThreadIds.has(thread.id)) return true
+    if (acceptedReceipts.some(message => message.threadId === thread.id && !incomingMessages.some(remote => remote.messageIdHeader && remote.messageIdHeader === message.messageIdHeader || remote.gmailMessageId && remote.gmailMessageId === message.gmailMessageId))) return true
     const mailboxRole = mailboxRolesById.get(thread.mailboxId)
     if (mailboxRole && mailboxRole !== 'inbox') return true
     if (failedFetchThreadIds.has(thread.id)) return true
@@ -3738,12 +3792,15 @@ export function mergeMailProviderSyncResult(
   const carriedThreadIds = new Set(carriedThreads.map(thread => thread.id))
   const messageWindowStart = coverage?.messagesCoveredFrom
     ? Date.parse(coverage.messagesCoveredFrom) : NaN
-  const fetchedMessageIds = new Set(providerStore.messages.map(message => message.id))
+  const fetchedMessageIds = new Set(incomingMessages.map(message => message.id))
+  const fetchedRfcIds = new Set(incomingMessages.filter(message => !message.isDraft).map(message => message.messageIdHeader).filter(Boolean))
   const carriedMessages = currentStore.messages.filter(
     message =>
       !fetchedMessageIds.has(message.id) &&
+      !(message.deliveryAccepted && message.messageIdHeader && fetchedRfcIds.has(message.messageIdHeader)) &&
+      !(message.deliveryAccepted && message.gmailMessageId && providerGmailMessageIds.has(message.gmailMessageId)) &&
       !supersededLocalThreadIds.has(message.threadId) &&
-      (carriedThreadIds.has(message.threadId) ||
+      (message.deliveryAccepted || carriedThreadIds.has(message.threadId) ||
         (providerThreadIds.has(message.threadId) &&
           Number.isFinite(messageWindowStart) &&
           Date.parse(message.receivedAt) < messageWindowStart)),
@@ -3751,13 +3808,9 @@ export function mergeMailProviderSyncResult(
 
   return {
     ...providerStore,
-    threads: [...refreshedThreads, ...carriedThreads],
-    messages: [...providerStore.messages, ...carriedMessages],
-    drafts: mergeMailDrafts(
-      currentStore.drafts,
-      providerStore.drafts,
-      Boolean(providerStore.syncCoverage?.draftsCovered),
-    ),
+    threads: [...refreshedThreads, ...carriedThreads].filter(thread => mailboxRolesById.get(thread.mailboxId) !== 'drafts' || retainedDraftThreadIds.has(thread.id)),
+    messages: [...incomingMessages, ...carriedMessages],
+    drafts: mergedDrafts,
     tasks: currentStore.tasks,
     taskLists: currentStore.taskLists,
     learningRules: currentStore.learningRules,

@@ -1,3 +1,4 @@
+import { InviteDescription } from './InviteDescription'
 import type { InviteActionState } from '../types'
 import {
   Fragment,
@@ -2072,9 +2073,7 @@ export function ThreadReader({
                     {selectedInvite.attendees.length === 1 ? '' : 's'}
                   </InviteCardMeta>
                   {selectedInvite.description && (
-                    <InviteCardWhen style={{ marginTop: 6 }}>
-                      {selectedInvite.description}
-                    </InviteCardWhen>
+                    <InviteDescription description={selectedInvite.description} />
                   )}
                 </div>
                 <InviteStatusPill $tone={inviteTone}>

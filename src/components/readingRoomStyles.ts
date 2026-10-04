@@ -14,6 +14,12 @@ export const PENCIL = '#5d636b'
 export const PENCIL_TINT = '#efeee9'
 
 export const Room = styled.section`
+  &[data-expanded='true'] {
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--platform-z-index-zi-app-modal, 1000) - 1);
+    background: var(--puremail-reader-bg, var(--platform-colors-background, #e5e7e3));
+  }
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -29,9 +35,10 @@ export const RoomBar = styled.header`
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 60px;
+  min-height: 60px;
+  flex-wrap: wrap;
   box-sizing: border-box;
-  padding: 0 24px;
+  padding: 10px 24px;
 `
 
 export const BarButton = styled.button`
@@ -142,7 +149,8 @@ export const RoomColumns = styled.div`
 
 export const Sheet = styled.article`
   position: relative;
-  flex: 0 1 720px;
+  flex: 0 1 820px;
+  width: min(820px, 100%);
   min-width: 0;
   box-sizing: border-box;
   padding: 64px 76px 72px;
@@ -183,13 +191,27 @@ export const Rule = styled.div`
   background: #c9ccd2;
 `
 
-export const Prose = styled.div`
-  font: 400 19px/1.72 ${READING_SERIF};
+export const Prose = styled.div<{ $fontSize: number }>`
+  font: 400 ${({ $fontSize }) => $fontSize}px/1.72 ${READING_SERIF};
   color: #23272f;
   overflow-wrap: break-word;
+  --vs-body-font: ${READING_SERIF};
+  --vs-font-size: ${({ $fontSize }) => $fontSize}px;
+  --vs-line-height: 1.72;
+  && .mail-annotation-document > div,
+  && .mail-annotation-document > div > div {
+    padding: 0; margin: 0; width: 100%; max-width: none; min-width: 0; min-height: 0;
+    border: 0; background: transparent; box-shadow: none; overflow: visible; font: inherit;
+  }
+  && .mail-annotation-document .tiptap,
+  && .mail-annotation-document .tiptap p { font: inherit; color: #23272f; background: transparent; }
+  && .mail-annotation-document .tiptap p { margin: 0 0 1.05em; }
+
+
   p {
     margin: 0 0 1.05em;
-    white-space: pre-line;
+    white-space: normal;
+    &[data-preserve-lines='true'] { white-space: pre-line; }
   }
   a {
     color: ${INK};
@@ -284,7 +306,10 @@ export const Margin = styled.aside`
   position: sticky;
   top: 8px;
   flex: 0 0 340px;
+  width: 340px;
+  min-width: 0;
   max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -313,6 +338,9 @@ export const MarginHead = styled.div`
 `
 
 export const NoteCard = styled.div`
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   display: flex;
   gap: 12px;
   padding: 12px 14px;
@@ -365,8 +393,11 @@ export const NoteCard = styled.div`
     text-align: left;
     cursor: pointer;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
   }
   .text {
     margin: 0;
@@ -428,13 +459,16 @@ export const NoteCard = styled.div`
 `
 
 export const NoteEditor = styled.div`
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
   textarea {
     box-sizing: border-box;
     width: 100%;
-    min-height: 64px;
+    min-height: 96px;
+    max-width: 100%;
     padding: 8px 10px;
     border: 1px solid var(--platform-colors-border);
     border-radius: 8px;
@@ -487,20 +521,20 @@ export const ReplyBox = styled.div`
   margin: 0 0 12px;
   padding: 14px 14px 12px;
   border-radius: 14px;
-  background: var(--puremail-message-bg, #ffffff);
+  background: #ffffff;
   box-shadow: 0 1px 2px rgba(20, 25, 40, 0.06);
   label {
     font: 400 19px/1.2 ${READING_SERIF};
-    color: var(--platform-colors-text);
+    color: #23272f;
   }
   textarea {
     box-sizing: border-box;
     width: 100%;
     min-height: 84px;
     padding: 9px 11px;
-    border: 1px solid var(--platform-colors-border);
+    border: 1px solid #d5d9e0;
     border-radius: 9px;
-    background: var(--platform-colors-surface);
+    background: #ffffff;
     color: ${INK};
     resize: vertical;
     font: italic 400 16.5px/1.5 ${READING_SERIF};
@@ -513,7 +547,7 @@ export const ReplyBox = styled.div`
     margin: 0;
     font-size: 12.5px;
     line-height: 1.45;
-    color: var(--platform-colors-text-tertiary);
+    color: #6e7480;
   }
   .row {
     display: flex;

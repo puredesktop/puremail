@@ -108,7 +108,7 @@ export function articleOf(source: string): Article {
     const soft = softBreaks(raw.map(run => run.text).join(''))
     let at = 0
     const runs = raw.map(run => {
-      const text = [...run.text].map((char, index) => (char === '\n' && soft.has(at + index) ? ' ' : char)).join('')
+      const text = run.text.replace(/\n/g, (char, index: number) => soft.has(at + index) ? ' ' : char)
       at += run.text.length
       return { ...run, text }
     })
@@ -136,7 +136,7 @@ export function softBreaks(paragraph: string): Set<number> {
   const breaks = new Set<number>()
   const lines = paragraph.split('\n')
   if (lines.length < 2) return breaks
-  const longest = Math.max(...lines.map(line => line.trimEnd().length))
+  const longest = lines.reduce((max, line) => Math.max(max, line.trimEnd().length), 0)
   if (longest < 50) return breaks
   let offset = 0
   for (let index = 0; index < lines.length - 1; index += 1) {

@@ -382,6 +382,8 @@ export function threadStatusLabel(
   drafts: Draft[],
 ): string | null {
   const threadDrafts = drafts.filter(draft => draft.threadId === thread.id)
+  if (threadDrafts.some(draft => draft.sendState === 'uncertain' && !draft.sentAt)) return 'check Sent'
+  if (threadDrafts.some(draft => draft.sendError && !draft.sentAt)) return 'not sent'
   if (threadDrafts.some(isGeneratedDraft)) return 'draft ready'
   const manualDrafts = threadDrafts.filter(draft => !isGeneratedDraft(draft))
   if (manualDrafts.some(draft => !draft.sentAt)) return 'reply open'
@@ -401,6 +403,7 @@ export function threadStatusTone(
   drafts: Draft[],
 ): 'reply' | 'draft' | 'waiting' | 'overdue' | 'replied' | 'label' {
   const threadDrafts = drafts.filter(draft => draft.threadId === thread.id)
+  if (threadDrafts.some(draft => draft.sendError && !draft.sentAt)) return 'overdue'
   if (threadDrafts.some(isGeneratedDraft)) return 'draft'
   if (threadDrafts.some(draft => !isGeneratedDraft(draft))) return 'reply'
   const reply = replyStateChip(replyStateInStore(store, thread))
@@ -451,4 +454,9 @@ export function mailSystemNotice(notice: string): string {
   const relevant = /permission|bridge|handoff|calendar/i.test(notice)
   const failed = /missing|denied|failed|could not|cannot|not allowed|unavailable|error/i.test(notice)
   return relevant && failed ? notice : ''
+}
+
+/** Drafts is a virtual view: replies can still belong to an Inbox conversation. */
+export function openingThreadShouldOpenDraft(hasMessages: boolean, threadRole: string | undefined, viewRole: string | undefined): boolean {
+  return !hasMessages || threadRole === 'drafts' || viewRole === 'drafts'
 }

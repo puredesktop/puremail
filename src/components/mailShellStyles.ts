@@ -283,12 +283,12 @@ export const TaskDrawerAdd = styled.button`
  * rendered, so a fetch could fail in complete silence.
  */
 export const MailToast = styled.div`
-  position: absolute;
+  position: fixed;
   bottom: 14px;
   left: 50%;
-  z-index: 40;
+  z-index: calc(var(--platform-z-index-zi-app-modal, 1000) + 1);
   display: flex;
-  max-width: calc(100% - 32px);
+  max-width: min(560px, calc(100% - 32px));
   align-items: center;
   gap: 12px;
   border: 1px solid var(--puremail-line);
@@ -299,10 +299,14 @@ export const MailToast = styled.div`
   font-size: var(--pure-chrome-ui-size);
   padding: 8px 12px;
   transform: translateX(-50%);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 `
 
 export const MailToastAction = styled.button`
+  flex: none;
+  white-space: nowrap;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -3946,6 +3950,8 @@ export const MailTopBar = styled.header`
   background: var(--puremail-pane-header-bg);
   padding: 0 16px;
   white-space: nowrap;
+
+  @media (max-width: 640px) { gap: 8px; padding: 0 10px; }
 
   > * {
     flex: none;

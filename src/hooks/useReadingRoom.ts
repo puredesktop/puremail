@@ -55,7 +55,7 @@ export function useReadingRoom(): ReadingRoomStore {
     }
   }, [])
 
-  const change = useCallback(async (messageId: string, fn: (file: AnnotationsFile) => AnnotationsFile) => {
+  const change = useCallback(async (messageId: string, fn: (file: AnnotationsFile) => AnnotationsFile, propagateFailure = false) => {
     const previousFile = fileRef.current.byMessageId[messageId]?.context?.file
     // Shown at once; the locked write re-applies the same change to what is on disk.
     setFile(current => fn(current))
@@ -91,6 +91,7 @@ export function useReadingRoom(): ReadingRoomStore {
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      if (propagateFailure) throw cause
     }
   }, [])
 
@@ -103,7 +104,7 @@ export function useReadingRoom(): ReadingRoomStore {
     removeNote: (messageId, noteId) => change(messageId, current => removeNote(current, messageId, noteId, now())),
     keepContext: (identity, context) => change(identity.messageId, current => setContext(current, identity, context, now())),
     markReplyRequested: messageId => change(messageId, current => markReplyRequested(current, messageId, now())),
-    setReplyIntent: (identity, text) => change(identity.messageId, current => setReplyIntent(current, identity, text, now())),
+    setReplyIntent: (identity, text) => change(identity.messageId, current => setReplyIntent(current, identity, text, now()), true),
     recordContextUse: async (messageIds, by) => {
       const at = now()
       const used = (current: AnnotationsFile) => {

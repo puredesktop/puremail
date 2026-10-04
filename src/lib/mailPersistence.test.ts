@@ -12,11 +12,13 @@ import type { Draft, MailStore } from '../types'
 
 const files = new Map<string, unknown>()
 const failing = new Set<string>()
+const unreadable = new Set<string>()
 
 vi.mock('../bridge/platformBridge', () => ({
-  readPlatformStorageJson: async ({ fileName }: { fileName: string }) => ({
-    value: files.has(fileName) ? files.get(fileName) : null,
-  }),
+  readPlatformStorageJson: async ({ fileName }: { fileName: string }) => {
+    if (unreadable.has(fileName)) throw new Error(`Cannot read ${fileName}`)
+    return { value: files.has(fileName) ? files.get(fileName) : null }
+  },
   writePlatformStorageJson: async ({
     fileName,
     value,
@@ -77,6 +79,7 @@ describe('mail persistence', () => {
   beforeEach(() => {
     files.clear()
     failing.clear()
+    unreadable.clear()
     window.localStorage.clear()
   })
 
@@ -89,6 +92,8 @@ describe('mail persistence', () => {
       drafts: [draft('d1', 'Approved, shipping Friday.')],
       // Send runs travel with the drafts they point at.
       runs: [],
+      sentReceipts: [],
+      recovery: { accounts: storeWith([]).accounts, mailboxes: storeWith([]).mailboxes, threads: storeWith([]).threads },
     })
     // The cache file must not carry a second copy: two copies can disagree.
     expect((files.get(MAIL_STORE_FILE) as MailStore).drafts).toEqual([])
@@ -140,10 +145,75 @@ describe('mail persistence', () => {
   it('reads drafts back even when the mailbox cache file is missing', async () => {
     files.set(MAIL_DRAFTS_FILE, { drafts: [draft('d1', 'Still here.')] })
     const { store } = await readPersistedMailStore()
-    // No cache file means no store to hydrate, but the drafts file survived
-    // and must not be silently discarded by the next successful write.
-    expect(store).toBeNull()
+    // The drafts file is recoverable even without a mailbox cache.
+    expect(store?.drafts[0].body).toBe('Still here.')
     expect(files.get(MAIL_DRAFTS_FILE)).toBeTruthy()
+  })
+
+  it('recovers drafts and send receipts when reading the mailbox cache rejects', async () => {
+    const current = storeWith([draft('d1', 'Irreplaceable writing')])
+    current.messages = [{ id: 'sent-confirmation', threadId: 'thread_1',
+      subject: 'Sent once', body: 'Hello', receivedAt: '2026-10-03T00:00:00Z', read: true,
+      from: { name: 'Me', email: 'me@example.test' }, to: [], attachments: [],
+      deliveryAccepted: true, sentDraftId: 'already-sent' }]
+    await writePersistedMailStore(current)
+    unreadable.add(MAIL_STORE_FILE)
+    const { store } = await readPersistedMailStore()
+    expect(store?.drafts[0].body).toBe('Irreplaceable writing')
+    expect(store?.messages[0]).toMatchObject({ deliveryAccepted: true, sentDraftId: 'already-sent' })
+    expect(store?.threads).toHaveLength(1)
+  })
+
+  it('refuses to start an empty writable mailbox when the drafts file cannot be read', async () => {
+    await writePersistedMailStore(storeWith([draft('d1', 'Keep this writing')]))
+    unreadable.add(MAIL_DRAFTS_FILE)
+    await expect(readPersistedMailStore()).rejects.toThrow('drafts')
+    expect((files.get(MAIL_DRAFTS_FILE) as { drafts: Draft[] }).drafts[0].body).toBe('Keep this writing')
+  })
+
+  it.each([{}, { drafts: 'invalid' }, { drafts: [draft('good', 'Keep me'), { body: 'Damaged entry' }] }])('refuses a malformed authoritative drafts file: %j', async value => {
+    files.set(MAIL_STORE_FILE, storeWith([]))
+    files.set(MAIL_DRAFTS_FILE, value)
+    await expect(readPersistedMailStore()).rejects.toThrow('drafts')
+    expect(files.get(MAIL_DRAFTS_FILE)).toEqual(value)
+  })
+
+  it('recovers accepted send receipts even when the mailbox cache cannot be written', async () => {
+    const current = storeWith([])
+    current.messages = [{ id: 'accepted', threadId: current.threads[0].id,
+      subject: 'Sent once', body: 'Hello', receivedAt: '2026-10-02T22:00:00Z', read: true,
+      from: { name: 'Me', email: 'me@example.com' }, to: [], attachments: [],
+      deliveryAccepted: true, sentDraftId: 'already-sent', messageIdHeader: '<stable@example.com>' }]
+    failing.add(MAIL_STORE_FILE)
+    await writePersistedMailStore(current)
+    const { store } = await readPersistedMailStore()
+    expect(store?.messages[0]).toMatchObject({ deliveryAccepted: true, sentDraftId: 'already-sent', messageIdHeader: '<stable@example.com>' })
+    expect(store?.threads).toHaveLength(1)
+  })
+
+  it('recovers a new draft conversation when the older cache survives a failed write', async () => {
+    await writePersistedMailStore(storeWith([]))
+    const newer = storeWith([{ ...draft('new', 'New writing'), threadId: 'new-thread' }])
+    newer.threads = [{ ...newer.threads[0], id: 'new-thread', subject: 'New conversation' }]
+    failing.add(MAIL_STORE_FILE)
+    await writePersistedMailStore(newer)
+    const { store } = await readPersistedMailStore()
+    expect(store?.drafts[0].threadId).toBe('new-thread')
+    expect(store?.threads.find(thread => thread.id === 'new-thread')?.subject).toBe('New conversation')
+    expect(store?.threads.map(thread => thread.id)).toContain('thread_1')
+    expect(store?.accounts).toHaveLength(1)
+  })
+
+  it('repairs historical attachment-preparation errors without clearing genuine send uncertainty', async () => {
+    files.set(MAIL_STORE_FILE, storeWith([]))
+    files.set(MAIL_DRAFTS_FILE, { drafts: [
+      { ...draft('attachment', 'Keep body'), sendState: 'uncertain', sendError: "Error invoking remote method 'shell:mailTransport:fetchAttachment': No message with uid 442 in Drafts" },
+      { ...draft('smtp', 'Keep body'), sendState: 'uncertain', sendError: 'SMTP socket timed out after submission' },
+    ] })
+    const { store } = await readPersistedMailStore()
+    expect(store?.drafts[0]).toMatchObject({ sendState: 'failed' })
+    expect(store?.drafts[0].sendError).toContain('reattach the missing file')
+    expect(store?.drafts[1]).toMatchObject({ sendState: 'uncertain' })
   })
 
   it('round-trips a store through write and read', async () => {
@@ -179,5 +249,23 @@ describe('mail persistence', () => {
     files.set(MAIL_DRAFTS_FILE, { drafts: [draft('fresh', 'The real one.')] })
     const { store } = await readPersistedMailStore()
     expect(store?.drafts.map(item => item.id)).toEqual(['fresh'])
+  })
+
+  it('merges receipts by local, Gmail, and RFC ids without conflating anonymous messages', async () => {
+    const base = { threadId: 'thread_1', subject: 'Sent', body: 'Hello', receivedAt: '2026-10-03T00:00:00Z', read: true, from: { name: 'Me', email: 'me@example.test' }, to: [], attachments: [] }
+    const receipts = [
+      { ...base, id: 'same-id', deliveryAccepted: true },
+      { ...base, id: 'gmail-receipt', gmailMessageId: 'gmail-1', deliveryAccepted: true },
+      { ...base, id: 'rfc-receipt', messageIdHeader: '<mail@example.test>', deliveryAccepted: true },
+    ]
+    files.set(MAIL_STORE_FILE, { ...storeWith([]), messages: [
+      { ...base, id: 'same-id' },
+      { ...base, id: 'gmail-cache', gmailMessageId: 'gmail-1' },
+      { ...base, id: 'rfc-cache', messageIdHeader: '<mail@example.test>' },
+      { ...base, id: 'unrelated' },
+    ] })
+    files.set(MAIL_DRAFTS_FILE, { drafts: [], sentReceipts: receipts })
+    const { store } = await readPersistedMailStore()
+    expect(store?.messages.map(message => message.id)).toEqual(['unrelated', 'same-id', 'gmail-receipt', 'rfc-receipt'])
   })
 })
