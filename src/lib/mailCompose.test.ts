@@ -193,9 +193,9 @@ describe('compose html helpers', () => {
     )
   })
 
-  it('wraps lines into paragraphs with empty lines preserved', () => {
+  it('seeds explicit line breaks instead of adding paragraph breaks', () => {
     expect(plainTextToComposeHtml('Hi\n\nBest,\nUser')).toBe(
-      '<p>Hi</p><p><br></p><p>Best,</p><p>User</p>',
+      '<div>Hi<br><br>Best,<br>User</div>',
     )
   })
 })
