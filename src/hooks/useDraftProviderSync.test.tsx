@@ -269,7 +269,7 @@ describe('draft provider sync', () => {
   })
 
   it('stops after three failed saves and retains the local draft', async () => {
-    const createDraft = vi.fn(async () => {
+    const createDraft = vi.fn(async (): Promise<string> => {
       throw new Error('offline')
     })
     const harness = mountHook({
@@ -283,7 +283,13 @@ describe('draft provider sync', () => {
     }
     expect(createDraft).toHaveBeenCalledTimes(3)
     expect(harness.storeNow().drafts[0].syncState).toBe('failed')
+    expect(harness.storeNow().drafts[0].providerSaveError).toBe('offline')
     expect(harness.storeNow().drafts[0].body).toBe('Worth saving.')
+    createDraft.mockResolvedValue('saved-id')
+    harness.edit({ syncState: 'pending' })
+    await act(async () => { vi.advanceTimersByTime(1500) })
+    expect(harness.storeNow().drafts[0].syncState).toBe('synced')
+    expect(harness.storeNow().drafts[0].providerSaveError).toBeUndefined()
     harness.unmount()
   })
 

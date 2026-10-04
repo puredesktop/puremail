@@ -43,6 +43,7 @@ function sameRevision(left: Draft, right: Draft): boolean {
     providerRevision: _revision,
     providerConflict: _conflict,
     providerSaveWarning: _saveWarning,
+    providerSaveError: _saveError,
     providerSaveUncertain: _saveUncertain,
     staleProviderDraftIds: _staleIds,
     sendState: _sendState,
@@ -222,6 +223,7 @@ export function useDraftProviderSync(input: {
               return {
                 ...item,
                 ...patch,
+                providerSaveError: undefined,
                 attachments: item.attachments.map(attachment => patch.attachments?.find(saved => saved.id === attachment.id) ?? attachment),
                 providerRevision: draftContentRevision(current),
                 syncState: sameRevision(item, current) ? 'synced' : 'pending',
@@ -260,7 +262,7 @@ export function useDraftProviderSync(input: {
                 item.id === current.id &&
                 !item.sentAt &&
                 (uncertainSave || sameRevision(item, current))
-                  ? { ...item, syncState: item.providerConflict || item.syncState === 'conflict' ? 'conflict' as const : 'failed' as const, providerSaveUncertain: uncertainSave, providerSaveWarning: uncertainSave ? reason : undefined }
+                  ? { ...item, syncState: item.providerConflict || item.syncState === 'conflict' ? 'conflict' as const : 'failed' as const, providerSaveUncertain: uncertainSave, providerSaveWarning: uncertainSave ? reason : undefined, providerSaveError: uncertainSave ? undefined : reason }
                   : item,
               ),
             }))

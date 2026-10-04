@@ -279,6 +279,8 @@ export interface Draft {
   staleProviderDraftIds?: string[]
   providerSaveUncertain?: boolean
   providerSaveWarning?: string
+  /** Definite account-save failure, retained until a save succeeds. */
+  providerSaveError?: string
   providerRevision?: string
   sendMessageId?: string
   sendState?: 'failed' | 'uncertain'

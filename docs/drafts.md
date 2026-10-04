@@ -33,6 +33,9 @@ at all.
 One rule, one place: `hooks/useDraftProviderSync.ts` watches the store and
 pushes any draft that has changed and then stopped changing —
 `createDraft` when there is no `providerDraftId`, `updateDraft` when there is.
+Definite save failures retain `providerSaveError` in the drafts file so Mail
+recovery can explain them after the toast or a restart. A successful account
+save clears it. It does not impose the retry lock used for uncertain saves.
 Never add a `createDraft` call at a call site; two writers race and leave two
 provider drafts for one local one.
 
