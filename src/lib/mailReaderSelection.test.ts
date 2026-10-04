@@ -155,3 +155,51 @@ it('prunes an empty composed thread left behind by an older sync', () => {
     mergeMailProviderSyncResult(local, remote).threads.map(thread => thread.id),
   ).toEqual(['imap_thread_real'])
 })
+
+it('follows a confirmed imported IMAP draft onto its new server conversation', () => {
+  const { local, remote } = fixture()
+  const importedId = 'imap_thread_original_draft_rfc'
+  local.threads[0].id = importedId
+  local.messages[0].threadId = importedId
+  const merged = mergeMailProviderSyncResult(local, remote)
+  expect(merged.threads.map(thread => thread.id)).toEqual(['imap_thread_real'])
+  expect(merged.messages).toHaveLength(1)
+  expect(replacementMailThread(local, merged, importedId, 'a')).toBe('imap_thread_real')
+})
+
+it('removes an empty synced Sent shell persisted by an older imported-draft send', () => {
+  const { local, remote } = fixture()
+  local.threads[0].id = 'imap_thread_original_draft_rfc'
+  local.messages = []
+  expect(mergeMailProviderSyncResult(local, remote).threads.map(thread => thread.id)).toEqual(['imap_thread_real'])
+})
+
+it('preserves an imported conversation with a newer unsent reply', () => {
+  const { local, remote } = fixture()
+  const importedId = 'imap_thread_original_draft_rfc'
+  local.threads[0].id = importedId
+  local.messages[0].threadId = importedId
+  local.drafts = [{ id: 'newer', threadId: importedId, to: [], subject: 'Next', body: 'Unsent', attachments: [], updatedAt: local.threads[0].lastMessageAt, syncState: 'pending' }]
+  expect(mergeMailProviderSyncResult(local, remote).threads.map(thread => thread.id)).toContain(importedId)
+})
+
+it('preserves original conversation history when only its sent reply moves', () => {
+  const { local, remote } = fixture()
+  const importedId = 'imap_thread_original_draft_rfc'
+  local.threads[0].id = importedId
+  local.messages[0].threadId = importedId
+  local.messages.push({ ...local.messages[0], id: 'source', messageIdHeader: '<source@example.test>', deliveryAccepted: undefined, body: 'Original message' })
+  const merged = mergeMailProviderSyncResult(local, remote)
+  expect(merged.threads.map(thread => thread.id)).toContain(importedId)
+  expect(merged.messages.some(message => message.id === 'source')).toBe(true)
+})
+
+it.each(['pending', 'failed-fetch'] as const)('keeps an empty Sent placeholder with %s work', state => {
+  const { local, remote } = fixture()
+  const importedId = 'imap_thread_original_draft_rfc'
+  local.threads[0].id = importedId
+  local.messages = []
+  if (state === 'pending') local.threads[0].syncState = 'pending'
+  else remote.syncCoverage = { failedThreadIds: [importedId] }
+  expect(mergeMailProviderSyncResult(local, remote).threads.map(thread => thread.id)).toContain(importedId)
+})
