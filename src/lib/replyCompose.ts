@@ -19,6 +19,7 @@ import type {
 } from '../types'
 import { escapeComposeHtml } from './mailCompose'
 import { cleanMailMessageText } from './mailTextUtils'
+import { retainHydratedAttachments } from './composeAttachments'
 
 export type ReplyComposeKind = 'reply' | 'replyAll' | 'forward'
 
@@ -334,7 +335,7 @@ export function upsertReplyDraft(
       subject,
       body: input.body,
       ...(input.bodyHtml ? { bodyHtml: input.bodyHtml } : {}),
-      attachments: input.attachments,
+      attachments: retainHydratedAttachments(input.attachments, existing.attachments),
       updatedAt: now,
       syncState: 'pending',
     }
