@@ -56,6 +56,7 @@ import {
   failQaDraftRequest,
   readerMailBody,
   recoverMailDraftSync,
+  resolveMailDraftConflict,
   recoverMailTaskSync,
   recoverMailThreadSync,
   resolveMailTaskSourceTarget,
@@ -3207,6 +3208,43 @@ describe('local compose threads after a send', () => {
   })
 })
 
+describe('obsolete cached Draft copies', () => {
+  function stores() {
+    const base = demoMailStore()
+    const thread = { ...base.threads[0], id: 'imap_thread_old_draft', mailboxId: 'sent' }
+    const cached = { ...base.messages[0], id: 'imap_msg_Drafts_103', threadId: thread.id, isDraft: true }
+    const sent = { ...cached, id: 'imap_msg_Sent_46', threadId: 'imap_thread_sent', isDraft: false, deliveryAccepted: true, body: 'Latest sent text' }
+    const current: MailStore = { ...base, threads: [thread], messages: [cached], drafts: [], mailboxes: [...base.mailboxes, { id: 'sent', accountId: thread.accountId, name: 'Sent', role: 'sent', unreadCount: 0 }] }
+    const remote: MailStore = { ...current, threads: [{ ...thread, id: sent.threadId }], messages: [sent], syncCoverage: { draftsCovered: true } }
+    return { current, remote, cached, thread }
+  }
+
+  it('removes a consumed replacement Draft cache and its empty Sent conversation after restart', () => {
+    const { current, remote, cached, thread } = stores()
+    const restored = parsePersistedMailStore(JSON.stringify(current))!
+    const merged = mergeMailProviderSyncResult(restored, remote)
+    expect(merged.messages.map(message => message.id)).not.toContain(cached.id)
+    expect(merged.threads.map(item => item.id)).not.toContain(thread.id)
+    expect(merged.messages.map(message => message.body)).toEqual(['Latest sent text'])
+  })
+
+  it('preserves cached Draft copies when listing is incomplete', () => {
+    const { current, remote, cached } = stores()
+    expect(mergeMailProviderSyncResult(current, { ...remote, syncCoverage: { draftsCovered: false } }).messages.map(message => message.id)).toContain(cached.id)
+  })
+
+  it('keeps a newer unsent reply and the live provider Draft copy on the same conversation', () => {
+    const { current, remote, cached, thread } = stores()
+    const draft = { id: 'new_reply', threadId: thread.id, providerDraftId: 'imap_draft_106', providerDraftMessageId: 'imap_msg_Drafts_106', to: cached.to, subject: cached.subject, body: 'Newer unsent reply', attachments: [], updatedAt: cached.receivedAt, syncState: 'synced' as const }
+    const fresh = { ...cached, id: draft.providerDraftMessageId, body: draft.body }
+    const merged = mergeMailProviderSyncResult({ ...current, drafts: [draft] }, { ...remote, drafts: [draft], threads: [...remote.threads, thread], messages: [...remote.messages, fresh] })
+    expect(merged.drafts).toHaveLength(1)
+    expect(merged.threads.map(item => item.id)).toContain(thread.id)
+    expect(merged.messages.map(message => message.id)).toContain(fresh.id)
+    expect(merged.messages.map(message => message.id)).not.toContain(cached.id)
+  })
+})
+
 describe('widening a reply draft to reply-all', () => {
   const message = {
     id: 'm1',
@@ -3329,6 +3367,66 @@ describe('merging provider drafts', () => {
     updatedAt: '2026-08-18T12:00:00.000Z',
     syncState: 'synced' as const,
     ...patch,
+  })
+
+  it('correlates a uniquely identified IMAP replacement without relying on its Date', () => {
+    const merged = mergeMailDrafts(
+      [local({ providerDraftId: 'imap_draft_1', providerDraftMessageIdHeader: '<draft@example.test>', bodyHtml: '<p>Old text</p>', cc: [{ name: 'Old', email: 'old@example.test' }] })],
+      [remote({ providerDraftId: 'imap_draft_2', providerDraftMessageIdHeader: '<draft@example.test>', updatedAt: '2026-08-18T10:00:00.000Z' })],
+      true, () => 'account-a',
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: 'draft_local', providerDraftId: 'imap_draft_2', body: 'Text from the other device.' })
+    expect(merged[0].bodyHtml).toBeUndefined()
+    expect(merged[0].cc).toEqual([])
+  })
+
+  it('keeps both versions of competing IMAP replacement edits in one conflicted draft', () => {
+    const baseline = JSON.stringify({ subject: 'Re: Launch copy', body: 'Baseline.', to: [], cc: [], bcc: [], attachments: [] })
+    const merged = mergeMailDrafts(
+      [local({ providerDraftId: 'imap_draft_1', providerDraftMessageIdHeader: '<draft@example.test>', providerRevision: baseline, syncState: 'pending' })],
+      [remote({ providerDraftId: 'imap_draft_2', providerDraftMessageIdHeader: '<draft@example.test>' })],
+      true, () => 'account-a',
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ providerDraftId: 'imap_draft_2', syncState: 'conflict', body: 'Local text.', providerConflict: { body: 'Text from the other device.' } })
+  })
+
+  it('never correlates ambiguous or cross-account IMAP Message-IDs', () => {
+    const original = local({ providerDraftId: 'imap_draft_1', providerDraftMessageIdHeader: '<draft@example.test>', syncState: 'pending' })
+    const other = remote({ providerDraftId: 'imap_draft_2', providerDraftMessageIdHeader: '<draft@example.test>' })
+    const ambiguous = mergeMailDrafts([original], [other, { ...other, id: 'duplicate', providerDraftId: 'imap_draft_3' }], true, () => 'account-a')
+    expect(ambiguous).toHaveLength(3)
+    expect(ambiguous[0]).toMatchObject({ providerDraftId: 'imap_draft_1', body: 'Local text.', providerSaveUncertain: true })
+    const separate = mergeMailDrafts([original], [other], true, item => item.id === original.id ? 'account-a' : 'account-b')
+    expect(separate).toHaveLength(2)
+    expect(separate[0].providerDraftId).toBe('imap_draft_1')
+    const incomplete = mergeMailDrafts([original], [other], false, () => 'account-a')
+    expect(incomplete).toHaveLength(2)
+    expect(incomplete[0]).toEqual(original)
+    const duplicatedLocal = mergeMailDrafts([original, { ...original, id: 'local-duplicate' }], [other], true, () => 'account-a')
+    expect(duplicatedLocal).toHaveLength(3)
+    expect(duplicatedLocal.slice(0, 2).every(item => item.providerDraftId === 'imap_draft_1')).toBe(true)
+    const alreadyOwned = mergeMailDrafts([original, local({ id: 'older-local', providerDraftId: other.providerDraftId })], [other], true, () => 'account-a')
+    expect(alreadyOwned).toHaveLength(2)
+    expect(alreadyOwned[0].providerDraftId).toBe('imap_draft_1')
+  })
+
+  it('takes the complete account version after a conflict is restored from JSON', () => {
+    const conflicted = JSON.parse(JSON.stringify(local({ syncState: 'conflict', bodyHtml: '<p>Old local HTML</p>', cc: [{ name: 'Old', email: 'old@example.test' }], bcc: [{ name: 'Hidden', email: 'hidden@example.test' }], providerSaveError: 'Old attachment missing', providerConflict: { subject: 'Account subject', body: 'Account plain text', to: [], attachments: [], updatedAt: '2026-08-19T10:00:00Z' } })))
+    const store = { ...emptyMailStore(), drafts: [conflicted] }
+    const chosen = resolveMailDraftConflict(store, conflicted.id, true).drafts[0]
+    expect(chosen).toMatchObject({ body: 'Account plain text', cc: [], bcc: [], syncState: 'synced' })
+    expect(chosen.bodyHtml).toBeUndefined()
+    expect(chosen.providerConflict).toBeUndefined()
+    expect(chosen.providerSaveError).toBeUndefined()
+  })
+
+  it('keeps local content when resolving a conflict without clearing uncertain delivery', () => {
+    const conflicted = local({ syncState: 'conflict', sendState: 'uncertain', sendError: 'Check Sent first', providerConflict: remote() })
+    const chosen = resolveMailDraftConflict({ ...emptyMailStore(), drafts: [conflicted] }, conflicted.id, false).drafts[0]
+    expect(chosen).toMatchObject({ body: 'Local text.', syncState: 'pending', sendState: 'uncertain', sendError: 'Check Sent first' })
+    expect(chosen.providerConflict).toBeUndefined()
   })
 
   it('never lets the provider re-key a reply draft off its thread', () => {

@@ -282,6 +282,8 @@ export interface Draft {
   /** Definite account-save failure, retained until a save succeeds. */
   providerSaveError?: string
   providerRevision?: string
+  /** Stable IMAP draft Message-ID across APPEND/delete replacements. */
+  providerDraftMessageIdHeader?: string
   sendMessageId?: string
   sendState?: 'failed' | 'uncertain'
   sendError?: string

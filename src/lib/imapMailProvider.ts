@@ -1,4 +1,4 @@
-import { MailDraftSaveUncertain } from './mailDeliveryStatus'
+import { imapDraftMessageId, MailDraftSaveUncertain } from './mailDeliveryStatus'
 import { MailSendError } from './mailDelivery'
 import { bridge } from '@purescience/platform-ui/bridge/client'
 import { PLATFORM_BRIDGE_METHODS } from '@purescience/platform-ui/bridge/methods'
@@ -604,7 +604,9 @@ export class ImapMailProvider implements MailProvider {
         const handle = `uid_${folder.path}_${envelope.uid}`
         const messageId = normalizeMessageId(envelope.messageId)
         const alreadyHave = messageId ? seenMessageIds.get(messageId) : undefined
-        if (alreadyHave) {
+        // Separate Drafts UIDs can contain competing versions with the same
+        // Message-ID. Keep every copy so replacement matching sees ambiguity.
+        if (alreadyHave && folder.role !== 'drafts') {
           // The same message, mirrored into another folder. One message,
           // several locations — not two messages, which is what put a sent
           // note and its reply in two different threads.
@@ -731,6 +733,7 @@ export class ImapMailProvider implements MailProvider {
             ...(envelope.bodyHtml ? { bodyHtml: envelope.bodyHtml } : {}),
             providerDraftId: `imap_draft_${envelope.uid}`,
             providerDraftMessageId: messageId,
+            ...(envelope.messageId ? { providerDraftMessageIdHeader: envelope.messageId } : {}),
             attachments,
             updatedAt: envelope.date,
             syncState: 'synced',
@@ -1017,7 +1020,7 @@ export class ImapMailProvider implements MailProvider {
     return buildMimeMessage({
       headerLines: [
         `Date: ${new Date().toUTCString()}`,
-        ...(messageId ? [`Message-ID: ${messageId}`] : []),
+        `Message-ID: ${messageId ?? imapDraftMessageId(draft)}`,
         ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${references.join(' ')}`] : []),
         `From: ${this.options.email}`,
         `To: ${format(draft.to)}`,

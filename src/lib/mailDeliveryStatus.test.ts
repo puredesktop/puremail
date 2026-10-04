@@ -1,4 +1,4 @@
-import { mailConnectionsVerified, mailErrorToastText } from './mailDeliveryStatus'
+import { imapDraftMessageId, mailConnectionsVerified, mailErrorToastText } from './mailDeliveryStatus'
 import { expect, it } from 'vitest'
 import { emptyMailStore, createComposedMessageDraft, mergeMailDrafts, persistableMailStore, sendDraft } from './mailModel'
 import { markDraftSendFailed } from './mailDeliveryStatus'
@@ -47,4 +47,10 @@ it('only marks connections healthy when both directions are verified', () => {
 it('keeps raw transport identifiers out of error toasts', () => {
   expect(mailErrorToastText("Error invoking remote method 'shell:mailTransport:fetchAttachment': No message with uid 442 in Drafts")).toBe('An attachment is unavailable. Open the draft and reattach the missing file.')
   expect(mailErrorToastText('SMTP connection test timed out after 35 seconds.')).toContain('Mail connection timed out')
+})
+
+it('never lets a malformed stored draft Message-ID inject MIME headers', () => {
+  const safe = imapDraftMessageId({ id: 'draft\r\nunsafe', providerDraftMessageIdHeader: '<evil@example.test>\r\nBcc: other@example.test' })
+  expect(safe).toBe('<puremail-draft-draft%0D%0Aunsafe@puremail.local>')
+  expect(safe).not.toMatch(/[\r\n]/)
 })

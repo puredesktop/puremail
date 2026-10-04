@@ -52,6 +52,17 @@ unsent work can be older than that window. Only an exhausted folder listing
 reports complete draft coverage; the paging safety limit, a repeated page, or
 a missing Drafts folder cannot prove an absent draft was sent or deleted.
 
+IMAP account drafts carry a stable draft Message-ID across APPEND/delete
+replacements. A changed UID is correlated only when a complete listing shows
+one matching Message-ID in the same account and one local candidate. Ambiguous
+copies remain separate. Competing edits preserve both versions in Mail recovery;
+choosing the account version replaces its complete content, including absent
+HTML, Cc and Bcc fields after restart. SMTP submission receives a separate
+Message-ID so a stored draft never counts as delivery confirmation.
+Complete Drafts coverage also removes obsolete cached Draft message bodies and
+their empty conversations, including conversations moved to Sent locally.
+Incomplete listings retain those copies; live newer replies remain editable.
+
 Discarding removes the draft at the provider too, and that is
 `useDraftProviderSync`'s job rather than the shell's — because only the thing
 holding the in-flight `createDraft` promise can delete a draft discarded
