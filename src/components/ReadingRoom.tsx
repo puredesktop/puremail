@@ -1,3 +1,4 @@
+import { MailTimezonePanel } from './MailTimezonePanel'
 import { MailAnnotationDocument } from './MailAnnotationDocument'
 import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -84,6 +85,7 @@ export function ReadingRoom({
   const [editingGeneral,setEditingGeneral] = useState<string|null>(null)
   const [showPrivate, setShowPrivate] = useState(true)
   const [keeping, setKeeping] = useState(false)
+  const [timesOpen, setTimesOpen] = useState(false)
   const notes = record ? orderedNotes(record, article.text) : []
   const counts = noteCounts(record)
   const [replyText, setReplyText] = useState(record?.replyIntent ?? '')
@@ -195,6 +197,7 @@ export function ReadingRoom({
         <BarButton type="button" aria-pressed={noteKind==='private'} onClick={()=>setNoteKind(value=>value==='reply'?'private':'reply')} title="Choose whether new annotations guide the reply or stay private">
           {noteKind==='private'?'New notes: private':'New notes: for the reply'}
         </BarButton>
+        <BarButton type="button" aria-pressed={timesOpen} onClick={() => setTimesOpen(value => !value)}>Convert times</BarButton>
         <span style={{ flex: 1 }} />
         <BarButton type="button" onClick={() => {
           setGeneralOpen(true)
@@ -237,6 +240,7 @@ export function ReadingRoom({
               {identity.from.name ? ` · ${identity.from.email}` : ''}
             </Dateline>
             <Rule />
+            {timesOpen ? <MailTimezonePanel key={identity.messageId} source={source} receivedAt={identity.receivedAt} onClose={() => setTimesOpen(false)}/> : null}
             <ReplyBox>
               <label htmlFor="reading-room-intent">Your reply</label>
               <textarea id="reading-room-intent" rows={3} value={replyText}

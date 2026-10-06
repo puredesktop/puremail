@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "chrono-node": "^2.10.2",
     "@purescience/platform-ui": "file:../../packages/ui",
     "ical.js": "^2.2.1",
     "react": "^19.1.0",
