@@ -25,4 +25,26 @@ describe('saving connection passwords', () => {
     await expect(saveConnectionPasswords('example', 'incoming-fixture', 'outgoing-fixture')).rejects.toThrow('Vault unavailable')
     expect(call.mock.calls.filter(([method]) => method === PLATFORM_BRIDGE_METHODS.SECRETS_SET)).toHaveLength(1)
   })
+  it('never writes passwords when encryption is unavailable even if weak is absent', async () => {
+    const call = vi.spyOn(bridge, 'call').mockResolvedValue({ encryptionAvailable: false, backend: 'unknown' })
+    await expect(saveConnectionPasswords('example', 'incoming-fixture')).rejects.toThrow('secure keystore')
+    expect(call.mock.calls.filter(([method]) => method === PLATFORM_BRIDGE_METHODS.SECRETS_SET)).toHaveLength(0)
+  })
+
+  it('keeps both saved credentials when editing without replacement passwords', async () => {
+    const call = vi.spyOn(bridge, 'call')
+    await saveConnectionPasswords('example', '', '')
+    expect(call).not.toHaveBeenCalled()
+  })
+  it('updates only SMTP when the saved IMAP password is retained', async () => {
+    const call = vi.spyOn(bridge, 'call').mockImplementation(async method => {
+      if (method === PLATFORM_BRIDGE_METHODS.SECRETS_STATUS) return { weak: false, encryptionAvailable: true, backend: 'test' }
+      return { ok: true }
+    })
+    await saveConnectionPasswords('example', '', 'replacement-fixture')
+    expect(call.mock.calls.filter(([method]) => method === PLATFORM_BRIDGE_METHODS.SECRETS_SET)).toEqual([
+      [PLATFORM_BRIDGE_METHODS.SECRETS_SET, [{ key: 'smtp-password.example', value: 'replacement-fixture' }]],
+    ])
+  })
+
 })

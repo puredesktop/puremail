@@ -73,7 +73,7 @@ export interface GmailMailProviderOptions {
    * The shell refreshes transparently; the provider never sees refresh
    * tokens or the OAuth client secret.
    */
-  accessToken: () => Promise<string>
+  accessToken: (rejectedAccessToken?: string) => Promise<string>
   /**
    * Tuning/test seam for the shared retry policy (429/5xx backoff honoring
    * `Retry-After`, one retry after a 401). Tests inject `sleep` so backoff
@@ -649,16 +649,21 @@ export class GmailMailProvider implements MailProvider {
     const idempotent = init.idempotent ?? true
     let networkFailure: unknown = null
     let serverFailure: GmailNetworkResponse | null = null
-    const attemptFetch = async (): Promise<GmailNetworkResponse> =>
-      this.options.fetch({
+    let rejectedAccessToken: string | undefined
+    const attemptFetch = async (): Promise<GmailNetworkResponse> => {
+      const accessToken = await this.options.accessToken(rejectedAccessToken)
+      const response = await this.options.fetch({
         url: path.startsWith('https://') ? path : gmailPath(path),
         method: init.method ?? 'GET',
         headers: {
-          Authorization: `Bearer ${await this.options.accessToken()}`,
+          Authorization: `Bearer ${accessToken}`,
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(init.body ? { body: init.body } : {}),
       })
+      if (response.status === 401) rejectedAccessToken = accessToken
+      return response
+    }
     const response = await withHttpRetry(async () => {
       if (idempotent) return attemptFetch()
       try {

@@ -1,3 +1,4 @@
+import { hasConnectionSmtpPassword, hasSavedMailConnection } from '../lib/mailConnectionPasswords'
 import { AppSettingsPages } from '@purescience/platform-bridge/components/settings/AppSettings'
 import { TypedTriageSettings } from './TypedTriageSettings'
 import {
@@ -432,10 +433,7 @@ export function MailSettings({
                 'IMAP/SMTP account over the shell socket transport.',
             }
     const profileId = editingProfile?.id ?? `${shape.idPrefix}_${email.toLowerCase()}`
-    const hasSmtpPassword = Boolean(imapForm.smtpPassword) || Boolean(
-      editingProfile && (editingProfile.hasSmtpPassword ||
-        (store.settings.imapAccount?.profileId === profileId && store.settings.imapAccount.hasSmtpPassword)),
-    )
+    const hasSmtpPassword = hasConnectionSmtpPassword(store.settings, profileId, imapForm.smtpPassword)
     const account = {
       profileId,
       label: email,
@@ -483,7 +481,8 @@ export function MailSettings({
         },
       }))
     }
-    if (!imapForm.imapPassword) {
+    const existingConnection = hasSavedMailConnection(store.settings, profileId)
+    if (!imapForm.imapPassword && !existingConnection) {
       setProviderTestResult({
         tone: 'warning',
         title: 'IMAP password needed.',
@@ -1193,8 +1192,9 @@ export function MailSettings({
                                         aria-label="IMAP password"
                                         type="password"
                                         placeholder={
-                                          selectedMailProvider.id ===
-                                          'proton-bridge'
+                                          editingProfile
+                                            ? 'Leave blank to keep the saved IMAP password'
+                                            : selectedMailProvider.id === 'proton-bridge'
                                             ? 'Password shown under IMAP in Bridge'
                                             : 'App password or provider password'
                                         }
