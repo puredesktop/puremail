@@ -1,4 +1,4 @@
-import { hasConnectionSmtpPassword } from '../lib/mailConnectionPasswords'
+import { hasConnectionSmtpPassword, hasSavedMailConnection } from '../lib/mailConnectionPasswords'
 import { AppSettingsPages } from '@purescience/platform-bridge/components/settings/AppSettings'
 import { TypedTriageSettings } from './TypedTriageSettings'
 import {
@@ -481,7 +481,7 @@ export function MailSettings({
         },
       }))
     }
-    const existingConnection = store.settings.connectionProfiles?.some(profile => profile.id === profileId) || store.settings.imapAccount?.profileId === profileId
+    const existingConnection = hasSavedMailConnection(store.settings, profileId)
     if (!imapForm.imapPassword && !existingConnection) {
       setProviderTestResult({
         tone: 'warning',
