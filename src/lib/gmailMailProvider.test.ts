@@ -1495,8 +1495,8 @@ describe('GmailMailProvider retry policy', () => {
   })
 
   it('retries a 401 once with a freshly read access token', async () => {
-    const tokens = ['stale-token', 'fresh-token']
-    let tokenReads = 0
+    const rejectedTokens: (string | undefined)[] = []
+    let cachedToken = 'stale-token'
     const authHeaders: string[] = []
     const fetch = vi.fn(
       async (request: { url: string; headers?: Record<string, string> }) => {
@@ -1525,10 +1525,10 @@ describe('GmailMailProvider retry policy', () => {
     )
     const provider = new GmailMailProvider({
       email: 'alex@example.com',
-      accessToken: async () => {
-        const token = tokens[Math.min(tokenReads, tokens.length - 1)]!
-        tokenReads += 1
-        return token
+      accessToken: async rejected => {
+        rejectedTokens.push(rejected)
+        if (rejected === cachedToken) cachedToken = 'fresh-token'
+        return cachedToken
       },
       fetch,
       retryOptions: { sleep: async () => {} },
@@ -1536,6 +1536,7 @@ describe('GmailMailProvider retry policy', () => {
 
     const store = await provider.fetchStore()
 
+    expect(rejectedTokens.slice(0, 2)).toEqual([undefined, 'stale-token'])
     expect(store.accounts[0]?.email).toBe('alex@example.com')
     // The 401'd call was retried exactly once, with a re-read (fresh) token.
     expect(authHeaders.slice(0, 2)).toEqual([

@@ -481,7 +481,8 @@ export function MailSettings({
         },
       }))
     }
-    if (!imapForm.imapPassword) {
+    const existingConnection = store.settings.connectionProfiles?.some(profile => profile.id === profileId) || store.settings.imapAccount?.profileId === profileId
+    if (!imapForm.imapPassword && !existingConnection) {
       setProviderTestResult({
         tone: 'warning',
         title: 'IMAP password needed.',
@@ -1191,8 +1192,9 @@ export function MailSettings({
                                         aria-label="IMAP password"
                                         type="password"
                                         placeholder={
-                                          selectedMailProvider.id ===
-                                          'proton-bridge'
+                                          editingProfile
+                                            ? 'Leave blank to keep the saved IMAP password'
+                                            : selectedMailProvider.id === 'proton-bridge'
                                             ? 'Password shown under IMAP in Bridge'
                                             : 'App password or provider password'
                                         }

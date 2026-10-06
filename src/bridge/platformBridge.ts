@@ -110,7 +110,7 @@ export async function saveConnectionPasswords(
   imapPassword: string,
   smtpPassword?: string,
 ): Promise<void> {
-  await saveImapPassword(profileId, imapPassword)
+  if (imapPassword) await saveImapPassword(profileId, imapPassword)
   if (smtpPassword) await saveSmtpPassword(profileId, smtpPassword)
 }
 
@@ -252,7 +252,7 @@ export async function fetchGoogleCredentialStatus(): Promise<OAuthCredentialStat
  * Short-lived Google access token; the shell refreshes it transparently.
  * Refresh tokens and the client secret never cross the bridge.
  */
-export async function fetchGoogleAccessToken(): Promise<{
+export async function fetchGoogleAccessToken(rejectedAccessToken?: string): Promise<{
   accessToken: string
   expiresAt: number
 }> {
@@ -261,7 +261,8 @@ export async function fetchGoogleAccessToken(): Promise<{
       'Google access tokens need the PureDesktop shell (standalone dev mode has no credential vault)',
     )
   }
-  return readCredentialOAuthAccessToken({ id: GOOGLE_CREDENTIAL_ID })
+  const request = { id: GOOGLE_CREDENTIAL_ID, ...(rejectedAccessToken !== undefined ? { rejectedAccessToken } : {}) }
+  return readCredentialOAuthAccessToken(request)
 }
 
 export interface PlatformStorageReadResult {

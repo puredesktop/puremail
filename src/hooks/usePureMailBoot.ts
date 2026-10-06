@@ -47,37 +47,9 @@ export interface PureMailBootState {
   bootId: number
 }
 
-/**
- * The persisted store, read once per boot and memoised for the rest of it.
- *
- * Reading moved off localStorage onto the shell's filesystem JSON store (see
- * lib/mailPersistence), which makes it async — hence the cached promise: the
- * boot path needs the same answer in three places and must not read the disk
- * three times.
- */
-let persistedStoreOnce: Promise<MailStore | null> | null = null
-
-/**
- * Drop the memoised read. Each boot RUN must share one answer, but a reboot
- * (Google connected or disconnected at runtime) must re-read the disk — the
- * disconnect path just persisted a store with the Gmail mirror stripped, and
- * serving the cached pre-disconnect copy would resurrect it.
- */
-function invalidatePersistedStoreCache(): void {
-  persistedStoreOnce = null
-}
-
 async function readPersistedStore(): Promise<MailStore | null> {
-  if (!persistedStoreOnce) {
-    persistedStoreOnce = readPersistedMailStore()
-      .then(({ store }) =>
-        // Sweep Drafts-filed threads whose draft is gone. Earlier versions
-        // left them behind, so a store can already carry empty Drafts entries
-        // that open to "No message selected" and resist every delete.
-        store ? pruneOrphanedDraftThreads(store) : null,
-      )
-  }
-  return persistedStoreOnce
+  const { store } = await readPersistedMailStore()
+  return store ? pruneOrphanedDraftThreads(store) : null
 }
 
 function readPersistedSettings(): Partial<MailSettings> {
@@ -92,43 +64,41 @@ function readPersistedSettings(): Partial<MailSettings> {
     // settings key so it never round-trips back into persistence.
     delete parsed.google
     return parsed
-  } catch (error) {
-    console.warn(
-      '[puremail] persisted settings unreadable; starting empty:',
-      error,
-    )
+  } catch {
+    console.warn('[puremail] browser settings unavailable; using disk settings.')
     return {}
   }
 }
 
-function applyPersistedSettings(store: MailStore): MailStore {
+function applyPersistedSettings(store: MailStore, settings: Partial<MailSettings>): MailStore {
   return {
     ...store,
     settings: {
       ...store.settings,
-      ...readPersistedSettings(),
+      ...settings,
     },
   }
 }
 
-export async function createBootProvider(): Promise<{
+export async function createBootProvider(persistedStore?: MailStore | null): Promise<{
   provider: DemoMailProvider | GmailMailProvider | ImapMailProvider
   source: 'demo' | 'gmail' | 'imap'
   notice?: string
 }> {
+  const persisted = persistedStore === undefined ? await readPersistedStore() : persistedStore
+  const settings = { ...persisted?.settings, ...readPersistedSettings() }
   const demoBoot = async (notice?: string) => {
     // Seed the demo mailbox when there is nothing to show. A persisted store
     // with no threads at all is the same dead end as no store: the demo
     // provider has no server to fetch from, so an empty one stays empty
     // forever with no way for the user to get out of it.
-    const persisted = await readPersistedStore()
     const store =
       persisted && persisted.threads.length > 0
         ? persisted
         : demoMailStoreForNow()
     return {
       source: 'demo' as const,
-      provider: new DemoMailProvider(applyPersistedSettings(store)),
+      provider: new DemoMailProvider(applyPersistedSettings(store, settings)),
       ...(notice ? { notice } : {}),
     }
   }
@@ -144,7 +114,7 @@ export async function createBootProvider(): Promise<{
   // you deliberately activated — a different mailbox entirely. `active`
   // is an explicit user choice; deactivate the account to go back to
   // Gmail.
-  const imapAccount = readPersistedSettings().imapAccount
+  const imapAccount = settings.imapAccount
   if (imapAccount?.active) {
     const imapConfig = {
       profileId: imapAccount.profileId,
@@ -169,10 +139,18 @@ export async function createBootProvider(): Promise<{
         name: imapAccount.label,
         imap: bridgeImapTransport(imapConfig),
         smtp: bridgeSmtpTransport(smtpConfig),
-        settings: readPersistedSettings(),
+        settings,
       }),
     }
   }
+  const gmailBoot = (email?: string, notice?: string) => ({
+    source: 'gmail' as const,
+    ...(notice ? { notice } : {}),
+    provider: new GmailMailProvider({
+      ...(email ? { email } : {}), settings, fetch: networkFetch,
+      accessToken: async (rejected?: string) => (await fetchGoogleAccessToken(rejected)).accessToken,
+    }),
+  })
   // Google is irrelevant to an explicitly active IMAP/Proton account.
   // A locked Google credential must not prevent that account from loading.
   let status
@@ -180,26 +158,16 @@ export async function createBootProvider(): Promise<{
     status = await fetchGoogleCredentialStatus()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return demoBoot(
-      `PureMail could not read the Google connection state; showing the demo mailbox. (${message})`,
-    )
+    const savedGmail = persisted?.accounts.find(account => account.provider === 'gmail')
+    if (savedGmail) return gmailBoot(savedGmail.email, `Google connection status is unavailable. Showing saved Gmail; fetch mail to retry. (${message})`)
+    return demoBoot(`PureMail could not read the Google connection state. (${message})`)
   }
-  if (status.connected) {
-    return {
-      source: 'gmail',
-      provider: new GmailMailProvider({
-        ...(status.email ? { email: status.email } : {}),
-        settings: readPersistedSettings(),
-        fetch: networkFetch,
-        accessToken: async () => (await fetchGoogleAccessToken()).accessToken,
-      }),
-    }
+  if (status.connected || status.needsReconnect) {
+    return gmailBoot(status.email, status.needsReconnect
+      ? 'Google access expired or was revoked. Showing saved Gmail; reconnect in Mail settings to resume sync.'
+      : undefined)
   }
-  if (status.needsReconnect) {
-    return demoBoot(
-      'Google access expired or was revoked. Reconnect in Mail settings → Providers.',
-    )
-  }
+
   if (status.configured) {
     return demoBoot(
       'Google is configured but not signed in. Open Mail settings → Providers and sign in with Google to load your Gmail inbox.',
@@ -232,8 +200,9 @@ export function usePureMailBoot(ready: boolean): {
     if (!ready) return
     let cancelled = false
     const bootMail = async (): Promise<void> => {
-      invalidatePersistedStoreCache()
-      const { provider, source, notice: bootNotice } = await createBootProvider()
+      const persisted = await readPersistedStore()
+      const settings = { ...persisted?.settings, ...readPersistedSettings() }
+      const { provider, source, notice: bootNotice } = await createBootProvider(persisted)
       // A live account shows the LAST SYNCED mailbox at once and fetches in
       // the background. The boot used to await the whole startup sync
       // first — fifteen seconds of blank frame on a normal inbox, while a
@@ -242,7 +211,8 @@ export function usePureMailBoot(ready: boolean): {
       // and failure handling a manual fetch has.
       if (source !== 'demo') {
         const store = applyPersistedSettings(
-          (await readPersistedStore()) ?? emptyMailStore(),
+          persisted ?? emptyMailStore(),
+          settings,
         )
         if (cancelled) return
         setBoot({
@@ -289,7 +259,8 @@ export function usePureMailBoot(ready: boolean): {
         // gmail made the Google-disconnect watcher read "gmail with no
         // credential" and reboot in a loop whenever the Bridge was down.
         const store = applyPersistedSettings(
-          (await readPersistedStore()) ?? emptyMailStore(),
+          persisted ?? emptyMailStore(),
+          settings,
         )
         if (cancelled) return
         const message = error instanceof Error ? error.message : String(error)
