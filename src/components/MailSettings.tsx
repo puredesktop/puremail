@@ -1,3 +1,4 @@
+import { hasConnectionSmtpPassword } from '../lib/mailConnectionPasswords'
 import { AppSettingsPages } from '@purescience/platform-bridge/components/settings/AppSettings'
 import { TypedTriageSettings } from './TypedTriageSettings'
 import {
@@ -432,10 +433,7 @@ export function MailSettings({
                 'IMAP/SMTP account over the shell socket transport.',
             }
     const profileId = editingProfile?.id ?? `${shape.idPrefix}_${email.toLowerCase()}`
-    const hasSmtpPassword = Boolean(imapForm.smtpPassword) || Boolean(
-      editingProfile && (editingProfile.hasSmtpPassword ||
-        (store.settings.imapAccount?.profileId === profileId && store.settings.imapAccount.hasSmtpPassword)),
-    )
+    const hasSmtpPassword = hasConnectionSmtpPassword(store.settings, profileId, imapForm.smtpPassword)
     const account = {
       profileId,
       label: email,

@@ -25,4 +25,10 @@ describe('saving connection passwords', () => {
     await expect(saveConnectionPasswords('example', 'incoming-fixture', 'outgoing-fixture')).rejects.toThrow('Vault unavailable')
     expect(call.mock.calls.filter(([method]) => method === PLATFORM_BRIDGE_METHODS.SECRETS_SET)).toHaveLength(1)
   })
+  it('never writes passwords when encryption is unavailable even if weak is absent', async () => {
+    const call = vi.spyOn(bridge, 'call').mockResolvedValue({ encryptionAvailable: false, backend: 'unknown' })
+    await expect(saveConnectionPasswords('example', 'incoming-fixture')).rejects.toThrow('secure keystore')
+    expect(call.mock.calls.filter(([method]) => method === PLATFORM_BRIDGE_METHODS.SECRETS_SET)).toHaveLength(0)
+  })
+
 })

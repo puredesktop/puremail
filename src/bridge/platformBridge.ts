@@ -78,7 +78,7 @@ async function saveMailPasswordSecret(
     backend: string
     weak: boolean
   } | null
-  if (!status || status.weak) {
+  if (!status || !status.encryptionAvailable || status.weak) {
     throw new UnprotectedKeystoreError(
       status?.backend ?? 'unknown',
       Boolean(status?.encryptionAvailable),
