@@ -941,14 +941,21 @@ export class ImapMailProvider implements MailProvider {
   }
 
   async setThreadStarred(threadId: string, starred: boolean): Promise<void> {
-    await this.eachLocation(threadId, location =>
-      this.options.imap.setFlag(
-        location.folder,
-        location.uid,
-        '\\Flagged',
-        starred,
-      ),
-    )
+    // The flag is set on every copy of the thread. A mirror folder (Proton
+    // Bridge's Starred, All Mail) may refuse the change or no longer hold the
+    // message once its real copy was unflagged; one such refusal must not
+    // undo the whole unstar, so a failure counts only when every copy failed.
+    const failures: unknown[] = []
+    let applied = 0
+    await this.eachLocation(threadId, async location => {
+      try {
+        await this.options.imap.setFlag(location.folder, location.uid, '\\Flagged', starred)
+        applied++
+      } catch (error) {
+        failures.push(error)
+      }
+    })
+    if (!applied && failures.length) throw failures[0]
   }
 
   async labelThread(): Promise<void> {

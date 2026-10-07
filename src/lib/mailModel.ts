@@ -4008,7 +4008,19 @@ export function reapplyLocalMailChangesSinceSnapshot(
       !isUnconfirmedGmailSend(message),
   )
 
-  if (readOverrides.size === 0 && addedMessages.length === 0) return merged
+  // Stars toggled locally while the sync was in flight: the provider call
+  // already landed, but the fetch that started earlier carries the old
+  // state, so the local change is applied again on top of it.
+  const starredBefore = new Set(snapshot.starredThreadIds ?? [])
+  const starredNow = new Set(current.starredThreadIds ?? [])
+  const unstarred = [...starredBefore].filter(id => !starredNow.has(id))
+  const starred = [...starredNow].filter(id => !starredBefore.has(id))
+  const mergedStarred = merged.starredThreadIds ?? []
+  const starredThreadIds = unstarred.length || starred.length
+    ? [...mergedStarred.filter(id => !unstarred.includes(id)), ...starred.filter(id => !mergedStarred.includes(id))]
+    : mergedStarred
+
+  if (readOverrides.size === 0 && addedMessages.length === 0 && starredThreadIds === mergedStarred) return merged
 
   const latestAddedByThread = new Map<string, string>()
   for (const message of addedMessages) {
@@ -4020,6 +4032,7 @@ export function reapplyLocalMailChangesSinceSnapshot(
 
   return {
     ...merged,
+    starredThreadIds,
     messages: [
       ...merged.messages.map(message => {
         const read = readOverrides.get(message.id)

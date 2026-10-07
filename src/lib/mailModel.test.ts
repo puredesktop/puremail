@@ -2560,6 +2560,20 @@ describe('PureMail reliability safeguards', () => {
     ).toBe('2026-06-27T12:00:00.000Z')
   })
 
+  it('keeps a star removed (or added) while the sync was in flight', () => {
+    const snapshot = { ...demoMailStore(), starredThreadIds: ['thread_launch', 'thread_contract'] }
+    // Unstarred thread_launch and starred thread_invoice while the fetch ran.
+    const current = { ...snapshot, starredThreadIds: ['thread_contract', 'thread_invoice'] }
+    // The fetch that started earlier still carries the old stars.
+    const merged = { ...demoMailStore(), starredThreadIds: ['thread_launch', 'thread_contract'] }
+
+    const result = reapplyLocalMailChangesSinceSnapshot(merged, snapshot, current)
+
+    expect(result.starredThreadIds).toEqual(['thread_contract', 'thread_invoice'])
+    // Nothing changed locally: the fetch's stars stand.
+    expect(reapplyLocalMailChangesSinceSnapshot(merged, snapshot, snapshot).starredThreadIds).toEqual(['thread_launch', 'thread_contract'])
+  })
+
   it('does not duplicate a sent message the fetch already returned', () => {
     const snapshot = demoMailStore()
     const sentDuringSync: MailMessage = {
