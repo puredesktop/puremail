@@ -657,3 +657,27 @@ export async function toggleAgentDrawer(
   if (isStandaloneDevMode()) return
   await toggleAgentDrawerBridge(options)
 }
+
+// ── PureExpenses: an email left for the books ──
+
+export interface ExpensesHandoff {
+  id: string
+  at: string
+  subject: string
+  sender: string
+  messageId?: string
+  receivedAt?: string
+  attachments: Array<{ name: string; path: string; mimeType?: string }>
+  text?: string
+}
+
+/**
+ * Leaves an email in PureExpenses' `inbox` collection: its attachments
+ * already saved as files in the Mail folder, its text for a receipt that
+ * is the email itself. PureExpenses takes the entry and removes it.
+ */
+export async function handOffToExpenses(entry: ExpensesHandoff): Promise<void> {
+  await bridge.call('apps.data.set', [
+    { appId: 'expenses', collection: 'inbox', key: entry.id, value: entry },
+  ])
+}

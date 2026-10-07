@@ -4865,6 +4865,11 @@ export function PureMailShell({
           })()
         ) : readingActive && selectedThread ? (
           <ThreadReader
+            mailSaveFolder={async () => {
+              const root = workspaceFolder ?? (await getPlatformPreferences()).workspaceRoot?.trim()
+              if (!root) throw new Error('no workspace is set up')
+              return fsCreateFolder(root, MAIL_SAVE_FOLDER)
+            }}
             store={store}
             setStore={setStore}
             storeRef={storeRef}

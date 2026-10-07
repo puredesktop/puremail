@@ -105,6 +105,7 @@ import {
   fsListNames,
   fsWriteBinary,
   convertPlatformDocument,
+  handOffToExpenses,
   isStandaloneDevMode,
   mailPdfDeps,
   openExternalUrl,
@@ -113,6 +114,7 @@ import {
   readPlatformStorageJson,
   recordOperation,
 } from '../bridge/platformBridge'
+import { stripHtmlToText } from '../lib/mailTextUtils'
 import { AiTriageControl } from './AiTriageControl'
 import type {
   Attachment,
@@ -296,6 +298,8 @@ function plainTextParagraphs(
 }
 
 export interface ThreadReaderProps {
+  /** The workspace Mail folder, created when needed; where files leave Mail for other apps. */
+  mailSaveFolder?: () => Promise<string>
   store: MailStore
   setStore: React.Dispatch<React.SetStateAction<MailStore>>
   storeRef: React.MutableRefObject<MailStore>
@@ -439,6 +443,7 @@ export const SanitizedMessageBody = memo(function SanitizedMessageBody({
 })
 
 export function ThreadReader({
+  mailSaveFolder,
   store,
   setStore,
   storeRef,
@@ -1018,6 +1023,49 @@ export function ThreadReader({
         ? `Saved ${saved.length} attachment${saved.length === 1 ? '' : 's'} to ${folder}.`
         : `Saved ${saved.length} of ${message.attachments.length} attachments to ${folder}.`,
     )
+  }
+
+  /**
+   * Leaves a message for PureExpenses: its attachments saved as files in the
+   * Mail folder (the same writer as Save all), the email's own text for a
+   * receipt that is the email itself. The books take it from there.
+   */
+  const sendToExpenses = async (message: MailMessage): Promise<void> => {
+    if (!mailSaveFolder || isStandaloneDevMode()) {
+      setCommandNotice('Sending to Expenses needs the PureDesktop shell.')
+      return
+    }
+    setCommandNotice('Sending to Expenses…')
+    try {
+      const folder = await mailSaveFolder()
+      const { saved, failed } = await writeAttachmentsToFolder(message.attachments, folder, {
+        resolve: attachment => resolveAttachmentContent(message, attachment),
+        writeBinary: fsWriteBinary,
+        existingNames: () => fsListNames(folder),
+      })
+      const sender = message.from.name ? `${message.from.name} <${message.from.email}>` : message.from.email
+      await handOffToExpenses({
+        id: `mail-${message.id}-${Date.now().toString(36)}`,
+        at: new Date().toISOString(),
+        subject: selectedThread.subject,
+        sender,
+        messageId: message.id,
+        receivedAt: message.receivedAt,
+        attachments: saved.map(item => ({ name: item.name, path: item.path, mimeType: item.mimeType })),
+        text: (message.body || stripHtmlToText(message.bodyHtml)).slice(0, 12_000),
+      })
+      const files = saved.length ? ` with ${saved.length} file${saved.length === 1 ? '' : 's'}` : ''
+      const lost = failed.length ? `; ${failed.length} attachment${failed.length === 1 ? '' : 's'} could not be saved` : ''
+      setCommandNotice(`Sent to Expenses${files}${lost}. It appears under Receipts there.`)
+      void recordOperation({
+        lane: 'user',
+        kind: 'mail.handoff.expenses',
+        appSlug: 'mail',
+        summary: `Sent "${selectedThread.subject}" to PureExpenses${files}.`,
+      })
+    } catch (error) {
+      setCommandNotice(`Could not send to Expenses: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   /**
@@ -1712,6 +1760,19 @@ export function ThreadReader({
                   }}
                 >
                   Save as PDF…
+                </BulkMenuItem>
+              )}
+              {!isStandaloneDevMode() && (
+                <BulkMenuItem
+                  role="menuitem"
+                  title="A receipt or supplier invoice: its files and words go to PureExpenses, which matches them to the bank line"
+                  onClick={() => {
+                    setThreadMenuOpen(false)
+                    const latest = [...selectedMessages].filter(item => !item.isDraft).sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1))[0]
+                    if (latest) void sendToExpenses(latest)
+                  }}
+                >
+                  Send to Expenses
                 </BulkMenuItem>
               )}
               <BulkMenuItem
