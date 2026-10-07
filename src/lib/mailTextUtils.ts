@@ -96,6 +96,8 @@ export function compactMailText(text: string): string {
   return text
     .replace(/\r/g, '\n')
     .replace(/&#8202;|&#8203;/g, '')
+    // A plain-text part some senders write with character references in it (&#8211; for a dash): read as the characters.
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, decodeEntity)
     .replace(/[\u200b\u200c\u200d\u200e\u200f\u202f]/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
