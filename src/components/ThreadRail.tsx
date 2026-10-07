@@ -57,6 +57,7 @@ import {
   conversationKeyForThread,
   displayThreadLabels,
   formatThreadListTime,
+  threadStatusExplanation,
   threadStatusLabel,
   threadStatusTone,
 } from './mailShellHelpers'
@@ -698,7 +699,7 @@ export function ThreadRail({
     const status = threadStatusLabel(store, thread, store.drafts)
     if (status) {
       return (
-        <MailStateChip $tone={threadStatusTone(store, thread, store.drafts)}>
+        <MailStateChip $tone={threadStatusTone(store, thread, store.drafts)} title={threadStatusExplanation(status)}>
           {status}
         </MailStateChip>
       )

@@ -21,3 +21,13 @@ describe('HTML history boundaries', () => {
     expect(result.segments.filter(part => part.type === 'quote').map(part => part.text)).toEqual(['Original message.'])
   })
 })
+
+describe('character references in mail text', () => {
+  it('reads numeric and named references as the characters they stand for', async () => {
+    const { stripHtmlToText } = await import('./mailTextUtils')
+    expect(stripHtmlToText('OK &#8211; well &#8211; a week or so&#8217;s time &amp; more &ndash; caf&eacute; &#x2014; &quot;q&quot; &lt;b&gt;'))
+      .toBe('OK – well – a week or so’s time & more – café — "q" <b>')
+    // An unknown name and a code outside Unicode stay as written; the invisible ones go.
+    expect(stripHtmlToText('a&bogus;b &#1114112; c&#8203;d')).toBe('a&bogus;b &#1114112; cd')
+  })
+})

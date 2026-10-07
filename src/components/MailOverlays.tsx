@@ -3,6 +3,7 @@ import {
   AttachmentPreviewBackdrop,
   AttachmentPreviewBody,
   AttachmentPreviewCard,
+  AttachmentPreviewDocument,
   AttachmentPreviewHeader,
   AttachmentPreviewImage,
   AttachmentPreviewText,
@@ -58,6 +59,11 @@ export function AttachmentPreviewOverlay({
                 it.
               </AttachmentPreviewText>
             </object>
+          ) : attachmentPreview.kind === 'word' && attachmentPreview.html !== undefined ? (
+            <>
+              <AttachmentPreviewDocument dangerouslySetInnerHTML={{ __html: attachmentPreview.html }} />
+              {attachmentPreview.notes?.length ? <AttachmentPreviewText>{attachmentPreview.notes.join(' ')}</AttachmentPreviewText> : null}
+            </>
           ) : (
             <AttachmentPreviewText>
               {attachmentPreview.text}

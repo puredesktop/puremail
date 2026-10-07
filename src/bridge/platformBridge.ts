@@ -433,6 +433,12 @@ export async function fsReadBinary(
   )
 }
 
+/** The shell's Word reader (`documents.convert`): the document as HTML, its pictures beside it, and what did not come across. */
+export async function convertPlatformDocument(path: string): Promise<{ html: string; images: Array<{ name: string; contentType: string; base64: string }>; notes: string[] }> {
+  const r = (await bridge.call(PLATFORM_BRIDGE_METHODS.DOCUMENTS_CONVERT, [{ path }])) as { html?: string; images?: Array<{ name: string; contentType: string; base64: string }>; notes?: Array<{ message: string }> } | null
+  return { html: r?.html ?? '', images: r?.images ?? [], notes: (r?.notes ?? []).map(n => n.message) }
+}
+
 export async function fsWriteBinary(
   path: string,
   base64: string,

@@ -269,6 +269,8 @@ export function isImageAttachment(attachment: Attachment): boolean {
 
 function isTextLikeMimeType(mimeType: string): boolean {
   const lower = mimeType.toLowerCase()
+  // Office files name XML in their types (wordprocessingml, spreadsheetml) but are zips: never text.
+  if (lower.includes('officedocument') || lower.includes('vnd.ms-') || lower.includes('msword') || lower.includes('zip')) return false
   return (
     lower.startsWith('text/') ||
     lower.includes('json') ||
@@ -277,7 +279,13 @@ function isTextLikeMimeType(mimeType: string): boolean {
   )
 }
 
-export type AttachmentPreviewKind = 'image' | 'pdf' | 'text'
+/** A Word document (.docx): previewed through the shell's document reader, as PureProduction and PureManuscript read it. */
+export function isWordAttachment(attachment: Attachment): boolean {
+  const lower = (attachment.mimeType || '').toLowerCase()
+  return lower.includes('wordprocessingml.document') || /\.docx$/i.test(attachment.name || '')
+}
+
+export type AttachmentPreviewKind = 'image' | 'pdf' | 'text' | 'word'
 
 export function isPdfAttachment(attachment: Attachment): boolean {
   const mime = attachment.mimeType.toLowerCase()
@@ -294,6 +302,7 @@ export function attachmentPreviewKind(
 ): AttachmentPreviewKind | null {
   if (isImageAttachment(attachment)) return 'image'
   if (isPdfAttachment(attachment)) return 'pdf'
+  if (isWordAttachment(attachment)) return 'word'
   if (isTextLikeMimeType(attachment.mimeType)) return 'text'
   return null
 }

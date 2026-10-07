@@ -2095,6 +2095,24 @@ export const ReaderSenderRow = styled.div`
   min-width: 0;
 `
 
+/** Reply on the sender row: the toolbar's primary, small, beside who wrote. */
+export const ReaderSenderReply = styled.button`
+  flex: none;
+  margin-left: 8px;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--pure-chrome-accent);
+  color: var(--pure-chrome-on-accent);
+  font: inherit;
+  font-size: var(--pure-chrome-meta-size);
+  font-weight: 600;
+  cursor: pointer;
+  &:hover { filter: brightness(0.92); }
+  &:focus-visible { outline: 2px solid var(--pure-chrome-accent); outline-offset: 2px; }
+`
+
 export const ReaderSenderAvatar = styled.span`
   display: inline-flex;
   width: 24px;
@@ -2653,6 +2671,23 @@ export const AttachmentPreviewImage = styled.img`
   border-radius: var(--platform-radius-sm);
 `
 
+/** A Word document as read: a page of text, the reader's own type. */
+export const AttachmentPreviewDocument = styled.div`
+  justify-self: stretch;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 24px 32px;
+  color: var(--platform-colors-text);
+  font-family: var(--platform-typography-font-family-content);
+  font-size: 15px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  h1, h2, h3 { line-height: 1.25; margin: 1.2em 0 0.4em; }
+  p { margin: 0 0 0.8em; }
+  table { border-collapse: collapse; margin: 0.8em 0; }
+  td, th { border: 1px solid var(--platform-colors-border); padding: 4px 8px; vertical-align: top; }
+  img { max-width: 100%; height: auto; }
+`
 export const AttachmentPreviewText = styled.pre`
   justify-self: stretch;
   margin: 0;

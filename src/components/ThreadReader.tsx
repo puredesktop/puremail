@@ -95,6 +95,7 @@ import {
   isViewerUnsupportedError,
   openAttachmentInViewerWindow,
   parentDirectoryPath,
+  attachmentCacheFileName,
 } from '../lib/attachmentViewer'
 import {
   dialogSaveFile,
@@ -103,6 +104,7 @@ import {
   fsCreateFolder,
   fsListNames,
   fsWriteBinary,
+  convertPlatformDocument,
   isStandaloneDevMode,
   mailPdfDeps,
   openExternalUrl,
@@ -187,6 +189,7 @@ import {
   ReaderPosition,
   ReaderSenderAvatar,
   ReaderSenderName,
+  ReaderSenderReply,
   ReaderSenderRow,
   ReaderSenderTo,
   ReaderTaskChip,
@@ -231,6 +234,7 @@ import {
   draftKindLabel,
   providerName,
   sentDraftRecipientSummary,
+  threadStatusExplanation,
   threadStatusLabel,
   threadStatusTone,
   threadSyncLabel,
@@ -1053,6 +1057,10 @@ export function ThreadReader({
     }
   }
 
+  /** The pictures the reader found, put back into the HTML as data URLs where it names them. */
+  const withInlinePictures = (html: string, images: Array<{ name: string; contentType: string; base64: string }>): string =>
+    images.reduce((out, im) => out.split(im.name).join(`data:${im.contentType};base64,${im.base64}`), html)
+
   const previewAttachment = async (
     message: MailMessage,
     attachment: Attachment,
@@ -1089,6 +1097,25 @@ export function ThreadReader({
         return
       }
       setAttachmentPreview({ name: resolved.name, kind, pdfUrl })
+      return
+    }
+    if (kind === 'word') {
+      // Read by the shell's Word reader, from the bytes written to the attachment cache (the reader takes a file).
+      const base64 = attachmentContentToBase64(resolved)
+      const dir = base64 ? await ensureAttachmentCacheDir() : null
+      if (!base64 || !dir) {
+        setCommandNotice(`Could not read ${resolved.name} for preview — save it to disk to view.`)
+        return
+      }
+      try {
+        const path = `${dir}/${attachmentCacheFileName(message.id, attachment.id, resolved.name).replace(/\.pdf$/, '.docx')}`
+        await fsWriteBinary(path, base64)
+        const read = await convertPlatformDocument(path)
+        const html = sanitizeMailHtml(withInlinePictures(read.html, read.images), { allowRemoteImages: false })
+        setAttachmentPreview({ name: resolved.name, kind, html, notes: read.notes })
+      } catch (error) {
+        setCommandNotice(`Could not read ${resolved.name}: ${error instanceof Error ? error.message : String(error)}`)
+      }
       return
     }
     const text = attachmentTextContent(resolved)
@@ -1800,6 +1827,7 @@ export function ThreadReader({
             {threadStatusLabel(store, selectedThread, store.drafts) && (
               <MailStateChip
                 $tone={threadStatusTone(store, selectedThread, store.drafts)}
+                title={threadStatusExplanation(threadStatusLabel(store, selectedThread, store.drafts))}
               >
                 {threadStatusLabel(store, selectedThread, store.drafts)}
               </MailStateChip>
@@ -1839,6 +1867,10 @@ export function ThreadReader({
                 to {headerRecipients}
               </ReaderSenderTo>
             )}
+            {/* Reply where the sender is named, so answering needs no trip back to the toolbar; the same action as the toolbar's. */}
+            <ReaderSenderReply type="button" onClick={focusReply} title={replyPrimaryLabel === 'Reply' ? `Reply to ${headerSenderName}` : 'Continue your draft reply'}>
+              {replyPrimaryLabel}
+            </ReaderSenderReply>
             <ReaderDetailsButton
               type="button"
               aria-expanded={detailsOpen}

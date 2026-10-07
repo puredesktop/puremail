@@ -26,9 +26,10 @@ const labels: Record<MailConnectionState, string> = {
   error: 'Mail connection needs attention',
 }
 
-export function MailConnectionControl({ state, onTest }: { state: MailConnectionState; onTest: () => void }) {
-  return <Button size="sm" variant="text" disabled={state === 'checking'} onClick={onTest}
-    title={labels[state]} aria-label={`Test connection — ${labels[state]}`}>
+/** The one Test connection button every connection uses: a light for how it stands (green verified, red needs attention, grey unknown), the words on hover. */
+export function MailConnectionControl({ state, onTest, words = labels, disabled }: { state: MailConnectionState; onTest: () => void; words?: Record<MailConnectionState, string>; disabled?: boolean }) {
+  return <Button size="sm" variant="text" disabled={disabled || state === 'checking'} onClick={onTest}
+    title={words[state]} aria-label={`Test connection — ${words[state]}`}>
     <Light $state={state} aria-hidden="true" />
     <Label>{state === 'checking' ? 'Testing…' : <>Test<span className="detail"> connection</span></>}</Label>
   </Button>

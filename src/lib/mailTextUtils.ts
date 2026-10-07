@@ -22,14 +22,31 @@ export function stripHtmlToText(html?: string): string {
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
     .replace(/&#8202;|&#8203;|&zwnj;|&zwj;/g, '')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, decodeEntity)
     .replace(/[\u200b\u200c\u200d\u200e\u200f\u202f]/g, '')
+}
+
+/** The named entities mail commonly carries; any other name is left as written. */
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', sbquo: '‚', bdquo: '„',
+  hellip: '…', bull: '•', middot: '·', copy: '©', reg: '®', trade: '™', deg: '°', euro: '€', pound: '£', yen: '¥', cent: '¢', sect: '§', para: '¶', laquo: '«', raquo: '»',
+  times: '×', divide: '÷', plusmn: '±', frac12: '½', frac14: '¼', frac34: '¾', micro: 'µ', ensp: ' ', emsp: ' ', thinsp: ' ', shy: '', iexcl: '¡', iquest: '¿',
+  eacute: 'é', egrave: 'è', ecirc: 'ê', euml: 'ë', aacute: 'á', agrave: 'à', acirc: 'â', auml: 'ä', atilde: 'ã', aring: 'å', aelig: 'æ', ccedil: 'ç', iacute: 'í', igrave: 'ì', icirc: 'î', iuml: 'ï',
+  ntilde: 'ñ', oacute: 'ó', ograve: 'ò', ocirc: 'ô', ouml: 'ö', otilde: 'õ', oslash: 'ø', uacute: 'ú', ugrave: 'ù', ucirc: 'û', uuml: 'ü', yacute: 'ý', yuml: 'ÿ', szlig: 'ß',
+  Eacute: 'É', Egrave: 'È', Aacute: 'Á', Agrave: 'À', Auml: 'Ä', Ouml: 'Ö', Uuml: 'Ü', Ccedil: 'Ç', Ntilde: 'Ñ', Oslash: 'Ø', Aring: 'Å', AElig: 'Æ',
+  rarr: '→', larr: '←', uarr: '↑', darr: '↓', harr: '↔', check: '✓', hearts: '♥', alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', pi: 'π', sigma: 'σ', omega: 'ω', infin: '∞', ne: '≠', le: '≤', ge: '≥', minus: '−',
+}
+
+/** One character reference, numeric (`&#8211;`, `&#x2013;`) or named (`&ndash;`), as the character it stands for. */
+function decodeEntity(whole: string, body: string): string {
+  if (body[0] === '#') {
+    const hex = body[1] === 'x' || body[1] === 'X'
+    const code = Number.parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10)
+    if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return whole
+    return String.fromCodePoint(code)
+  }
+  return body in NAMED_ENTITIES ? NAMED_ENTITIES[body]! : whole
 }
 
 function stripQuotedHtmlHistory(html?: string): {

@@ -180,6 +180,10 @@ describe('attachment preview and kind detection', () => {
     expect(
       attachmentPreviewKind(attachment({ mimeType: 'application/json' })),
     ).toBe('text')
+    // Office files name XML in their types but are zips: a Word file is read by the shell, a spreadsheet is not previewed.
+    expect(attachmentPreviewKind(attachment({ name: 'deal.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }))).toBe('word')
+    expect(attachmentPreviewKind(attachment({ name: 'deal.docx', mimeType: 'application/octet-stream' }))).toBe('word')
+    expect(attachmentPreviewKind(attachment({ name: 'figures.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))).toBeNull()
     // M3: PDFs now preview inline via <object>.
     expect(
       attachmentPreviewKind(attachment({ mimeType: 'application/pdf' })),

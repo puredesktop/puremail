@@ -37,11 +37,15 @@ export type PendingSendState = {
 }
 export interface AttachmentPreviewState {
   name: string
-  kind: 'image' | 'pdf' | 'text'
+  kind: 'image' | 'pdf' | 'text' | 'word'
   imageUrl?: string
   /** Data URL for inline PDF preview. */
   pdfUrl?: string
   text?: string
+  /** A Word document as the shell read it, already sanitised. */
+  html?: string
+  /** What did not come across in the reading. */
+  notes?: string[]
 }
 export type ReplyImproveState = {
   originalBody: string
@@ -382,7 +386,7 @@ export function threadStatusLabel(
   drafts: Draft[],
 ): string | null {
   const threadDrafts = drafts.filter(draft => draft.threadId === thread.id)
-  if (threadDrafts.some(draft => draft.sendState === 'uncertain' && !draft.sentAt)) return 'check Sent'
+  if (threadDrafts.some(draft => draft.sendState === 'uncertain' && !draft.sentAt)) return 'send unconfirmed'
   if (threadDrafts.some(draft => draft.sendError && !draft.sentAt)) return 'not sent'
   if (threadDrafts.some(isGeneratedDraft)) return 'draft ready'
   const manualDrafts = threadDrafts.filter(draft => !isGeneratedDraft(draft))
@@ -395,6 +399,18 @@ export function threadStatusLabel(
   if (threadReplyRequested(store, thread)) return 'reply requested'
   if (thread.status === 'inbox') return null
   return thread.status.replace(/_/g, ' ')
+}
+
+/** What a status chip means, for its tooltip, where the two words alone do not say. */
+export function threadStatusExplanation(label: string | null): string | undefined {
+  switch (label) {
+    case 'send unconfirmed': return 'A reply was sent, but the mail server never confirmed it went. Look in your Sent folder before sending it again, or it may go twice.'
+    case 'not sent': return 'A reply could not be sent. Open it to try again.'
+    case 'draft ready': return 'A reply the assistant drafted is waiting for you.'
+    case 'reply open': return 'You have an unsent reply here.'
+    case 'reply requested': return 'This message asks for a reply.'
+    default: return undefined
+  }
 }
 
 export function threadStatusTone(
