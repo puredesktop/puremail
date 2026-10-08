@@ -318,7 +318,7 @@ export function aiTriageFeed(
 export function applyAiTriage(
   store: MailStore,
   decisions: readonly AiTriageDecision[],
-  options: { decidedBy: 'agent' | 'user' | 'model'; now: Date; confidence?: number; model?: string; provider?: 'typesafe' | 'local' },
+  options: { decidedBy: 'agent' | 'user' | 'model'; now: Date; confidence?: number; model?: string; provider?: 'typesafe' | 'local' | 'openai' | 'local-jev' },
 ): AiTriageApplied {
   const decidedAt = options.now.toISOString()
   const threads = new Map(store.threads.map(thread => [thread.id, thread]))

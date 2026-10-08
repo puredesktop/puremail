@@ -1,4 +1,5 @@
-import { evaluateTypedJudgment, type TypedJudgmentRequest, type TypedJudgmentResult } from '@purescience/platform-ui/bridge/typedJudgments.mjs'
+import { evaluateDecision, type DecisionResult } from './decisionModels'
+import type { TypedJudgmentRequest } from '@purescience/platform-ui/bridge/typedJudgments.mjs'
 import { applyAiTriage, senderFacts, triageRow } from './aiTriage'
 import { aiTriageCurrent, latestDeliveredMessage, isAiTriageVerdict } from './aiTriageState'
 import { readTriageFile, updateTriageFile, type TriageFile } from './triagePersistence'
@@ -18,7 +19,7 @@ const questions:TypedJudgmentRequest['questions']={
   urgency:{type:'score',instructions:'How time-sensitive is the requested action, based on explicit deadlines rather than pressure language?',criteria:['No time-sensitive action','Action needed soon','Explicit immediate deadline']},
 }
 /** Code gates model judgments; it never guesses a verdict from keywords. */
-export function acceptedTypedVerdict(result:TypedJudgmentResult, threshold:number) {
+export function acceptedTypedVerdict(result:DecisionResult, threshold:number) {
   if(result.status!=='completed')return null
   const v=result.answers.verdict
   if(v?.type!=='choice' || !isAiTriageVerdict(v.choice) || v.confidence<threshold || v.probabilities[v.choice]<threshold)return null
@@ -30,12 +31,12 @@ export function acceptedTypedVerdict(result:TypedJudgmentResult, threshold:numbe
   return {verdict:v.choice,confidence:v.confidence,model:result.model,provider:result.provider}
 }
 export interface TriageRunnerDeps {
-  evaluate:typeof evaluateTypedJudgment
+  evaluate:typeof evaluateDecision
   read:typeof readTriageFile
   update:typeof updateTriageFile
   now:()=>number
 }
-const defaults:TriageRunnerDeps={evaluate:evaluateTypedJudgment,read:readTriageFile,update:updateTriageFile,now:Date.now}
+const defaults:TriageRunnerDeps={evaluate:evaluateDecision,read:readTriageFile,update:updateTriageFile,now:Date.now}
 export interface TriageRunOptions { reclassify?: boolean }
 /** Latest incoming message per conversation, newest first; dates use local calendar days. */
 export function triageCandidates(store:MailStore, options:{from?:string;to?:string;limit:number}) {
@@ -59,7 +60,7 @@ export function createTypedTriageRunner(getStore:()=>MailStore, publish:(records
     const summary:TriageRunSummary={completed:0}
     for(const id of ids) {
       const store=getStore(),settings=typedTriageSettings(store)
-      if(settings.mode==='off' || (settings.provider==='local' && !settings.localModel))return {...summary,stopReason:settings.mode==='off'?'off':'local-model-not-selected'}
+      if(settings.mode==='off')return {...summary,stopReason:'off'}
       const file=await deps.read(),current={...store,aiTriage:file.records}
       const thread=current.threads.find(t=>t.id===id), message=latestDeliveredMessage(current,id)
       if(!thread||!message||message.listUnsubscribe)continue
@@ -70,7 +71,7 @@ export function createTypedTriageRunner(getStore:()=>MailStore, publish:(records
       if(!options.reclassify && file.shadow.some(r=>r.threadId===id && r.messageId===message.id))continue
       const row=triageRow(current,thread,senderFacts(current))
       if(row.last==='you' || row.bulk)continue
-      const result=await deps.evaluate({state:{...row,...(options.reclassify?{classificationRun:runId}:{})},questions,dailyCap:settings.dailyCap,provider:settings.provider,...(settings.provider==='local'?{localModel:settings.localModel}:{})})
+      const result=await deps.evaluate({state:{...row,...(options.reclassify?{classificationRun:runId}:{})},questions,dailyCap:settings.dailyCap})
       if(result.status==='skipped') {
         if(result.reason==='already-attempted')continue
         return {...summary,stopReason:result.reason} // No key/network/cap: leave the drawer path untouched, no retry loop.
@@ -84,11 +85,11 @@ export function createTypedTriageRunner(getStore:()=>MailStore, publish:(records
       const records=await deps.update(file=>{
         let source={...getStore(),aiTriage:file.records}
         const settings=typedTriageSettings(source)
-        if(settings.mode==='off' || settings.provider!==(result.provider??'typesafe') || (settings.provider==='local' && settings.localModel!==result.model))return {file,result:file.records}
-        const accepted=acceptedTypedVerdict(result,settings.provider==='local'?settings.localConfidence:settings.confidence)
+        if(settings.mode==='off')return {file,result:file.records}
+        const accepted=acceptedTypedVerdict(result,settings.confidence)
         if(latestDeliveredMessage(source,id)?.id!==message.id)return {file,result:file.records}
-        const decision={id,at:message.receivedAt,verdict:answer.choice,reason:`${settings.provider==='local'?'Local model':'TypeSafe'} suggestion (${Math.round(answer.confidence*100)}% confidence).`}
-        const modelOptions={decidedBy:'model' as const,now:new Date(deps.now()),confidence:answer.confidence,model:result.model,provider:settings.provider}
+        const decision={id,at:message.receivedAt,verdict:answer.choice,reason:`Decision models/system one models suggestion (${Math.round(answer.confidence*100)}% confidence).`}
+        const modelOptions={decidedBy:'model' as const,now:new Date(deps.now()),confidence:answer.confidence,model:result.model,provider:result.provider}
         const candidate=applyAiTriage({...source,aiTriage:[]},[decision],modelOptions).store.aiTriage?.[0]
         const shadow=candidate ? [candidate,...file.shadow.filter(r=>r.messageId!==message.id)].slice(0,3000) : file.shadow
         if(options.reclassify && settings.mode==='suggest')source={...source,aiTriage:file.records.filter(r=>!(r.messageId===message.id && r.decidedBy==='model'))}

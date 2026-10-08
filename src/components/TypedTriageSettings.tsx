@@ -1,9 +1,10 @@
+import { DecisionModelSettings } from './DecisionModelSettings'
+import { getDecisionModelSettings, type DecisionSettings } from '../lib/decisionModels'
 import { useEffect, useRef, useState } from 'react'
 import { styled } from 'styled-components'
 import { Badge } from '@purescience/platform-ui/components/common/feedback/Badge'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { SelectField } from '@purescience/platform-ui/components/common/inputs/SelectField'
-import { getTypedJudgmentStatus, type TypedJudgmentStatus } from '@purescience/platform-ui/bridge/typedJudgments.mjs'
 import { typedTriageSettings, shadowComparison, triageCandidates } from '../lib/typedTriage'
 import { connectionTestMessage, testTypedTriageConnection } from '../lib/typedTriageConnection'
 import { readTriageFile } from '../lib/triagePersistence'
@@ -32,11 +33,12 @@ const MODE_WORDS: Record<Mode, { badge: string; tone: 'neutral' | 'accent'; help
  * Every field saves as it is changed, once it is valid.
  */
 export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: MailStore; setStore: React.Dispatch<React.SetStateAction<MailStore>>; onRunTriage: (ids?: string[], options?: RunOptions) => Promise<RunSummary> }) {
+  const [status, setStatus] = useState<DecisionSettings | null>(null)
   const prefs = typedTriageSettings(store)
-  const selection = `${prefs.provider}:${prefs.localModel}`
+  const selection = status?.effectiveModelId ?? ''
   const selectionRef = useRef(selection); selectionRef.current = selection
-  const local = prefs.provider === 'local'
-  const threshold = local ? prefs.localConfidence : prefs.confidence
+  const local = status?.effectiveModelId.startsWith('local-jev:') ?? false
+  const threshold = prefs.confidence
   function patch(update: Partial<Prefs>) { setStore(current => ({ ...current, settings: { ...current.settings, typedTriage: { ...typedTriageSettings(current), ...update } } })) }
 
   // The two numbers as typed, so each can be cleared and typed afresh; saved once valid.
@@ -48,18 +50,15 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
   const validCap = /^\d+$/.test(capText.trim()) && Number(capText) >= 1 && Number(capText) <= 1000
 
   // How it stands: the bridge's status and the shadow trial's tally.
-  const [status, setStatus] = useState<TypedJudgmentStatus | null>(null)
   const [error, setError] = useState('')
   const [comparison, setComparison] = useState({ sampled: 0, compared: 0, agree: 0 })
   async function refresh() {
-    try { const [s, f] = await Promise.all([getTypedJudgmentStatus(), readTriageFile()]); setStatus(s); setComparison(shadowComparison(f)); setError('') }
-    catch { setError('The judgment bridge is unavailable, so automatic triage is inactive.') }
+    try { const [s, f] = await Promise.all([getDecisionModelSettings(), readTriageFile()]); setStatus(s); setComparison(shadowComparison(f)); setError('') }
+    catch { setError('The decision models/system one models service is unavailable, so automatic triage is inactive.') }
   }
   useEffect(() => { void refresh() }, [])
-  const ready = local ? !!(status?.local?.available && prefs.localModel && status.local.models.includes(prefs.localModel)) : !!status?.configured
-  const standing = !status ? 'Checking the bridge…'
-    : local ? (status.local?.available ? (ready ? `Local model ${prefs.localModel}` : 'Choose an installed local model') : 'Local runtime (Ollama) unavailable')
-      : status.configured ? 'TypeSafe key saved' : 'No TypeSafe key: add it in desktop Settings › API keys'
+  const ready = !!status?.configured
+  const standing = status?.models.find(m => m.id === status.effectiveModelId)?.label ?? 'Checking decision models/system one models…'
 
   // One result box for whatever was done last: the test, or a run.
   const [result, setResult] = useState<{ tone: ConnectionResultTone; title: string; detail?: string } | null>(null)
@@ -70,10 +69,10 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
     setTesting(true); setTestState('checking'); setResult(null)
     const selected = selection
     try {
-      const r = await testTypedTriageConnection(prefs.dailyCap, prefs.provider, prefs.localModel)
+      const r = await testTypedTriageConnection(prefs.dailyCap)
       if (selectionRef.current === selected) { const ok = r.status === 'completed'; setTestState(ok ? 'healthy' : 'error'); setResult({ tone: ok ? 'success' : 'warning', title: ok ? 'Connection verified' : 'Connection not verified', detail: connectionTestMessage(r) }) }
     } catch {
-      if (selectionRef.current === selected) { setTestState('error'); setResult({ tone: 'warning', title: 'Connection not verified', detail: 'The judgment bridge could not complete the request.' }) }
+      if (selectionRef.current === selected) { setTestState('error'); setResult({ tone: 'warning', title: 'Connection not verified', detail: 'The decision models/system one models service could not complete the request.' }) }
     } finally { setTesting(false); await refresh() }
   }
 
@@ -98,23 +97,18 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
     <SettingsCardHeader>
       <div>
         <Subject>Automatic triage</Subject>
-        <Meta>{local ? 'Classifies recent incoming mail with the model in your local Ollama runtime; nothing leaves this computer.' : 'Sends recent incoming mail excerpts and sender details to TypeSafe to classify.'} Bulk mail is skipped. No mail is moved or sent.</Meta>
+        <Meta>Uses the selected decision models/system one models service to classify recent incoming mail excerpts and sender details. Bulk mail is skipped. No mail is moved or sent.</Meta>
       </div>
       <Badge tone={mode.tone}>{mode.badge}</Badge>
     </SettingsCardHeader>
 
+    <h3>Decision models/system one models</h3><DecisionModelSettings onSettingsChange={setStatus} />
     <SettingsOptionGrid>
-      <TaskField>Classified by
-        <SelectField aria-label="Triage provider" value={prefs.provider} options={[{ value: 'typesafe', label: 'TypeSafe' }, { value: 'local', label: 'Local model (Ollama)' }]} onValueChange={provider => patch({ provider: provider as Prefs['provider'] })} />
-      </TaskField>
       <TaskField>Used as
         <SelectField aria-label="Automatic triage mode" value={prefs.mode} options={[{ value: 'off', label: 'Off' }, { value: 'shadow', label: 'Shadow trial' }, { value: 'suggest', label: 'Suggestions in the inbox' }]} onValueChange={m => patch({ mode: m as Mode })} />
       </TaskField>
-      {local && <TaskField>Local model
-        <SelectField aria-label="Local triage model" value={prefs.localModel} options={[{ value: '', label: 'Choose an installed model' }, ...(status?.local?.models ?? []).map(value => ({ value, label: value }))]} onValueChange={localModel => patch({ localModel })} />
-      </TaskField>}
     </SettingsOptionGrid>
-    <Meta>{mode.help}{local ? ' A local model’s confidence is self-reported, not a calibrated score: try a shadow trial before suggestions.' : ''}</Meta>
+    <Meta>{mode.help} Try a shadow trial before enabling suggestions.</Meta>
 
     <SettingsOptionGrid>
       <TaskField>Requests a day, at most
@@ -122,9 +116,9 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
           onChange={e => { const v = e.target.value; setCapText(v); if (/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= 1000) patch({ dailyCap: Number(v) }) }} />
         <Meta>{validCap ? 'Failed attempts and connection tests count too.' : 'A whole number from 1 to 1,000.'}</Meta>
       </TaskField>
-      <TaskField>{local ? 'Confidence a suggestion needs (self-reported)' : 'Confidence a suggestion needs'}
+      <TaskField>Confidence a suggestion needs
         <NumberField aria-label="Triage confidence" type="number" inputMode="decimal" min={0.5} max={1} step={0.05} value={confidenceText} aria-invalid={!validConfidence}
-          onChange={e => { const v = e.target.value; setConfidenceText(v); const c = Number(v); if (v.trim() !== '' && c >= 0.5 && c <= 1) patch(local ? { localConfidence: c } : { confidence: c }) }} />
+          onChange={e => { const v = e.target.value; setConfidenceText(v); const c = Number(v); if (v.trim() !== '' && c >= 0.5 && c <= 1) patch({ confidence: c }) }} />
         <Meta>{validConfidence ? 'From 0.5 to 1. Results below it stay with the drawer.' : 'A number from 0.5 to 1.'}</Meta>
       </TaskField>
     </SettingsOptionGrid>
