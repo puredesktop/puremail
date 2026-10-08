@@ -17,7 +17,7 @@ function harness(mode:'off'|'shadow'|'suggest'='suggest') {
  const run=createTypedTriageRunner(()=>store,records=>{store={...store,aiTriage:records}},deps)
  return {fixture,run,evaluate,getStore:()=>store,setStore:(s:typeof store)=>{store=s},file:()=>file,setFile:(f:TriageFile)=>{file=f}}
 }
-describe('Decision models/system one models Mail trial',()=>{
+describe('Decision models Mail trial',()=>{
  it('inherits provider selection from the shared service and records the returned provider',async()=>{const h=harness();h.evaluate.mockResolvedValue({...result,provider:'openai'});await h.run(['t_ask']);expect(h.evaluate.mock.calls[0][0]).not.toHaveProperty('provider');expect(h.evaluate.mock.calls[0][0]).not.toHaveProperty('localModel');expect(h.file().records[0].provider).toBe('openai')})
  it('is off by default and skips bulk/outgoing messages',async()=>{const h=harness('off');await h.run(['t_ask']);expect(h.evaluate).not.toHaveBeenCalled();const live=harness();await live.run(['t_news','t_mine']);expect(live.evaluate).not.toHaveBeenCalled()})
  it('stores shadow results without altering the inbox or drawer queue',async()=>{const h=harness('shadow');await h.run(['t_ask']);expect(h.file().shadow).toHaveLength(1);expect(h.file().records).toHaveLength(0);expect(aiTriageCurrent(h.getStore(),{id:'t_ask'})).toBeNull()})

@@ -88,7 +88,7 @@ export function createTypedTriageRunner(getStore:()=>MailStore, publish:(records
         if(settings.mode==='off')return {file,result:file.records}
         const accepted=acceptedTypedVerdict(result,settings.confidence)
         if(latestDeliveredMessage(source,id)?.id!==message.id)return {file,result:file.records}
-        const decision={id,at:message.receivedAt,verdict:answer.choice,reason:`Decision models/system one models suggestion (${Math.round(answer.confidence*100)}% confidence).`}
+        const decision={id,at:message.receivedAt,verdict:answer.choice,reason:`Decision models suggestion (${Math.round(answer.confidence*100)}% confidence).`}
         const modelOptions={decidedBy:'model' as const,now:new Date(deps.now()),confidence:answer.confidence,model:result.model,provider:result.provider}
         const candidate=applyAiTriage({...source,aiTriage:[]},[decision],modelOptions).store.aiTriage?.[0]
         const shadow=candidate ? [candidate,...file.shadow.filter(r=>r.messageId!==message.id)].slice(0,3000) : file.shadow

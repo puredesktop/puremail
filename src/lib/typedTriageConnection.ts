@@ -25,12 +25,12 @@ export function connectionTestMessage(result: DecisionResult): string {
     return `Connection verified · ${result.model} · ${result.latencyMs} ms. A valid typed response was received. This checks connectivity, not triage quality.`
   }
   switch (result.reason) {
-    case 'settings-changed': return 'Decision models/system one models selection changed during the test. Run a new test.'
-    case 'missing-key': return 'No decision models/system one models key saved. Add it in desktop Settings → API keys, then test again.'
+    case 'settings-changed': return 'Decision models selection changed during the test. Run a new test.'
+    case 'missing-key': return 'No decision models key saved. Add it in desktop Settings → API keys, then test again.'
     case 'daily-cap': return 'Test not run: the daily request limit has been reached.'
     case 'already-attempted': return 'This test was already attempted. Run a new test to verify the connection.'
     case 'local-unavailable': return 'Test failed: no valid local response. Check the local decision runtime and selected model.'
-    case 'unavailable': return 'Test failed: no valid response from the decision models/system one models provider. Check the API key and connection, then try again.'
+    case 'unavailable': return 'Test failed: no valid response from the decision models provider. Check the API key and connection, then try again.'
   }
 }
 

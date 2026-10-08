@@ -54,11 +54,11 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
   const [comparison, setComparison] = useState({ sampled: 0, compared: 0, agree: 0 })
   async function refresh() {
     try { const [s, f] = await Promise.all([getDecisionModelSettings(), readTriageFile()]); setStatus(s); setComparison(shadowComparison(f)); setError('') }
-    catch { setError('The decision models/system one models service is unavailable, so automatic triage is inactive.') }
+    catch { setError('The decision models service is unavailable, so automatic triage is inactive.') }
   }
   useEffect(() => { void refresh() }, [])
   const ready = !!status?.configured
-  const standing = status?.models.find(m => m.id === status.effectiveModelId)?.label ?? 'Checking decision models/system one models…'
+  const standing = status?.models.find(m => m.id === status.effectiveModelId)?.label ?? 'Checking decision models…'
 
   // One result box for whatever was done last: the test, or a run.
   const [result, setResult] = useState<{ tone: ConnectionResultTone; title: string; detail?: string } | null>(null)
@@ -72,7 +72,7 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
       const r = await testTypedTriageConnection(prefs.dailyCap)
       if (selectionRef.current === selected) { const ok = r.status === 'completed'; setTestState(ok ? 'healthy' : 'error'); setResult({ tone: ok ? 'success' : 'warning', title: ok ? 'Connection verified' : 'Connection not verified', detail: connectionTestMessage(r) }) }
     } catch {
-      if (selectionRef.current === selected) { setTestState('error'); setResult({ tone: 'warning', title: 'Connection not verified', detail: 'The decision models/system one models service could not complete the request.' }) }
+      if (selectionRef.current === selected) { setTestState('error'); setResult({ tone: 'warning', title: 'Connection not verified', detail: 'The decision models service could not complete the request.' }) }
     } finally { setTesting(false); await refresh() }
   }
 
@@ -97,12 +97,12 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
     <SettingsCardHeader>
       <div>
         <Subject>Automatic triage</Subject>
-        <Meta>Uses the selected decision models/system one models service to classify recent incoming mail excerpts and sender details. Bulk mail is skipped. No mail is moved or sent.</Meta>
+        <Meta>Uses the selected decision models service to classify recent incoming mail excerpts and sender details. Bulk mail is skipped. No mail is moved or sent.</Meta>
       </div>
       <Badge tone={mode.tone}>{mode.badge}</Badge>
     </SettingsCardHeader>
 
-    <h3>Decision models/system one models</h3><DecisionModelSettings onSettingsChange={setStatus} />
+    <h3>Decision models</h3><DecisionModelSettings onSettingsChange={setStatus} />
     <SettingsOptionGrid>
       <TaskField>Used as
         <SelectField aria-label="Automatic triage mode" value={prefs.mode} options={[{ value: 'off', label: 'Off' }, { value: 'shadow', label: 'Shadow trial' }, { value: 'suggest', label: 'Suggestions in the inbox' }]} onValueChange={m => patch({ mode: m as Mode })} />
