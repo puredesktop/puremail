@@ -23,6 +23,14 @@ async function click(text: string) {
   await act(async () => button.click())
 }
 describe('server search results', () => {
+  it('opens Calendar beside Mail from the labeled toolbar icon', async () => {
+    const openCalendar = vi.fn()
+    await act(async () => root.render(<MailTopBar {...props()} openCalendar={openCalendar} />))
+    const button = container.querySelector('[aria-label="Open PureCalendar beside Mail"]') as HTMLButtonElement
+    expect(button).toBeTruthy()
+    await act(async () => button.click())
+    expect(openCalendar).toHaveBeenCalledOnce()
+  })
   it('keeps recovery reachable from the account menu after a toast is dismissed', async () => {
     const p = props()
     const openRecovery = vi.fn()

@@ -199,6 +199,7 @@ import {
   isStandaloneDevMode,
   listOperations,
   mailPdfDeps,
+  openCalendarApp,
   mergeMailSettings,
   recordOperation,
 } from '../bridge/platformBridge'
@@ -4130,6 +4131,9 @@ export function PureMailShell({
         state={!networkOnline ? 'offline' : testingConnection ? 'checking' : connectionError || !mailProvider ? 'error' : mailConnectionsVerified(connectionTest) ? 'healthy' : connectionTest ? 'error' : 'unknown'}
         onTest={() => void testMailConnection()}
       />}
+      openCalendar={() => {
+        void openCalendarApp('beside').catch(error => setCommandNotice(calendarHandoffErrorMessage(error)))
+      }}
       openSettings={() => setMailSettingsOpen(true)}
       openRecovery={openMailRecovery}
     />
