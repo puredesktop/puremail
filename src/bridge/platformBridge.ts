@@ -548,9 +548,9 @@ export async function openFileViewerWindow(request: {
 }
 
 /** Ask the shell to front the calendar app (8a's "Open in PureCalendar"). */
-export async function openCalendarApp(): Promise<void> {
+export async function openCalendarApp(placement?: 'beside'): Promise<void> {
   await bridge.call(PLATFORM_BRIDGE_METHODS.WORKSPACE_OPEN_APP, [
-    { appSlug: 'calendar' },
+    { appSlug: 'calendar', ...(placement ? { placement } : {}) },
   ])
 }
 

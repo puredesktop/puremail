@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  CalendarDays,
   ChevronDown,
   RefreshCw,
   Rows2,
@@ -96,6 +97,7 @@ export interface MailTopBarProps {
   density: MailDensity
   setDensity: (density: MailDensity) => void
   connectionControl?: React.ReactNode
+  openCalendar?: () => void
   openSettings: () => void
   openRecovery?: () => void
 }
@@ -139,6 +141,7 @@ export function MailTopBar({
   mailFetchDisabled,
   density,
   setDensity,
+  openCalendar,
   openSettings,
   connectionControl,
   openRecovery,
@@ -550,6 +553,16 @@ export function MailTopBar({
         )}
       </TopSearchWrap>
       <TopBarSpacer />
+      {openCalendar && (
+        <TopBarIconButton
+          type="button"
+          aria-label="Open PureCalendar beside Mail"
+          title="Open PureCalendar beside Mail"
+          onClick={openCalendar}
+        >
+          <CalendarDays aria-hidden="true" />
+        </TopBarIconButton>
+      )}
       {connectionControl}
       <TopBarIconButton
         type="button"
