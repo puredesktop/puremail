@@ -17,7 +17,7 @@ import {
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, X } from 'lucide-react'
 import { assignHandoff, buildThreadHandoff } from '../lib/assignHandoff'
 import {
   MAIL_LIST_FILTERS,
@@ -655,6 +655,7 @@ export function PureMailShell({
   const [connectionTest, setConnectionTest] = useState<{ receiving: string; sending: string } | null>(null)
   const [testingConnection, setTestingConnection] = useState(false)
   const [syncReviewOpen, setSyncReviewOpen] = useState(false)
+  const [syncReviewExpanded, setSyncReviewExpanded] = useState(true)
   const [repairingSentId, setRepairingSentId] = useState<string | null>(null)
   const notifiedMailIssues = useRef(new Set<string>())
   const [connectionError, setConnectionError] = useState<string | null>(null)
@@ -4102,6 +4103,7 @@ export function PureMailShell({
     setRunScreen(null)
     setReading(false)
     setComposeMode('closed')
+    setSyncReviewExpanded(true)
     setSyncReviewOpen(true)
   }
 
@@ -4375,13 +4377,19 @@ export function PureMailShell({
         <PaneScroll data-mail-scroll>
         {syncReviewOpen && (
           <Section aria-live="polite">
-            <Kicker>Mail recovery</Kicker>
-            <Button size="sm" variant="text" onClick={() => setSyncReviewOpen(false)}>Close</Button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <Button size="sm" variant="text" aria-expanded={syncReviewExpanded} aria-controls="mail-recovery-details" onClick={() => setSyncReviewExpanded(expanded => !expanded)}>
+                {syncReviewExpanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+                Mail recovery
+              </Button>
+              <Button size="sm" variant="text" onClick={() => setSyncReviewOpen(false)}>Close</Button>
+            </div>
             <Meta>
               {syncSummary.conflict} conflict
               {syncSummary.conflict === 1 ? '' : 's'} and {syncSummary.failed}{' '}
               failed item{syncSummary.failed === 1 ? '' : 's'} need review.
             </Meta>
+            <div id="mail-recovery-details" hidden={!syncReviewExpanded}>
             <Meta>Review each item below. Retrying draft sync saves a draft; it does not send mail.</Meta>
             {store.drafts.filter(draft => (draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId)).map(draft => (
               <div key={draft.id} style={{ padding: '12px 0', borderTop: '1px solid var(--platform-colors-border, #ddd)' }}>
@@ -4436,9 +4444,10 @@ export function PureMailShell({
                 <Button size="sm" variant="subtle" onClick={() => setSelectedThreadId(task.source.threadId)}>Open source message</Button>
               </div>
             ))}
+            </div>
           </Section>
         )}
-        {syncReviewOpen && persistFailure && (
+        {syncReviewOpen && syncReviewExpanded && persistFailure && (
           <Section aria-live="polite">
             <Kicker>
               {persistFailure.draftsLost
