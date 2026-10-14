@@ -197,6 +197,51 @@ describe('ImapMailProvider against the fake transport', () => {
     expect(imap.boxes.get('INBOX')).toHaveLength(1)
   })
 
+  it('keeps a successful unstar when a mirror copy rejects the flag change', async () => {
+    const imap = fakeImap()
+    imap.boxes.get('Archive')!.push({ ...imap.boxes.get('INBOX')![1], uid: 90 })
+    const setFlag = imap.setFlag.bind(imap)
+    const attempted: string[] = []
+    imap.setFlag = async (folder, uid, flag, on) => {
+      attempted.push(folder)
+      if (folder === 'Archive') throw new Error('mirror refused')
+      await setFlag(folder, uid, flag, on)
+    }
+    const { provider: mail } = provider(imap)
+    const store = await mail.fetchStore()
+    const invoice = store.threads.find(thread => thread.subject.includes('invoice'))!
+    await expect(mail.setThreadStarred(invoice.id, false)).resolves.toBeUndefined()
+    expect(attempted).toContain('Archive')
+    expect(imap.boxes.get('INBOX')!.some(message => message.flags.includes('\\Flagged'))).toBe(false)
+  })
+
+  it('tries the remaining copies after the first flag change fails', async () => {
+    const imap = fakeImap()
+    const setFlag = imap.setFlag.bind(imap)
+    const attempted: number[] = []
+    imap.setFlag = async (folder, uid, flag, on) => {
+      attempted.push(uid)
+      if (attempted.length === 1) throw new Error('first copy refused')
+      await setFlag(folder, uid, flag, on)
+    }
+    const { provider: mail } = provider(imap)
+    const store = await mail.fetchStore()
+    const invoice = store.threads.find(thread => thread.subject.includes('invoice'))!
+    await expect(mail.setThreadStarred(invoice.id, false)).resolves.toBeUndefined()
+    expect(attempted).toHaveLength(2)
+  })
+
+  it('reports failure when every copy rejects the flag change', async () => {
+    const imap = fakeImap()
+    let attempted = 0
+    imap.setFlag = async () => { attempted++; throw new Error('all copies refused') }
+    const { provider: mail } = provider(imap)
+    const store = await mail.fetchStore()
+    const invoice = store.threads.find(thread => thread.subject.includes('invoice'))!
+    await expect(mail.setThreadStarred(invoice.id, false)).rejects.toThrow('all copies refused')
+    expect(attempted).toBe(2)
+  })
+
   it('appends drafts to the Drafts folder and sends through SMTP', async () => {
     const { provider: imapProvider, imap, smtp } = provider()
     await imapProvider.fetchStore()
