@@ -733,7 +733,7 @@ describe('bridge transport', () => {
 })
 
 describe('account presets and validation', () => {
-  it('ships iCloud, Fastmail, Proton Bridge, and generic presets', () => {
+  it('ships Gmail, Proton Bridge, and generic presets with TLS for Bridge', () => {
     const ids = IMAP_ACCOUNT_PRESETS.map(preset => preset.id)
     expect(ids).toEqual(['gmail-app-password', 'proton-bridge', 'generic'])
     const proton = IMAP_ACCOUNT_PRESETS.find(
@@ -741,7 +741,10 @@ describe('account presets and validation', () => {
     )!
     expect(proton.imapHost).toBe('127.0.0.1')
     expect(proton.imapPort).toBe(1143)
+    expect(proton.imapSecurity).toBe('starttls')
+    expect(proton.smtpHost).toBe('127.0.0.1')
     expect(proton.smtpPort).toBe(1025)
+    expect(proton.smtpSecurity).toBe('starttls')
   })
 
   it('validates required fields with clear messages', () => {

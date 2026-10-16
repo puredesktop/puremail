@@ -1182,7 +1182,7 @@ export function MailSettings({
                                           <option value="starttls">
                                             STARTTLS
                                           </option>
-                                          <option value="none">None</option>
+                                          <option value="none">None (local development only)</option>
                                         </SelectField>
                                       </ConnectionFieldLabel>
                                     </ConnectionFieldPair>
@@ -1273,7 +1273,7 @@ export function MailSettings({
                                           <option value="starttls">
                                             STARTTLS
                                           </option>
-                                          <option value="none">None</option>
+                                          <option value="none">None (local development only)</option>
                                         </SelectField>
                                       </ConnectionFieldLabel>
                                     </ConnectionFieldPair>
