@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { readingAgentRefs } from '../lib/agentRefs'
 import { styled } from 'styled-components'
 import { ArrowLeft, Bookmark, FolderOpen, Lock, Search } from 'lucide-react'
 import {
@@ -82,7 +83,7 @@ export function NotesIndex({
             const counts = noteCounts(record)
             const notes = orderedNotes(record).filter(note => show === 'all' || note.kind === show)
             return (
-              <Card key={record.messageId}>
+              <Card key={record.messageId} {...readingAgentRefs(record)}>
                 <div className="top">
                   <div className="who">
                     <span className="meta">
@@ -198,7 +199,7 @@ export function ContextIndex({
               context.include.privateNotes && counts.private ? `${counts.private} private ${counts.private === 1 ? 'note' : 'notes'}` : '',
             ].filter(Boolean)
             return (
-              <Card key={record.messageId}>
+              <Card key={record.messageId} {...readingAgentRefs(record)}>
                 <div className="top">
                   <div className="who">
                     <span className="meta">

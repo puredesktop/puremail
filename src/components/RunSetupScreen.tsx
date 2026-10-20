@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { draftAgentRefs, runAgentRefs, runItemAgentRefs } from '../lib/agentRefs'
 import {
   ArrowLeft,
   ClipboardPaste,
@@ -401,7 +402,7 @@ export function RunSetupScreen({
     .join(' · ')
 
   return (
-    <RunSurface aria-label={`Set up run ${run.name}`} data-puremail-run-setup>
+    <RunSurface aria-label={`Set up run ${run.name}`} data-puremail-run-setup {...runAgentRefs(run)}>
       <RunHeaderBar>
         <RunHeaderBack type="button" aria-label="Back" onClick={() => { flush(); onBack() }}>
           <ArrowLeft aria-hidden="true" />
@@ -518,6 +519,7 @@ export function RunSetupScreen({
               variant="run"
               runChrome={{
                 mode: 'template',
+                draftId: template.id,
                 title: `${run.status === 'setup' ? 'New run' : 'Run'} · ${run.name}`,
                 meta: cardMeta,
                 tokens,
@@ -699,7 +701,7 @@ export function RunSetupScreen({
                 <SetupSourceMeta>No other unsent drafts to add.</SetupSourceMeta>
               )}
               {pickableDrafts.slice(0, 40).map(draft => (
-                <SetupDraftRow key={draft.id}>
+                <SetupDraftRow key={draft.id} {...draftAgentRefs(draft)}>
                   <input
                     type="checkbox"
                     checked={pickedDraftIds.includes(draft.id)}
@@ -840,7 +842,7 @@ export function RunSetupScreen({
               </SetupSectionLabel>
               <SetupCard>
                 {run.items.slice(0, 12).map(item => (
-                  <SetupFieldRow key={item.draftId}>
+                  <SetupFieldRow key={item.draftId} {...runItemAgentRefs(item)}>
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {item.label ?? item.draftId}
                     </span>

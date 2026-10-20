@@ -156,6 +156,7 @@ import {
   type PendingSendState,
 } from './mailShellHelpers'
 import { RecipientChipsInput } from './RecipientChipsInput'
+import { draftAgentRefs } from '../lib/agentRefs'
 
 type ComposeSendSnapshot = {
   to: string
@@ -204,6 +205,8 @@ export interface RunComposeChrome {
   discardArmed?: boolean
   /** Attachment row note: "go on every draft" / "shared by the run". */
   attachmentNote?: string
+  /** The draft this card edits — markup only, for the agent activity layer. */
+  draftId?: string
 }
 
 export interface ComposeEditorProps {
@@ -1481,6 +1484,12 @@ export function ComposeEditor({
         ? 'Forward'
         : 'Reply'
       : 'New message')
+  /** The draft on screen, tagged so agent draft tools mark this window. */
+  const composeDraftId =
+    variant === 'run' ? runChrome?.draftId ?? null : composeContext?.draftId ?? null
+  const composeAgentRefs = composeDraftId
+    ? draftAgentRefs({ id: composeDraftId, subject: dockTitle })
+    : {}
 
   /**
    * The 28px context strip under the title bar: what this window answers,
@@ -1609,6 +1618,7 @@ export function ComposeEditor({
             uncontrolled rich-text body keeps its DOM — restore is instant
             and loses nothing. */}
         <ComposeDockWindow
+          {...composeAgentRefs}
           aria-label={
             runMode === 'item'
               ? 'Run draft'
@@ -2255,7 +2265,7 @@ export function ComposeEditor({
   }
 
   return (
-    <ComposeScreen aria-label="Compose mail">
+    <ComposeScreen aria-label="Compose mail" {...composeAgentRefs}>
       <ComposeHeader>
         <div>
           <Kicker>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { runAgentRefs, runItemAgentRefs } from '../lib/agentRefs'
 import {
   ArrowLeft,
   Check,
@@ -294,6 +295,7 @@ export function RunScreen({
 
   return (
     <RunSurface
+      {...runAgentRefs(run)}
       ref={surfaceRef}
       aria-label={`Send run ${run.name}`}
       tabIndex={-1}
@@ -440,6 +442,7 @@ export function RunScreen({
               variant="run"
               runChrome={{
                 mode: 'item',
+                draftId: draft.id,
                 title: `Draft ${cursor + 1} of ${run.items.length}`,
                 meta: cardMeta,
                 hint: '⌘← previous · ⌘→ skip',
@@ -509,6 +512,7 @@ export function RunScreen({
               return (
                 <RunRailRow
                   key={`${entry.draftId}-${index}`}
+                  {...runItemAgentRefs(entry)}
                   type="button"
                   $active={active}
                   $muted={entry.status === 'skipped' || entry.status === 'missing'}
