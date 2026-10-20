@@ -180,7 +180,12 @@ describe('run tools: setup', () => {
     expect(templated.noteSlot).toBe(false)
     const slot = parse(insertRunNoteSlotHandler(context, { runId }))
     expect(slot.changed).toBe(true)
-    expect(slot.body).toBe('Hi {{first_name}},\n\n{{note}}\n\nSee you there.\n\nAdam')
+    // The reply says where the slot went, not the whole template body.
+    expect(slot).not.toHaveProperty('body')
+    expect(slot).toMatchObject({ placement: 'after-first-paragraph', slotAfter: 'Hi {{first_name}},' })
+    expect(context.store.drafts.find(draft => draft.id === slot.templateDraftId)?.body).toBe(
+      'Hi {{first_name}},\n\n{{note}}\n\nSee you there.\n\nAdam',
+    )
     expect(parse(insertRunNoteSlotHandler(context, { runId })).changed).toBe(false)
     const preview = parse(previewRunItemHandler(context, { runId }))
     expect(preview).toMatchObject({ row: 2, to: { name: 'Sarah Example', email: 'sarah@design.example' }, subject: 'Hello Sarah', noteSlot: true })
@@ -303,5 +308,31 @@ describe('run tools: the loop', () => {
     const offline = makeContext({ sendStoreDraft: undefined })
     const offlineRun = await setUpRenderedRun(offline)
     expect(() => sendRunItemHandler(offline, { runId: offlineRun })).toThrow(/unavailable/)
+  })
+
+  it('keeps setRunRecipients and renderRun replies small on a long list with many bad rows', async () => {
+    const context = makeContext()
+    const created = parse(await createRunHandler(context, { name: 'Big list', subject: 'Hi {{first_name}}', body: 'Hello {{first_name}}' }))
+    const runId = created.runId
+    const lines = [
+      ...Array.from({ length: 500 }, (_, index) => `person${index}@list.example, Person ${index}`),
+      ...Array.from({ length: 300 }, (_, index) => `not-an-address-${index}`),
+      ...Array.from({ length: 100 }, (_, index) => `person${index}@list.example, Again ${index}`),
+    ]
+    const recipientsResult = setRunRecipientsHandler(context, { runId, recipients: lines.join('\n') })
+    const recipients = parse(await recipientsResult)
+    expect(recipients).toMatchObject({ rows: 900, valid: 500, invalidTotal: 300, duplicatesTotal: 100 })
+    expect(recipients.invalid).toHaveLength(20)
+    expect(recipients.duplicates).toHaveLength(20)
+    expect((await recipientsResult).content.length).toBeLessThan(6_000)
+    const renderResult = renderRunHandler(context, { runId })
+    const rendered = parse(renderResult)
+    expect(rendered).toMatchObject({ created: 500, items: 500, excludedTotal: 400 })
+    expect(rendered.excluded).toHaveLength(20)
+    expect(renderResult.content.length).toBeLessThan(4_000)
+    // The read still has every row.
+    const run = parse(getRunHandler(context, { runId }))
+    expect(run.invalidRows).toHaveLength(300)
+    expect(run.duplicateRows).toHaveLength(100)
   })
 })

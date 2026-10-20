@@ -438,7 +438,7 @@
         {
           "name": "getDraft",
           "risk": "read",
-          "description": "Read one draft in full, including its body, by draftId.",
+          "description": "Read one draft in full, including its body, by draftId. Its version is a short opaque token: pass it unchanged as updateDraft's expectedVersion.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -866,7 +866,7 @@
         },
         {
           "name": "renderRun",
-          "description": "Render (or re-render) the run's drafts from its template: one ordinary draft per valid recipient row, {{tokens}} substituted, the template's attachments on each, the {{note}} slot left empty for the loop. Idempotent: unsent drafts update in place (a note already typed is kept), sent items are never touched, rows that dropped out lose their unsent draft. Invalid addresses and duplicates are excluded with reasons. Requires a template with content and a mapped email column \u2014 getRun shows both. Nothing sends.",
+          "description": "Render (or re-render) the run's drafts from its template: one ordinary draft per valid recipient row, {{tokens}} substituted, the template's attachments on each, the {{note}} slot left empty for the loop. Idempotent: unsent drafts update in place (a note already typed is kept), sent items are never touched, rows that dropped out lose their unsent draft. Invalid addresses and duplicates are excluded with reasons (the first 20 listed, excludedTotal when there are more — getRun lists them all). Requires a template with content and a mapped email column \u2014 getRun shows both. Nothing sends.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -988,7 +988,7 @@
         },
         {
           "name": "setRunRecipients",
-          "description": "Attach or replace a run's recipient list: recipients (pasted, one per line: `email`, `Name <email>`, or `email, name`) or recipientsPath (an ABSOLUTE .csv path, or a PureSheets .sheets package \u2014 first sheet, header row). The field map is guessed from the column names (email, first name / first word of a name, full name) unless fieldMap is given; check it in the result and fix it with setRunFieldMap. Returns validation: valid rows, invalid rows with reasons, duplicates. If the run already has rendered drafts, renderRun again afterwards.",
+          "description": "Attach or replace a run's recipient list: recipients (pasted, one per line: `email`, `Name <email>`, or `email, name`) or recipientsPath (an ABSOLUTE .csv path, or a PureSheets .sheets package \u2014 first sheet, header row). The field map is guessed from the column names (email, first name / first word of a name, full name) unless fieldMap is given; check it in the result and fix it with setRunFieldMap. Returns validation: valid rows, invalid rows with reasons, duplicates (the first 20 of each, with invalidTotal/duplicatesTotal when there are more — getRun lists them all). If the run already has rendered drafts, renderRun again afterwards.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -1058,7 +1058,7 @@
         },
         {
           "name": "insertRunNoteSlot",
-          "description": "Add a {{note}} slot to the run's template if it has none \u2014 after the first paragraph by default, or at the end. The slot is where the personal line goes during the run; it is dropped from drafts where it stays empty. No-op when the template already has one.",
+          "description": "Add a {{note}} slot to the run's template if it has none \u2014 after the first paragraph by default, or at the end. The slot is where the personal line goes during the run; it is dropped from drafts where it stays empty. No-op when the template already has one. Returns where the slot went (placement and the end of the paragraph before it), not the template body — getDraft(templateDraftId) reads the full text.",
           "inputSchema": {
             "type": "object",
             "properties": {
