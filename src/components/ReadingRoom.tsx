@@ -1,4 +1,5 @@
 import { MailTimezonePanel } from './MailTimezonePanel'
+import { readingAgentRefs } from '../lib/agentRefs'
 import { MailAnnotationDocument } from './MailAnnotationDocument'
 import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -179,7 +180,7 @@ export function ReadingRoom({
   const kept = !!record?.context
 
   const content = (
-    <Room aria-label="Reading room" data-expanded={expanded}>
+    <Room aria-label="Reading room" data-expanded={expanded} {...readingAgentRefs(identity)}>
       <RoomBar>
         <BarButton type="button" data-quiet="true" onClick={() => void leave()}>
           <ArrowLeft aria-hidden="true" />

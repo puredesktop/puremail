@@ -1,4 +1,5 @@
 import { ArrowLeft, LayoutGrid, Plus } from 'lucide-react'
+import { runAgentRefs } from '../lib/agentRefs'
 import { runProgress, runStatusLabel } from '../lib/mailRuns'
 import type { MailRun } from '../types'
 import {
@@ -58,7 +59,7 @@ export function RunsIndex({
     const open = (): void =>
       run.status === 'setup' ? onOpenSetup(run.id) : onOpen(run.id)
     return (
-      <RunsIndexRow key={run.id}>
+      <RunsIndexRow key={run.id} {...runAgentRefs(run)}>
         <RunsIndexName type="button" onClick={open} title={run.name}>
           {run.name}
         </RunsIndexName>

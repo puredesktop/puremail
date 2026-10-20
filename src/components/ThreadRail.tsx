@@ -18,6 +18,7 @@ import { LayoutGrid } from 'lucide-react'
 import { useOutsideClose } from './useOutsideClose'
 import { threadIsStarred } from '../lib/mailViews'
 import { AI_TRIAGE_LABELS, aiTriageCurrent } from '../lib/aiTriageState'
+import { threadAgentRefs } from '../lib/agentRefs'
 import type {
   MailFetchIntervalMinutes,
   MailStore,
@@ -574,6 +575,17 @@ export function ThreadRail({
       ),
     [store.labels],
   )
+  /** Unsent drafts per thread, so a draft tool marks its thread's row. */
+  const unsentDraftIdsByThread = useMemo(() => {
+    const byThread = new Map<string, string[]>()
+    for (const draft of store.drafts) {
+      if (draft.sentAt) continue
+      const ids = byThread.get(draft.threadId)
+      if (ids) ids.push(draft.id)
+      else byThread.set(draft.threadId, [draft.id])
+    }
+    return byThread
+  }, [store.drafts])
 
   // Only the rows near the viewport are mounted. Measured cost is
   // proportional to rows rendered — 2,000 mounted rows made a single query
@@ -742,6 +754,7 @@ export function ThreadRail({
         return (
           <MailListRow
             key={thread.id}
+            {...threadAgentRefs(thread, unsentDraftIdsByThread.get(thread.id))}
             role="button"
             tabIndex={0}
             aria-label={`Open conversation: ${thread.subject}`}

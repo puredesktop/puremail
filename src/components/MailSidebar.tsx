@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { labelAgentRefs, mailboxAgentRefs, runAgentRefs, viewAgentRefs } from '../lib/agentRefs'
 import {
   Archive,
   Bookmark,
@@ -248,6 +249,7 @@ export function MailSidebar({
     return (
       <NavRailItem
         key={mailbox.id}
+        {...mailboxAgentRefs(mailbox, labelOverride)}
         type="button"
         $active={active}
         aria-current={active ? 'true' : undefined}
@@ -269,6 +271,7 @@ export function MailSidebar({
       </NavComposeButton>
       {inboxMailbox && (
         <NavRailItem
+          {...mailboxAgentRefs(inboxMailbox, 'Inbox')}
           type="button"
           $active={navMailboxActive(inboxMailbox)}
           aria-current={navMailboxActive(inboxMailbox) ? 'true' : undefined}
@@ -368,6 +371,7 @@ export function MailSidebar({
           return (
             <NavRailItem
               key={run.id}
+              {...runAgentRefs(run)}
               type="button"
               $active={active}
               aria-current={active ? 'true' : undefined}
@@ -398,6 +402,7 @@ export function MailSidebar({
         return (
           <NavRailItem
             key={label.id}
+            {...labelAgentRefs(label)}
             type="button"
             $active={active}
             aria-current={active ? 'true' : undefined}
@@ -419,6 +424,7 @@ export function MailSidebar({
         return (
           <NavRailItem
             key={view.id}
+            {...viewAgentRefs(view)}
             type="button"
             $active={active}
             aria-current={active ? 'true' : undefined}

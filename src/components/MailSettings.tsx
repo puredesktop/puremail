@@ -1,4 +1,5 @@
 import { hasConnectionSmtpPassword, hasSavedMailConnection } from '../lib/mailConnectionPasswords'
+import { filterAgentRefs } from '../lib/agentRefs'
 import { AppSettingsPages } from '@purescience/platform-bridge/components/settings/AppSettings'
 import { TypedTriageSettings } from './TypedTriageSettings'
 import {
@@ -1823,6 +1824,7 @@ export function MailSettings({
                   {(store.filters ?? []).map(rule => (
                     <div
                       key={rule.id}
+                      {...filterAgentRefs(rule)}
                       style={{
                         display: 'flex',
                         alignItems: 'baseline',
