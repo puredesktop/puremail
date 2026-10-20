@@ -225,7 +225,7 @@ import {
   ThreadActionsMenu,
 } from './mailShellStyles'
 import { plainTextSegments } from '../lib/plainTextLinks'
-import { draftAgentRefs, messageAgentRefs, threadAgentRefs } from '../lib/agentRefs'
+import { draftAgentRefs, messageAgentRefs, threadAgentRefs, withOpenAgentRef } from '../lib/agentRefs'
 import {
   attachmentExtension,
   displayThreadLabels,
@@ -1811,7 +1811,7 @@ export function ThreadReader({
   )
 
   return (
-    <ReaderPane {...threadAgentRefs(selectedThread)}>
+    <ReaderPane {...withOpenAgentRef(threadAgentRefs(selectedThread))}>
       {systemNotice && !systemNoticeDismissed && (
         <MailSystemBanner role="status">
           <span aria-hidden="true">●</span>

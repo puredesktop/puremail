@@ -93,3 +93,8 @@ export function readingAgentRefs(identity: { messageId: string; threadId?: strin
     'data-agent-ref': `${message['data-agent-ref']} ${identity.threadId} threadId:${identity.threadId}`,
   }
 }
+
+/** The app's open surface: a write that names nothing on screen is marked on the element carrying `@open` (the thread reader). */
+export function withOpenAgentRef(props: AgentRefProps): AgentRefProps {
+  return { ...props, 'data-agent-ref': `${props['data-agent-ref']} @open` }
+}
