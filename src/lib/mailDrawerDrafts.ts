@@ -12,9 +12,29 @@ export interface PreparedReply {
   context: string
 }
 
-/** Exact editable state token; provider sync alone does not invalidate it. */
+/** 53-bit string hash (cyrb53); two seeds give the token ~106 bits. */
+function hash53(text: string, seed: number): string {
+  let h1 = 0xdeadbeef ^ seed
+  let h2 = 0x41c6ce57 ^ seed
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
+}
+
+/**
+ * Exact editable state token; provider sync alone does not invalidate it.
+ * A short hash of the editable fields, not the fields themselves: the token
+ * travels through getDraft replies and back in updateDraft calls, and the
+ * raw fields carried the whole body plus every attachment's base64 bytes.
+ */
 export function draftEditVersion(draft: Draft): string {
-  return JSON.stringify({ id: draft.id, body: draft.body, bodyHtml: draft.bodyHtml, subject: draft.subject, to: draft.to, cc: draft.cc, bcc: draft.bcc, attachments: draft.attachments, sentAt: draft.sentAt, updatedAt: draft.updatedAt })
+  const state = JSON.stringify({ id: draft.id, body: draft.body, bodyHtml: draft.bodyHtml, subject: draft.subject, to: draft.to, cc: draft.cc, bcc: draft.bcc, attachments: draft.attachments, sentAt: draft.sentAt, updatedAt: draft.updatedAt })
+  return `v1-${state.length.toString(36)}-${hash53(state, 1)}${hash53(state, 2)}`
 }
 
 // Ignore provider bookkeeping, but invalidate on any source or user draft edit.

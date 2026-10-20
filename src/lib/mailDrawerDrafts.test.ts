@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { demoMailStoreForNow } from '../test/mailFixtures'
-import { MailDrawerDrafts } from './mailDrawerDrafts'
+import { MailDrawerDrafts, draftEditVersion } from './mailDrawerDrafts'
+import type { Draft } from '../types'
 
 function fixture() {
   const store = demoMailStoreForNow(new Date('2026-09-10T12:00:00Z'))
@@ -90,5 +91,27 @@ describe('drawer reply lifecycle', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 11 * 60_000)
     try { expect(() => f.requests.commit(f.store, f.accountId, p.requestId, 'Late')).toThrow('expired') } finally { clock.mockRestore() }
     expect(f.store.drafts).toEqual([])
+  })
+})
+
+describe('draftEditVersion', () => {
+  const draft: Draft = {
+    id: 'draft', threadId: 'thread', to: [], subject: 'Report', body: 'Body text. '.repeat(2_000),
+    attachments: [{ id: 'a1', name: 'report.pdf', mimeType: 'application/pdf', sizeLabel: '1 MB', content: 'QUJD'.repeat(250_000) }],
+    updatedAt: '2026-09-10T12:00:00Z', syncState: 'pending',
+  } as Draft
+
+  it('is a short token whatever the draft carries', () => {
+    expect(draftEditVersion(draft).length).toBeLessThan(40)
+    expect(draftEditVersion(draft)).toBe(draftEditVersion({ ...draft }))
+  })
+
+  it('changes when any editable field changes, and not on provider bookkeeping', () => {
+    const base = draftEditVersion(draft)
+    expect(draftEditVersion({ ...draft, body: `${draft.body}!` })).not.toBe(base)
+    expect(draftEditVersion({ ...draft, subject: 'Report 2' })).not.toBe(base)
+    expect(draftEditVersion({ ...draft, to: [{ name: 'A', email: 'a@example.test' }] })).not.toBe(base)
+    expect(draftEditVersion({ ...draft, attachments: [{ ...draft.attachments[0]!, content: 'QUJE' }] })).not.toBe(base)
+    expect(draftEditVersion({ ...draft, providerDraftId: 'p1', syncState: 'synced' } as Draft)).toBe(base)
   })
 })

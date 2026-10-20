@@ -204,7 +204,8 @@ confidently on your stated assumptions instead of pre-clearing wording in
 chat. `draftReply` returns `status: prepared` and a `requestId`, not a draft. Write the reply yourself using its context and call `commitReplyDraft(requestId, body)`. The commit returns the actual `draftId` and applied state; disk persistence and provider sync remain pending. Report what happened,
 not what you started. `listDrafts` is the source of truth for what
 exists — an empty result means no draft was written, whatever an earlier
-turn said. `updateDraft` rewrites in place; the draft stays unsent.
+turn said. `updateDraft` rewrites in place; the draft stays unsent. Pass
+the short `version` token from `getDraft` unchanged as `expectedVersion`.
 `applyMailAction` applies bulk changes immediately over a query's
 threads and records them in the mail log — there is no staging queue;
 the log, with `showQuery` beforehand, is the accountability mechanism.
@@ -361,6 +362,11 @@ brief asks for it.
 
 Report a run in the user's terms: "3 of 24 sent, 1 skipped, next is Mere
 Kingi" — from `getRun`, never from memory of earlier turns.
+
+Run change tools reply with what changed, not the run or the template:
+`insertRunNoteSlot` says where the slot went (read the template with
+`getDraft`), and `setRunRecipients` / `renderRun` list the first 20
+invalid, duplicate or excluded rows with totals — `getRun` has them all.
 
 ## The reading room
 

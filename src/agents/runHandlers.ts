@@ -71,6 +71,17 @@ const TEMPLATE_CONVENTIONS =
 const NO_BULK_SEND_NOTE =
   'A run never bulk-sends: sendRunItem sends exactly one item per call, each call approved by the user, each send undoable for the usual hold.'
 
+/**
+ * Change-tool replies stay small: row-level problem lists grow with the
+ * recipient list (a wrong email column makes every row invalid), so they
+ * show the first few and the count; getRun lists them all.
+ */
+const ROW_PROBLEMS_SHOWN = 20
+
+function firstRows<T>(list: T[]): T[] {
+  return list.slice(0, ROW_PROBLEMS_SHOWN)
+}
+
 function requireRun(context: MailAgentToolContext, runId: string): MailRun {
   const run = findRun(context.store, runId)
   if (!run) {
@@ -473,8 +484,15 @@ export async function setRunRecipientsHandler(
     fieldMap,
     availableTokens: runAvailableTokens({ recipients, fieldMap }),
     valid: validation.validRowIndexes.length,
-    invalid: validation.invalid.map(entry => ({ row: entry.rowIndex + 1, reason: entry.reason })),
-    duplicates: validation.duplicates.map(entry => ({ row: entry.rowIndex + 1, email: entry.email })),
+    invalid: firstRows(validation.invalid).map(entry => ({ row: entry.rowIndex + 1, reason: entry.reason })),
+    duplicates: firstRows(validation.duplicates).map(entry => ({ row: entry.rowIndex + 1, email: entry.email })),
+    ...(validation.invalid.length > ROW_PROBLEMS_SHOWN || validation.duplicates.length > ROW_PROBLEMS_SHOWN
+      ? {
+          invalidTotal: validation.invalid.length,
+          duplicatesTotal: validation.duplicates.length,
+          rowsNote: `Only the first ${ROW_PROBLEMS_SHOWN} invalid and duplicate rows are listed; getRun lists them all.`,
+        }
+      : {}),
     note: run.items.some(item => item.rowIndex !== undefined)
       ? 'The run already has rendered drafts: renderRun again to re-render unsent ones from the new list (sent items are never touched).'
       : 'Check fieldMap — setRunFieldMap fixes a wrong guess — then renderRun.',
@@ -618,7 +636,19 @@ export function insertRunNoteSlotHandler(
     const target = findRun(next, run.id)
     return target ? replaceRun(next, { ...target, noteSlot: true, updatedAt: now }) : next
   })
-  return ok({ runId: run.id, templateDraftId: template.id, changed: true, placement, body })
+  // Not the whole body: the template grows with what the user writes.
+  // Say where the slot went; getDraft(templateDraftId) reads the full text.
+  const slotIndex = bodyParts.indexOf(`{{${RUN_NOTE_TOKEN}}}`)
+  const before = slotIndex > 0 ? bodyParts[slotIndex - 1]!.replace(/\s+/g, ' ').trim() : ''
+  return ok({
+    runId: run.id,
+    templateDraftId: template.id,
+    changed: true,
+    placement,
+    slotAfter: before ? (before.length > 120 ? `…${before.slice(-120)}` : before) : null,
+    bodyLength: body.length,
+    note: 'getDraft(templateDraftId) reads the full template.',
+  })
 }
 
 export function previewRunItemHandler(
@@ -682,7 +712,13 @@ export function renderRunHandler(
     created: preview.created,
     updated: preview.updated,
     items: preview.run.items.length,
-    excluded: preview.excluded.map(entry => ({ row: entry.rowIndex + 1, reason: entry.reason })),
+    excluded: firstRows(preview.excluded).map(entry => ({ row: entry.rowIndex + 1, reason: entry.reason })),
+    ...(preview.excluded.length > ROW_PROBLEMS_SHOWN
+      ? {
+          excludedTotal: preview.excluded.length,
+          excludedNote: `Only the first ${ROW_PROBLEMS_SHOWN} excluded rows are listed; getRun lists them all.`,
+        }
+      : {}),
     missingTokens: preview.missingTokens,
     status: preview.run.status,
     note:
