@@ -10,6 +10,7 @@ import {
   createRunFromDraftsHandler,
   createRunHandler,
   getRunHandler,
+  getRunRepliesHandler,
   insertRunNoteSlotHandler,
   listRunsHandler,
   pauseRunHandler,
@@ -23,7 +24,7 @@ import {
   setRunTemplateHandler,
   skipRunItemHandler,
 } from './runHandlers'
-import type { Draft, MailStore } from '../types'
+import type { Draft, MailMessage, MailStore, MailThread } from '../types'
 
 const NOW = new Date('2026-09-02T12:00:00.000Z')
 
@@ -334,5 +335,187 @@ describe('run tools: the loop', () => {
     const run = parse(getRunHandler(context, { runId }))
     expect(run.invalidRows).toHaveLength(300)
     expect(run.duplicateRows).toHaveLength(100)
+  })
+})
+
+describe('run tools: following a sent run', () => {
+  const SENT_AT = NOW.toISOString()
+  const HEADER = '<puremail-sarah@puremail.local>'
+
+  /**
+   * The shell's IMAP send as it really lands: the delivery controller files
+   * the provider receipt with sendDraft (stored as msg_sent_<draftId>_…,
+   * stamped with sentDraftId), while the id handed back to the run is the
+   * provider's transient imap_sent_<ts>, which nothing stored carries.
+   */
+  function imapContext(): TestContext {
+    const context = makeContext()
+    context.sendStoreDraft = (draft, options) => {
+      const finalized = finalizeRunDraftForSend(draft)
+      context.sent.push(finalized)
+      const receipt: MailMessage = {
+        id: 'imap_sent_1790000000000',
+        threadId: finalized.threadId,
+        deliveryAccepted: true,
+        sentDraftId: finalized.id,
+        messageIdHeader: HEADER,
+        from: { name: 'Me', email: context.store.accounts[0]!.email },
+        to: finalized.to,
+        cc: [],
+        bcc: [],
+        subject: finalized.subject,
+        body: finalized.body,
+        receivedAt: SENT_AT,
+        attachments: [],
+        read: true,
+      }
+      context.store = sendDraft(
+        { ...context.store, drafts: context.store.drafts.map(item => (item.id === finalized.id ? finalized : item)) },
+        finalized.id,
+        SENT_AT,
+        { sentMessage: receipt, sentMessageId: receipt.id },
+      )
+      options.onCommitted?.(receipt.id)
+      return { ok: true, pendingId: `pending_${finalized.id}`, undoSeconds: 0 }
+    }
+    return context
+  }
+
+  /** The next IMAP sync: the server's Sent copy replaces the receipt, in the provider's conversation. */
+  function syncServerCopy(context: TestContext, draftId: string): { thread: MailThread; copy: MailMessage } {
+    const receipt = context.store.messages.find(message => message.sentDraftId === draftId)!
+    const thread: MailThread = {
+      id: 'imap_thread_puremailsarahpuremaillocal',
+      accountId: context.store.accounts[0]!.id,
+      mailboxId: context.store.mailboxes[0]!.id,
+      subject: receipt.subject,
+      participants: receipt.to,
+      labels: [],
+      status: 'waiting',
+      priority: 'none',
+      summary: '',
+      lastMessageAt: SENT_AT,
+      syncState: 'synced',
+    }
+    const copy: MailMessage = { ...receipt, id: 'imap_sent_uid_42', threadId: thread.id }
+    context.store = {
+      ...context.store,
+      threads: [...context.store.threads, thread],
+      messages: [...context.store.messages.filter(message => message.id !== receipt.id), copy],
+    }
+    return { thread, copy }
+  }
+
+  function message(id: string, overrides: Partial<MailMessage>): MailMessage {
+    return {
+      id,
+      threadId: 'imap_thread_puremailsarahpuremaillocal',
+      from: { name: 'Sarah Example', email: 'sarah@design.example' },
+      to: [{ name: 'Me', email: 'me@example.com' }],
+      cc: [],
+      subject: 'Re: Workshop dates for Sarah',
+      body: 'Yes please — the second session suits.',
+      receivedAt: '2026-09-03T09:00:00.000Z',
+      attachments: [],
+      read: false,
+      ...overrides,
+    }
+  }
+
+  it('getRun points a sent item at the stored copy, not the transient IMAP id, and follows the sync', async () => {
+    const context = imapContext()
+    const runId = await setUpRenderedRun(context)
+    parse(sendRunItemHandler(context, { runId }))
+    let item = parse(getRunHandler(context, { runId })).items[0]
+    const draftId = item.draftId
+    expect(item.status).toBe('sent')
+    expect(item.sentMessageId).toMatch(new RegExp(`^msg_sent_${draftId}_`))
+    expect(item.sentMessageId).not.toMatch(/^imap_sent_17/)
+    expect(item.messageIdHeader).toBe(HEADER)
+    expect(item.threadId).toBe(context.store.messages.find(entry => entry.id === item.sentMessageId)!.threadId)
+    // Unsent items carry none of it.
+    const pending = parse(getRunHandler(context, { runId })).items[1]
+    expect(pending.sentMessageId).toBeUndefined()
+    expect(pending.threadId).toBeUndefined()
+
+    const { thread, copy } = syncServerCopy(context, draftId)
+    item = parse(getRunHandler(context, { runId })).items[0]
+    expect(item).toMatchObject({ sentMessageId: copy.id, messageIdHeader: HEADER, threadId: thread.id })
+  })
+
+  it('getRunReplies lists other people\'s later messages per sent item, with the reply state', async () => {
+    const context = imapContext()
+    const runId = await setUpRenderedRun(context)
+    parse(sendRunItemHandler(context, { runId }))
+    const draftId = parse(getRunHandler(context, { runId })).items[0].draftId
+    const { thread } = syncServerCopy(context, draftId)
+    const own = context.store.accounts[0]!.email
+
+    let replies = parse(getRunRepliesHandler(context, { runId }))
+    expect(replies).toMatchObject({ sent: 1, replied: 0, notSent: 2 })
+    expect(replies.items[0]).toMatchObject({ draftId, threadId: thread.id, messageIdHeader: HEADER, replies: [] })
+    expect(replies.items[0].replyState.kind).toBe('awaiting')
+
+    context.store = {
+      ...context.store,
+      messages: [
+        ...context.store.messages,
+        // Before the letter went: not a reply.
+        message('msg_before', { receivedAt: '2026-09-01T09:00:00.000Z' }),
+        // Their answer in the conversation.
+        message('msg_reply', {}),
+        // A colleague answering in a conversation of its own, citing the letter.
+        message('msg_cited', {
+          threadId: 'imap_thread_elsewhere',
+          from: { name: 'Pat Desk', email: 'pat@design.example' },
+          references: [HEADER],
+          receivedAt: '2026-09-05T09:00:00.000Z',
+        }),
+        // Our own follow-up and an unsent draft never count.
+        message('msg_ours', { from: { name: 'Me', email: own.toUpperCase() }, receivedAt: '2026-09-04T09:00:00.000Z' }),
+        message('msg_draft', { isDraft: true, receivedAt: '2026-09-04T10:00:00.000Z' }),
+      ],
+    }
+    replies = parse(getRunRepliesHandler(context, { runId }))
+    expect(replies).toMatchObject({ sent: 1, replied: 1 })
+    expect(replies.items[0].replies).toEqual([
+      {
+        messageId: 'msg_reply',
+        from: { name: 'Sarah Example', email: 'sarah@design.example' },
+        date: '2026-09-03T09:00:00.000Z',
+        snippet: 'Yes please — the second session suits.',
+        threadId: thread.id,
+      },
+      expect.objectContaining({ messageId: 'msg_cited', threadId: 'imap_thread_elsewhere' }),
+    ])
+    // The thread's last word is ours again (msg_ours), so the derived state waits.
+    expect(replies.items[0].replyState.kind).toBe('awaiting')
+
+    // since: only what came after an earlier check.
+    const later = parse(getRunRepliesHandler(context, { runId, since: '2026-09-04' }))
+    expect(later.since).toBe('2026-09-04T00:00:00.000Z')
+    expect(later.items[0].replies.map((reply: { messageId: string }) => reply.messageId)).toEqual(['msg_cited'])
+    expect(() => getRunRepliesHandler(context, { runId, since: 'next week' })).toThrow(/ISO date/)
+    expect(() => getRunRepliesHandler(context, { runId: 'run_nope' })).toThrow(/No run/)
+  })
+
+  it('getRunReplies reports a replied thread and an unsent run plainly, and changes nothing', async () => {
+    const context = imapContext()
+    const runId = await setUpRenderedRun(context)
+    const before = context.store
+    const unsent = parse(getRunRepliesHandler(context, { runId }))
+    expect(unsent).toMatchObject({ sent: 0, replied: 0, notSent: 3, items: [] })
+    expect(unsent.note).toMatch(/Send & next/)
+    expect(context.store).toBe(before)
+
+    parse(sendRunItemHandler(context, { runId }))
+    const draftId = parse(getRunHandler(context, { runId })).items[0].draftId
+    syncServerCopy(context, draftId)
+    context.store = { ...context.store, messages: [...context.store.messages, message('msg_reply', {})] }
+    const sentStore = context.store
+    const replies = parse(getRunRepliesHandler(context, { runId }))
+    expect(replies.items[0].replyState).toMatchObject({ kind: 'replied', at: '2026-09-03T09:00:00.000Z' })
+    expect(context.store).toBe(sentStore)
+    expect(context.sent).toHaveLength(1)
   })
 })

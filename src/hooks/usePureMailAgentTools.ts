@@ -53,6 +53,7 @@ import {
   createRunFromDraftsHandler,
   createRunHandler,
   getRunHandler,
+  getRunRepliesHandler,
   insertRunNoteSlotHandler,
   listRunsHandler,
   pauseRunHandler,
@@ -168,6 +169,8 @@ export function usePureMailAgentTools(
       listRuns: async invoke =>
         listRunsHandler(contextRef.current, invoke.arguments ?? {}),
       getRun: async invoke => getRunHandler(contextRef.current, invoke.arguments),
+      getRunReplies: async invoke =>
+        getRunRepliesHandler(contextRef.current, invoke.arguments ?? {}),
       createRun: async invoke =>
         createRunHandler(contextRef.current, invoke.arguments),
       createRunFromDrafts: async invoke =>

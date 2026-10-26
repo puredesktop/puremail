@@ -1103,6 +1103,35 @@ describe('PureMail model', () => {
     ).toBe('waiting')
   })
 
+  it('records the filed copy id, not the provider receipt id, on a kept sent draft', () => {
+    const store = demoMailStore()
+    const draft = updateDraftFields(store.drafts[0], {
+      body: 'Sent reply body.',
+      to: [{ name: 'Mira', email: 'mira@example.com' }],
+    })
+    const withDraft = { ...store, drafts: store.drafts.map(item => (item.id === draft.id ? draft : item)) }
+    const sent = sendDraft(withDraft, draft.id, '2026-06-20T12:10:00.000Z', {
+      keepDraft: true,
+      sentMessage: {
+        id: 'imap_sent_1790000000000',
+        threadId: draft.threadId,
+        deliveryAccepted: true,
+        sentDraftId: draft.id,
+        from: { name: 'Me', email: 'me@example.com' },
+        to: draft.to,
+        subject: draft.subject,
+        body: draft.body,
+        receivedAt: '2026-06-20T12:10:00.000Z',
+        attachments: [],
+        read: true,
+      },
+      sentMessageId: 'imap_sent_1790000000000',
+    })
+    const keptDraft = sent.drafts.find(item => item.id === draft.id)
+    expect(keptDraft?.sentMessageId).toMatch(new RegExp(`^msg_sent_${draft.id}_`))
+    expect(sent.messages.some(message => message.id === keptDraft?.sentMessageId)).toBe(true)
+  })
+
   it('can keep a sent manual reply attached to its source thread', () => {
     const store = demoMailStore()
     const draft = updateDraftFields(store.drafts[0], {

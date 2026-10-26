@@ -45,6 +45,7 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   // Send runs (mail-merge with a review-and-send loop). No "send all".
   'listRuns',
   'getRun',
+  'getRunReplies',
   'createRun',
   'createRunFromDrafts',
   'renderRun',
