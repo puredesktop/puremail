@@ -340,6 +340,16 @@ PureSheets workbook (`.sheets` package — the first sheet, header row).
 Invalid addresses and duplicates are excluded with reasons; an address
 already emailed this calendar month is flagged on its item.
 
+After the user sends, a run can be followed without touching it. `getRun`
+gives each sent item `sentMessageId` (the stored copy), `messageIdHeader`
+(the Message-ID a reply cites) and `threadId` (for `getThread`; it becomes
+the provider's conversation once the sent copy syncs). `getRunReplies`
+lists, per sent item, later messages from anyone but this account — in
+the letter's conversation or citing it — with from, date, snippet and
+`threadId`, plus the thread's `replyState`. It reads what the mailbox
+holds now; `since` narrows it to replies after an earlier check (the
+2-day and 7-day looks). It never sends, syncs or changes anything.
+
 | Task | Tools |
 | --- | --- |
 | Send a personalised message to a list | `createRun` (name + list) → `updateDraft` the template with `{{first_name}}` and a `{{note}}` → `getRun` to check the field map → `previewRunItem` → `renderRun` → tell the user the run is ready and `resumeRun` opens it |
@@ -352,6 +362,8 @@ already emailed this calendar month is flagged on its item.
 | Skip this one | `skipRunItem` |
 | Stop for now | `pauseRun` |
 | Tidy up a finished run | `archiveRun` (done runs only) |
+| Who has answered the press letters? | `getRunReplies` (`since` for only what is new since the last look) → `getThread(threadId)` to read one in full |
+| Which letter went to Sarah, and where is it? | `getRun` → her item's `sentMessageId`, `messageIdHeader`, `threadId` |
 
 The setup screen's prompt box hands the user's brief to you with the
 run id, the template draft id, the available tokens and the note-slot

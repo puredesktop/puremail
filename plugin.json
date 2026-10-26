@@ -790,13 +790,33 @@
         {
           "name": "getRun",
           "risk": "read",
-          "description": "Read one run in full: status, cursor, every item with its status (pending | reviewing | sent | skipped | missing), draft id, recipient and note flag; the field map and available {{tokens}}; recipient validation (invalid and duplicate rows with reasons); the template's subject, body and tokens. Call this FIRST before renderRun, setRunNote, sendRunItem or skipRunItem \u2014 ids and rows come from here.",
+          "description": "Read one run in full: status, cursor, every item with its status (pending | reviewing | sent | skipped | missing), draft id, recipient and note flag; the field map and available {{tokens}}; recipient validation (invalid and duplicate rows with reasons); the template's subject, body and tokens. A sent item also carries where its letter lives now: sentMessageId (the stored message), messageIdHeader (the Message-ID a reply cites) and threadId (pass it to getThread; it becomes the provider's conversation once the sent copy syncs). Call this FIRST before renderRun, setRunNote, sendRunItem or skipRunItem \u2014 ids and rows come from here.",
           "inputSchema": {
             "type": "object",
             "properties": {
               "runId": {
                 "type": "string",
                 "description": "The run's id, from listRuns or getMailContext.activeRuns."
+              }
+            },
+            "required": ["runId"]
+          },
+          "requiresApproval": false
+        },
+        {
+          "name": "getRunReplies",
+          "risk": "read",
+          "description": "Follow a run after the user sent it: for each sent item, the replies \u2014 later messages from anyone but this account, found in the letter's conversation or by their In-Reply-To/References naming it \u2014 with from, date, snippet and threadId, plus the thread's replyState (replied | awaiting with working days | none). Read-only: it reads what the mailbox holds now and never syncs, sends or changes anything; a reply that has not synced yet is not listed. Pass since (ISO) to see only replies after a check you already made, e.g. the 2-day and 7-day look. Open a reply in full with getThread(threadId). Items not sent yet are counted, not listed.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string",
+                "description": "The run's id, from listRuns or getMailContext.activeRuns."
+              },
+              "since": {
+                "type": "string",
+                "description": "Optional ISO date or time: list only replies received after it. Omit for every reply since each letter was sent."
               }
             },
             "required": ["runId"]
