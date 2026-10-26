@@ -47,6 +47,16 @@ The app exposes 52 tools, including `getMailContext`, `listThreads`, `searchAllM
 
 Threads, drafts, attachments, linked tasks, and mail runs connect to your configured mail account. Sent messages and attachments leave the app through that account.
 
+## Sharing mail with the executive team
+
+On an organisation's team desk, the Executive app's Chief of Staff can read the organisation's mail and leave drafts for you. PureMail does this only when the Executive app has shared an account with it, and only for that account. It never sends anything: what the team writes waits in Drafts until you send it yourself.
+
+- **What it reads.** After each fetch, PureMail writes the new messages (received and sent) to a daily file the Executive app reads, as plain text without quoted history or signatures. Drafts, spam and trash are never shared, and nothing from the senders, domains, folders or labels on the "never read" list is ever written.
+- **What it drafts.** When the team leaves a draft, PureMail saves it in Drafts on its next look (after a fetch, or when Mail opens), as a reply in its conversation when that conversation is here. A draft it cannot make is handed back with the reason.
+- **Turning it off.** Remove the share in the Executive app. With no share, PureMail writes and takes nothing.
+
+The files live under `.appdata/executive/mail/` in the workspace (`share.json`, `digest/<day>.jsonl`, `cursor.json`, `drafts/`). The format is in ps-suite #1013; the rules are in `src/lib/executiveShare.ts`.
+
 ## Develop and customize
 
 We welcome **developers and vibecoders alike**. Fork puremail, add a feature, or use what you learn to build a new app.

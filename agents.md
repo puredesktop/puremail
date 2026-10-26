@@ -406,6 +406,27 @@ under `Pure/Context/PureMail/`, where other apps' assistants can read it.
 - `removeKeptContext` stops keeping it and removes the shared file; confirm
   first.
 
+## The executive team's mail share
+
+On a team desk the Executive app may share one account with PureMail
+(`.appdata/executive/mail/share.json`). PureMail then, in plain code with no
+model and no network call of its own:
+
+- appends each new message of that account (received and sent, dated at or
+  after the share's `since`) to `digest/<local yyyy-mm-dd>.jsonl` after each
+  successful sync, once per message id (`cursor.json`). Drafts, spam, trash
+  and anything matching the share's `neverRead` list are never written; the
+  account's own replies to a never-read address are left out too.
+- takes each `drafts/<key>.json` on its next look (after a sync, and when Mail
+  opens) and saves it as a DRAFT in that account, a reply in its thread when
+  `inReplyTo` is found here, then moves the file to `drafts/taken/` (with
+  `draftId`, `takenAt`) or `drafts/refused/` (with a plain `why`, `refusedAt`).
+
+These drafts are ordinary drafts: read them with `getDraft`, change them with
+`updateDraft`. Their provenance says they came from the executive team. Never
+send one for the team; the person sends. Rules and tests live in
+`src/lib/executiveShare.ts`; nothing about the share is kept in the mail store.
+
 ## Output Style
 
 Return compact results. For reads, answer in prose from the data —

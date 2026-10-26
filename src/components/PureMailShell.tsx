@@ -57,6 +57,12 @@ import {
 } from '../lib/contactFeed'
 import { PUREMAIL_LOCAL_SETTINGS_KEY } from '../hooks/usePureMailBoot'
 import { useDraftProviderSync } from '../hooks/useDraftProviderSync'
+import { useExecutiveMailShare } from '../hooks/useExecutiveMailShare'
+import {
+  addExecutiveDraft,
+  buildExecutiveDraft,
+  existingExecutiveDraft,
+} from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
 import { useComposeDraftAutosave } from '../hooks/useComposeDraftAutosave'
 import { replacementMailThread } from '../lib/mailReaderSelection'
@@ -131,7 +137,7 @@ import {
   type ComposeReplyContext,
   type ReplyComposeKind,
 } from '../lib/replyCompose'
-import { plainTextToComposeHtml } from '../lib/mailCompose'
+import { defaultSignatureForAccount, plainTextToComposeHtml } from '../lib/mailCompose'
 import {
   discardQueuedAction,
   enqueueMailAction,
@@ -1370,6 +1376,39 @@ export function PureMailShell({
     onError: setCommandNotice,
     onNotice: setCommandNotice,
   })
+  // The executive team's mail share (ps-suite #1013): when the Executive
+  // app has shared this account, new mail goes to its digest after each
+  // sync, and the drafts it leaves become ordinary DRAFTS here — saved by
+  // the draft sync above like any other, and never sent.
+  const executiveShare = useExecutiveMailShare({
+    enabled: activeProvider !== 'demo',
+    readStore: () => storeRef.current,
+    saveDraft: (account, request) => {
+      const existing = existingExecutiveDraft(storeRef.current, request.key)
+      if (existing) return { draftId: existing.id }
+      const built = buildExecutiveDraft(storeRef.current, account, request, {
+        signature: defaultSignatureForAccount(storeRef.current.settings, account.id)?.body ?? '',
+      })
+      setStore(current => addExecutiveDraft(current, built))
+      return { draftId: built.draft.id }
+    },
+    onDraftsTaken: result => {
+      for (const item of result.taken) {
+        const subject = storeRef.current.drafts.find(draft => draft.id === item.draftId)?.subject || '(no subject)'
+        recordTriageOperation('mail.executive.draft', `Saved a draft from the executive team: "${subject}". Not sent.`, 'agent')
+      }
+      for (const item of result.refused) {
+        recordTriageOperation('mail.executive.refused', `Did not make a draft the executive team left (${item.key}): ${item.why}`, 'agent')
+      }
+      if (result.taken.length > 0) {
+        setCommandNotice(
+          `The executive team left ${result.taken.length === 1 ? 'a draft' : `${result.taken.length} drafts`} in Drafts. Nothing was sent.`,
+        )
+      }
+    },
+  })
+  const executiveShareRef = useRef(executiveShare)
+  executiveShareRef.current = executiveShare
   const deliveryInputs = useRef({ prepareSend, releaseSend, flushForSend })
   deliveryInputs.current = { prepareSend, releaseSend, flushForSend }
   const deliveryController = useRef<ReturnType<typeof createMailDeliveryController> | null>(null)
@@ -1501,6 +1540,8 @@ export function PureMailShell({
           }
           return filtered.store
         })
+        // The executive team's digest reads the merged store, after the merge.
+        executiveShareRef.current.afterSync(nextStore.accounts)
         // A successful sync means we are online: drain the offline queue.
         window.setTimeout(() => {
           void replayQueuedActionsNowRef.current()

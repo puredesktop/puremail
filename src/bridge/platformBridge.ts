@@ -458,6 +458,26 @@ export async function fsDelete(path: string): Promise<void> {
   await bridge.call(PLATFORM_BRIDGE_METHODS.FS_DELETE, [{ path }])
 }
 
+/** Read a UTF-8 text file; null when it does not exist. Other failures throw. */
+export async function fsReadTextIfPresent(path: string): Promise<string | null> {
+  try {
+    return await fsReadText(path)
+  } catch (error) {
+    const text = error instanceof Error ? `${error.name} ${error.message}` : String(error)
+    if (/ENOENT|no such file/i.test(text)) return null
+    throw error
+  }
+}
+
+/**
+ * Rename a file inside its own folder. The shell refuses when a file of the
+ * new name exists, and the rename fails when the file is already gone — so
+ * of two windows renaming the same file, exactly one succeeds.
+ */
+export async function fsRenameInFolder(path: string, name: string): Promise<void> {
+  await bridge.call(PLATFORM_BRIDGE_METHODS.FS_RENAME, [{ path, name }])
+}
+
 /** The names of the entries in a folder. Throws when the folder cannot be listed. */
 export async function fsListNames(folder: string): Promise<string[]> {
   const result = await bridge.call<{ entries?: Array<{ name?: string }> }>(
