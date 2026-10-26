@@ -908,8 +908,9 @@
         },
         {
           "name": "sendRunItem",
-          "risk": "external",
-          "description": "Send ONE run item \u2014 the current one, or the one named by draftId/row \u2014 through the normal send path: the draft as it stands now (an empty {{note}} slot is stripped), the usual undo hold, Sent as normal. Marks the item sent and moves the run to the next open item. There is deliberately no send-all: call this once per item, and each call is approved by the user separately. Never call it in a loop without the user asking for each send.",
+          "releaseButton": "Send & next",
+          "risk": "release",
+          "description": "Send ONE run item \u2014 the current one, or the one named by draftId/row \u2014 through the normal send path. A release action: only a person can send, by pressing Send & next in PureMail, or by approving it as CEO in the Executive team, which then carries out exactly that send once. An agent cannot call this at any trust level; open the run with resumeRun and tell the person it is ready.",
           "inputSchema": {
             "type": "object",
             "properties": {

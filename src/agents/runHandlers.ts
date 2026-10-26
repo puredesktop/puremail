@@ -58,7 +58,9 @@ import {
  * so an agent and the user are always looking at one run.
  *
  * There is deliberately no "send all": sendRunItem sends ONE item per
- * call, each call approval-gated, each send under the usual undo hold.
+ * call, under the usual undo hold. It is a release action (#1017): no
+ * agent can run it at any trust level; it runs only with a CEO's one-time
+ * grant from the Executive team. A person sends with Send & next.
  */
 
 function ok(payload: unknown): AgentToolHandlerResult {
@@ -69,7 +71,7 @@ const TEMPLATE_CONVENTIONS =
   'Template conventions: {{field}} tokens are substituted per recipient from the mapped columns (e.g. {{first_name}}, {{email}}, or any column name); {{note}} marks the personal-note slot — one per template, filled per draft during the run and dropped entirely from any draft where it is left empty. Write the template body as plain text with updateDraft (body + subject) — tokens work in both.'
 
 const NO_BULK_SEND_NOTE =
-  'A run never bulk-sends: sendRunItem sends exactly one item per call, each call approved by the user, each send undoable for the usual hold.'
+  'A run never bulk-sends, and an agent never sends: the person presses Send & next on each draft (resumeRun opens the loop), or approves a send as CEO in the Executive team.'
 
 /**
  * Change-tool replies stay small: row-level problem lists grow with the
@@ -722,7 +724,7 @@ export function renderRunHandler(
     missingTokens: preview.missingTokens,
     status: preview.run.status,
     note:
-      'Drafts are in Drafts, each an ordinary draft. Nothing sends until the user presses Send & next on each (resumeRun opens the loop) or sendRunItem is approved per item. Re-rendering updates unsent drafts in place and never touches sent ones.',
+      'Drafts are in Drafts, each an ordinary draft. Nothing sends until the person presses Send & next on each (resumeRun opens the loop). Re-rendering updates unsent drafts in place and never touches sent ones.',
   })
 }
 
@@ -815,8 +817,8 @@ export function sendRunItemHandler(
     remaining: Math.max(0, remaining),
     note:
       result.undoSeconds > 0
-        ? `Leaves in ${result.undoSeconds}s unless the user undoes it. One item per call — call sendRunItem again for the next, each call approved separately.`
-        : 'Sent. One item per call — call sendRunItem again for the next, each call approved separately.',
+        ? `Leaves in ${result.undoSeconds}s unless the person undoes it. One item per approved send.`
+        : 'Sent. One item per approved send.',
   })
 }
 
@@ -871,7 +873,7 @@ export function resumeRunHandler(
     note:
       started.status === 'done'
         ? 'Nothing left to review — the run is done.'
-        : 'The run is open on screen at its first open item. The user presses Send & next per draft, or sendRunItem sends one per approved call.',
+        : 'The run is open on screen at its first open item. The person presses Send & next per draft; an agent cannot send.',
   })
 }
 
