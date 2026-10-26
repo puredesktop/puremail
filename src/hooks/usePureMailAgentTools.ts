@@ -80,8 +80,25 @@ import {
  * out — the platform routes an invoke to the app tab and waits for a handler
  * that never registered.
  */
+/** What every tool but getMailContext says while PureMail has no mail account on this desktop. */
+export const NO_ACCOUNT_MESSAGE =
+  'PureMail has no mail account on this desktop, so it cannot read, draft or send mail here yet. A person connects one in Mail settings → Providers; until then nothing can be done in PureMail. Say so in your answer rather than trying again.'
+
+/**
+ * The handlers as they answer: as they are with an account; without one, at once and plainly (only getMailContext
+ * runs, and says there is no account). Before, PureMail offered no tools at all without an account, so a call from
+ * an assignment's step (a background tab, with no account chosen) waited for a minute and timed out.
+ */
+export function answeringWithoutAccount<T extends Record<string, (...args: never[]) => unknown>>(hasAccount: boolean, handlers: T): T {
+  if (hasAccount) return handlers
+  const refuse = async () => {
+    throw new AgentMailToolError(NO_ACCOUNT_MESSAGE)
+  }
+  return Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, name === 'getMailContext' ? handler : refuse])) as T
+}
+
 export function usePureMailAgentTools(
-  ready: boolean,
+  hasAccount: boolean,
   context: MailAgentToolContext,
 ): void {
   // Handlers close over a ref so a tool invoked mid-render always sees the
@@ -90,11 +107,12 @@ export function usePureMailAgentTools(
   contextRef.current = context
 
   usePlatformAgentTools({
-    ready,
+    // Always offered, so a call never goes unanswered; without an account they say so (answeringWithoutAccount).
+    ready: true,
     tools: PUREMAIL_AGENT_TOOL_NAMES,
     logLabel: PUREMAIL_AGENT_LOG_LABEL,
     errorType: AgentMailToolError,
-    handlers: {
+    handlers: answeringWithoutAccount(hasAccount, {
       getMailContext: async () => getMailContextHandler(contextRef.current),
       getMessageNotes: async invoke => getMessageNotesHandler(contextRef.current, invoke.arguments ?? {}),
       addMessageNote: async invoke => addMessageNoteHandler(contextRef.current, invoke.arguments ?? {}),
@@ -198,6 +216,6 @@ export function usePureMailAgentTools(
         addDraftsToRunHandler(contextRef.current, invoke.arguments),
       archiveRun: async invoke =>
         archiveRunHandler(contextRef.current, invoke.arguments),
-    },
+    }),
   })
 }
