@@ -500,3 +500,17 @@ aliases retain their longer body and quoted context for the role's conversation 
 Privacy exclusions, account scoping, Message-ID deduplication and the human unread flag stay unchanged. Messages
 above 200,000 characters carry an explicit truncation notice; open the original for the remainder. This does not
 provision provider aliases or send mail. Executive owns role routing and requires approval of resulting actions.
+
+## Team email routing metadata
+
+The organisation's Executive share supplies current role and group aliases. `executiveShare` retains full addressed
+text for those aliases and their time-tag suffixes in To, Cc, provider-retained Bcc or delivery headers; Executive owns
+the time grammar, durable reminders and role routing. Invalid suffixes retain context for repair. This export never
+marks provider mail read and retains never-read sender/domain/folder rules. BCC is usually stripped on incoming mail:
+only preserved BCC or delivery-address evidence can identify that route. Do not infer it from a From address.
+
+Digests include bounded invitation metadata (UID, method, sequence, title, description, location, times and timezone),
+not raw ICS or attachment contents. Threading metadata is retained for replies. Nothing accepts a calendar invite.
+Executive update requests may include a validated Reply-To; the unsent draft, provider draft copies and submitted
+MIME preserve it. That header routes a reply to a role, never authenticates approval. All outbound copies remain
+editable drafts until the person sends; there is no new automatic-send path.

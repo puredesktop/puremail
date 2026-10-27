@@ -66,6 +66,9 @@ export interface ImapEnvelope {
   from: MailContact
   to: MailContact[]
   cc?: MailContact[]
+  bcc?: MailContact[]
+  replyTo?: MailContact[]
+  deliveredTo?: MailContact[]
   date: string
   body: string
   /** Sanitizable HTML alternative, parsed transport-side. */
@@ -240,6 +243,9 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
         from: { name: string; email: string } | null
         to: Array<{ name: string; email: string }>
         cc: Array<{ name: string; email: string }>
+        bcc?: MailContact[]
+        replyTo?: MailContact[]
+        deliveredTo?: MailContact[]
         date: string
         flags: string[]
         text: string
@@ -259,6 +265,9 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
         from: message.from ?? { name: '', email: '' },
         to: message.to,
         ...(message.cc.length ? { cc: message.cc } : {}),
+        ...(message.bcc?.length ? { bcc: message.bcc } : {}),
+        ...(message.replyTo?.length ? { replyTo: message.replyTo } : {}),
+        ...(message.deliveredTo?.length ? { deliveredTo: message.deliveredTo } : {}),
         date: message.date,
         body: message.text,
         ...(message.html ? { bodyHtml: message.html } : {}),
@@ -704,6 +713,9 @@ export class ImapMailProvider implements MailProvider {
           from: envelope.from,
           to: envelope.to,
           ...(envelope.cc?.length ? { cc: envelope.cc } : {}),
+          ...(envelope.bcc?.length ? { bcc: envelope.bcc } : {}),
+          ...(envelope.replyTo?.length ? { replyTo: envelope.replyTo } : {}),
+          ...(envelope.deliveredTo?.length ? { deliveredTo: envelope.deliveredTo } : {}),
           subject: envelope.subject || '(no subject)',
           ...(envelope.listUnsubscribe ? {listUnsubscribe:envelope.listUnsubscribe} : {}),
           body: envelope.body,
@@ -727,6 +739,8 @@ export class ImapMailProvider implements MailProvider {
             threadId,
             to: envelope.to,
             ...(envelope.cc?.length ? { cc: envelope.cc } : {}),
+            ...(envelope.bcc?.length ? { bcc: envelope.bcc } : {}),
+            ...(envelope.replyTo?.length ? { replyTo: envelope.replyTo } : {}),
             subject:
               envelope.subject === '(no subject)' ? '' : envelope.subject,
             body: envelope.body,
@@ -1033,6 +1047,7 @@ export class ImapMailProvider implements MailProvider {
         `To: ${format(draft.to)}`,
         ...(cc.length ? [`Cc: ${format(cc)}`] : []),
         ...(bcc.length ? [`Bcc: ${format(bcc)}`] : []),
+        ...(draft.replyTo?.length ? [`Reply-To: ${format(draft.replyTo)}`] : []),
         `Subject: ${draft.subject}`,
       ],
       body: draft.body,
@@ -1230,6 +1245,7 @@ export class ImapMailProvider implements MailProvider {
       to: input.draft.to,
       cc: input.draft.cc ?? [],
       bcc: input.draft.bcc ?? [],
+      ...(input.draft.replyTo?.length ? { replyTo: input.draft.replyTo } : {}),
       subject: input.draft.subject,
       body: input.draft.body,
       ...(input.draft.bodyHtml ? { bodyHtml: input.draft.bodyHtml } : {}),
@@ -1263,6 +1279,7 @@ export class ImapMailProvider implements MailProvider {
           `To: ${format(message.to)}`,
           ...(message.cc?.length ? [`Cc: ${format(message.cc)}`] : []),
           ...(message.bcc?.length ? [`Bcc: ${format(message.bcc)}`] : []),
+          ...(message.replyTo?.length ? [`Reply-To: ${format(message.replyTo)}`] : []),
           `Subject: ${message.subject}`,
           ...(message.inReplyTo ? [`In-Reply-To: ${message.inReplyTo}`] : []),
           ...(message.references?.length ? [`References: ${message.references.join(' ')}`] : []),

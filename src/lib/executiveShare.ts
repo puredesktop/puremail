@@ -108,6 +108,15 @@ export function parseMailShare(raw: string | null): ExecutiveMailShare | null {
   }
 }
 
+/** Executive owns the time grammar. Retain full addressed context even for an invalid tag so it can explain a repair. */
+export function isTeamAddress(share: ExecutiveMailShare, address: string): boolean {
+  const recipient = address.trim().toLowerCase()
+  return (share.roleAddresses ?? []).some(alias => {
+    const at = alias.lastIndexOf('@'), local = alias.slice(0, at), domain = alias.slice(at)
+    return recipient === alias || (recipient.endsWith(domain) && recipient.slice(0, -domain.length).startsWith(`${local}-`))
+  })
+}
+
 function sameAddress(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase()
 }
@@ -192,6 +201,11 @@ export interface DigestLine {
   from: DigestContact
   to: DigestContact[]
   cc: DigestContact[]
+  bcc?: DigestContact[]
+  deliveredTo?: DigestContact[]
+  inReplyTo?: string
+  references?: string[]
+  calendarInvite?: Omit<NonNullable<MailMessage['calendarInvite']>, 'rawSource' | 'attendees' | 'organizer' | 'recurrenceRule' | 'status'>
   subject: string
   folder: string
   labels: string[]
@@ -340,11 +354,21 @@ export function digestLinesFor(
         from: digestContact(message.from),
         to: message.to.map(digestContact),
         cc: (message.cc ?? []).map(digestContact),
+        ...(message.bcc?.length ? { bcc: message.bcc.map(digestContact) } : {}),
+        ...(message.deliveredTo?.length ? { deliveredTo: message.deliveredTo.map(digestContact) } : {}),
+        ...(message.inReplyTo ? { inReplyTo: message.inReplyTo } : {}),
+        ...(message.references?.length ? { references: message.references.slice(-30) } : {}),
+        ...(message.calendarInvite ? { calendarInvite: {
+          uid: message.calendarInvite.uid, method: message.calendarInvite.method, sequence: message.calendarInvite.sequence,
+          title: message.calendarInvite.title.slice(0, 1000), description: message.calendarInvite.description.slice(0, 12000),
+          startsAt: message.calendarInvite.startsAt, endsAt: message.calendarInvite.endsAt, timeZone: message.calendarInvite.timeZone,
+          ...(message.calendarInvite.location ? { location: message.calendarInvite.location.slice(0, 2000) } : {}),
+        } } : {}),
         subject: message.subject,
         folder: place.folder,
         labels,
         fromMe,
-        text: [...message.to, ...(message.cc ?? [])].some(p => share.roleAddresses?.includes((p.email ?? '').trim().toLowerCase()))
+        text: [...message.to, ...(message.cc ?? []), ...(message.bcc ?? []), ...(message.deliveredTo ?? [])].some(p => isTeamAddress(share, p.email ?? ''))
           ? addressedMailText(message) : digestText(message),
         attachments: message.attachments.map(attachment => {
           const size = attachmentByteSize(attachment)
@@ -408,6 +432,7 @@ export interface ExecutiveDraftRequest {
   account: string
   to: MailContact[]
   cc: MailContact[]
+  replyTo?: MailContact[]
   subject: string
   body: string
   inReplyTo?: { threadId?: string; messageId?: string }
@@ -422,7 +447,7 @@ const ADDRESS = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/
 
 function contactsFrom(
   value: unknown,
-  field: 'to' | 'cc',
+  field: 'to' | 'cc' | 'replyTo',
 ): { ok: true; contacts: MailContact[] } | { ok: false; why: string } {
   if (value === undefined || value === null) return { ok: true, contacts: [] }
   if (!Array.isArray(value)) {
@@ -440,7 +465,9 @@ function contactsFrom(
           : `Someone in "${field}" has no email address.`,
       }
     }
-    contacts.push({ name: typeof record.name === 'string' ? record.name.trim() : '', email: address })
+    const name = typeof record.name === 'string' ? record.name.trim() : ''
+    if (/[\r\n\x00]/.test(name)) return { ok: false, why: `Someone in \"${field}\" has an invalid name.` }
+    contacts.push({ name, email: address })
   }
   return { ok: true, contacts }
 }
@@ -477,6 +504,8 @@ export function checkDraftRequest(
   if (to.contacts.length === 0) return refuse('The draft has no one to send it to.')
   const cc = contactsFrom(record.cc, 'cc')
   if (!cc.ok) return refuse(cc.why)
+  const replyTo = contactsFrom(record.replyTo, 'replyTo')
+  if (!replyTo.ok) return refuse(replyTo.why)
   if (record.subject !== undefined && typeof record.subject !== 'string') {
     return refuse('The subject is not text.')
   }
@@ -500,6 +529,7 @@ export function checkDraftRequest(
       account,
       to: to.contacts,
       cc: cc.contacts,
+      ...(replyTo.contacts.length ? { replyTo: replyTo.contacts } : {}),
       subject: typeof record.subject === 'string' ? record.subject.trim() : '',
       body,
       ...(inReplyTo ? { inReplyTo } : {}),
@@ -593,6 +623,7 @@ export function buildExecutiveDraft(
         id: ids.replyDraftId,
         to: request.to,
         cc: request.cc,
+        ...(request.replyTo?.length ? { replyTo: request.replyTo } : {}),
         bcc: [],
         subject: request.subject || reply.subject,
         ...(target.message ? { sourceMessageId: target.message.id } : {}),
@@ -616,7 +647,7 @@ export function buildExecutiveDraft(
   )
   const draft = composed.store.drafts.find(item => item.id === ids.draftId)!
   const thread = composed.store.threads.find(item => item.id === ids.threadId)!
-  return { inThread: false, thread, draft: { ...draft, provenance } }
+  return { inThread: false, thread, draft: { ...draft, ...(request.replyTo?.length ? { replyTo: request.replyTo } : {}), provenance } }
 }
 
 /** Add a built draft (and its new thread) to a store, once. */

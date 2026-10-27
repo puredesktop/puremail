@@ -60,3 +60,16 @@ it('never lets a malformed stored draft Message-ID inject MIME headers', () => {
   expect(safe).toBe('<puremail-draft-draft%0D%0Aunsafe@puremail.local>')
   expect(safe).not.toMatch(/[\r\n]/)
 })
+
+it('keeps Reply-To when provider drafts round-trip and detects a changed routing address as a conflict', async () => {
+  const { draft } = fixture(), replyTo = [{ name: 'Lead', email: 'alex+cto@example.com' }]
+  const { draftContentRevision } = await import('./mailDeliveryStatus')
+  const synced = { ...draft, replyTo, providerDraftId: 'imap_draft_1', syncState: 'synced' as const }
+  const remote = { ...synced, updatedAt: '2099-01-01T00:00:00Z' }
+  expect(mergeMailDrafts([synced], [remote], true)[0]!.replyTo).toEqual(replyTo)
+  const pending = { ...synced, syncState: 'pending' as const, body: 'My newer edit', providerRevision: draftContentRevision(synced) }
+  const changed = { ...remote, replyTo: [{ name: '', email: 'alex+cos@example.com' }] }
+  const merged = mergeMailDrafts([pending], [changed], true)[0]!
+  expect(merged.syncState).toBe('conflict'); expect(merged.replyTo).toEqual(replyTo)
+  expect(merged.providerConflict?.replyTo).toEqual(changed.replyTo)
+})
