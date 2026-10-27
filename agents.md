@@ -491,3 +491,12 @@ PureMail's fetch settings. Closing PureMail explicitly stops it until it is reop
 A new incoming reply makes a previously reviewed conversation partly read by team. Neither syncing the digest nor
 reading a receipt changes any mailbox flag. The selected reviewer can be any configured lead; resulting team work
 always requires user approval. Drafts remain ordinary editable PureMail drafts and only the person sends.
+
+
+### Incoming team aliases
+
+Executive supplies generated `roleAddresses` in the existing mail share file. Messages addressed To/Cc to those
+aliases retain their longer body and quoted context for the role's conversation instead of the short digest.
+Privacy exclusions, account scoping, Message-ID deduplication and the human unread flag stay unchanged. Messages
+above 200,000 characters carry an explicit truncation notice; open the original for the remainder. This does not
+provision provider aliases or send mail. Executive owns role routing and requires approval of resulting actions.

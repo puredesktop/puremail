@@ -22,7 +22,7 @@
  */
 import { attachmentByteSize, attachmentKindLabel } from './mailAttachments'
 import { createComposedMessageDraft, createReplyDraft } from './mailModel'
-import { cleanMailMessageText, compactMailText } from './mailTextUtils'
+import { cleanMailMessageText, compactMailText, stripHtmlToText } from './mailTextUtils'
 import type {
   Draft,
   MailAccount,
@@ -56,6 +56,8 @@ export const DIGEST_LOCK_STALE_MS = 2 * 60_000
 // ---------------------------------------------------------------- share file
 
 export interface ExecutiveMailShare {
+  /** Automatically generated incoming role aliases supplied by Executive. */
+  roleAddresses?: string[]
   account: string
   since: string
   neverRead: { senders: string[]; domains: string[]; folders: string[] }
@@ -95,6 +97,7 @@ export function parseMailShare(raw: string | null): ExecutiveMailShare | null {
   return {
     account,
     since,
+    ...(Array.isArray(record.roleAddresses) ? { roleAddresses: stringList(record.roleAddresses).map(a => a.toLowerCase()) } : {}),
     neverRead: {
       senders: stringList(neverRead.senders).map(item => item.toLowerCase()),
       domains: stringList(neverRead.domains).map(item =>
@@ -248,6 +251,13 @@ export function digestText(message: MailMessage): string {
   return `${atWord.length > DIGEST_TEXT_LIMIT * 0.8 ? atWord : cut}…`
 }
 
+/** Role requests retain their full text and quoted context instead of a short review digest. */
+export function addressedMailText(message: MailMessage): string {
+  const body = message.body?.trim() || stripHtmlToText(message.bodyHtml)
+  const limit = 200_000
+  return body.length <= limit ? body : `${body.slice(0, limit)}\n\n[Message exceeds 200,000 characters. Open the original in PureMail for the remainder.]`
+}
+
 function digestContact(contact: MailContact): DigestContact {
   return { name: contact.name?.trim() ?? '', address: contact.email?.trim() ?? '' }
 }
@@ -334,7 +344,8 @@ export function digestLinesFor(
         folder: place.folder,
         labels,
         fromMe,
-        text: digestText(message),
+        text: [...message.to, ...(message.cc ?? [])].some(p => share.roleAddresses?.includes((p.email ?? '').trim().toLowerCase()))
+          ? addressedMailText(message) : digestText(message),
         attachments: message.attachments.map(attachment => {
           const size = attachmentByteSize(attachment)
           return {
