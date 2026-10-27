@@ -2107,7 +2107,12 @@ export function sendDraft(
                 sentTo: draft.to,
                 sentCc: draft.cc ?? [],
                 sentBcc: draft.bcc ?? [],
-                sentMessageId: options.sentMessageId ?? message.id,
+                // A provider receipt is filed under `message.id`; the id the
+                // provider reported (IMAP: a transient `imap_sent_<ts>`)
+                // matches nothing stored, so record the filed copy's id.
+                sentMessageId: options.sentMessage
+                  ? message.id
+                  : options.sentMessageId ?? message.id,
                 sentWithoutReview: options.sentWithoutReview,
                 sentByAutomation: options.sentByAutomation,
                 sentReviewBypassReason: options.sentReviewBypassReason,

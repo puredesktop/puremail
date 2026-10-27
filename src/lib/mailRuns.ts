@@ -8,6 +8,7 @@ import type {
   Attachment,
   Draft,
   MailContact,
+  MailMessage,
   MailRun,
   MailRunFieldBinding,
   MailRunItem,
@@ -1152,9 +1153,40 @@ export function renderRun(
   }
 }
 
-/** The `msg_sent_<draftId>_<stamp>` copy sendDraft appends. */
+/**
+ * The stored sent copy of a run item's draft, as the store holds it NOW.
+ *
+ * The id a send reports is not always one the store keeps: an IMAP send
+ * returns a transient `imap_sent_<ts>` id while sendDraft files the copy as
+ * `msg_sent_<draftId>_<stamp>`, and the next sync replaces that copy with
+ * the server's. What survives all three is the receipt's `sentDraftId`
+ * (carried onto the synced copy), so it is asked first; then the id the
+ * send reported (local id or Gmail id); then the local `msg_sent_` copy a
+ * demo send appends. Drafts never count; a confirmed copy wins over an
+ * unconfirmed "Sending…" one.
+ */
+export function sentMessageForRunItem(
+  store: Pick<MailStore, 'messages'>,
+  item: Pick<MailRunItem, 'draftId' | 'sentMessageId'>,
+): MailMessage | undefined {
+  const sent = store.messages.filter(message => !message.isDraft)
+  const find = (match: (message: MailMessage) => boolean) =>
+    sent.find(message => !message.optimistic && match(message)) ?? sent.find(match)
+  return (
+    find(message => message.sentDraftId === item.draftId) ??
+    (item.sentMessageId
+      ? find(
+          message =>
+            message.id === item.sentMessageId ||
+            message.gmailMessageId === item.sentMessageId,
+        )
+      : undefined) ??
+    find(message => message.id.startsWith(`msg_sent_${item.draftId}_`))
+  )
+}
+
 function sentMessageForDraft(store: Pick<MailStore, 'messages'>, draftId: string) {
-  return store.messages.find(message => message.id.startsWith(`msg_sent_${draftId}_`))
+  return sentMessageForRunItem(store, { draftId })
 }
 
 /**
@@ -1169,7 +1201,15 @@ export function reconcileRun(
 ): MailRun {
   let changed = false
   const items = run.items.map(item => {
-    if (item.status === 'sent') return item
+    if (item.status === 'sent') {
+      // Point a sent item at the copy the store keeps: the id the send
+      // reported may be transient (IMAP) or replaced by the synced copy.
+      if (item.pendingSendId) return item
+      const sent = sentMessageForRunItem(store, item)
+      if (!sent || sent.id === item.sentMessageId) return item
+      changed = true
+      return { ...item, sentMessageId: sent.id }
+    }
     const draft = store.drafts.find(entry => entry.id === item.draftId)
     if (!draft) {
       const sent = sentMessageForDraft(store, item.draftId)

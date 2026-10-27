@@ -28,6 +28,7 @@ import {
   runProgress,
   runStatusLabel,
   runTokensIn,
+  sentMessageForRunItem,
   setNoteInBodyHtml,
   skipRunItem,
   startRun,
@@ -37,7 +38,10 @@ import {
   normalizeRunKey,
 } from '../lib/mailRuns'
 import { plainTextToComposeHtml } from '../lib/mailCompose'
+import { ownAddresses, replyStateInStore } from '../lib/mailReplyState'
+import { normalizeMessageId } from '../lib/mailThreading'
 import type {
+  MailMessage,
   MailRun,
   MailRunFieldBinding,
   MailRunItem,
@@ -112,6 +116,27 @@ function updateRunInStore(
   })
 }
 
+/**
+ * Where a sent item's letter lives now, so another app can follow it: the
+ * stored message id, its Message-ID header (what a reply cites), and the
+ * conversation it sits in (getThread takes `threadId`; it moves from the
+ * run's local thread to the provider's once the sent copy syncs).
+ */
+function sentCopyFields(
+  context: MailAgentToolContext,
+  item: MailRunItem,
+): Record<string, unknown> {
+  const message = sentMessageForRunItem(context.store, item)
+  if (!message) return { sentMessageId: item.sentMessageId ?? null, sentCopyFound: false }
+  const thread = context.store.threads.find(entry => entry.id === message.threadId)
+  return {
+    sentMessageId: message.id,
+    messageIdHeader: message.messageIdHeader ?? null,
+    threadId: message.threadId,
+    ...(thread?.gmailThreadId ? { gmailThreadId: thread.gmailThreadId } : {}),
+  }
+}
+
 function itemSummary(
   context: MailAgentToolContext,
   run: MailRun,
@@ -129,6 +154,7 @@ function itemSummary(
     subject: draft?.subject ?? null,
     noteAdded: Boolean(item.noteAdded || (draft && draftHasNote(draft))),
     ...(item.sentAt ? { sentAt: item.sentAt } : {}),
+    ...(item.status === 'sent' && !item.pendingSendId ? sentCopyFields(context, item) : {}),
     ...(item.pendingSendId ? { sendPending: true } : {}),
     ...(item.skipReason ? { reason: item.skipReason } : {}),
     ...(item.emailedThisMonth ? { emailedThisMonth: true } : {}),
@@ -321,6 +347,122 @@ export function getRunHandler(
     ...runSummary(context, run, true),
     conventions: TEMPLATE_CONVENTIONS,
     note: NO_BULK_SEND_NOTE,
+  })
+}
+
+const REPLY_SNIPPET_LENGTH = 160
+
+function replySnippet(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > REPLY_SNIPPET_LENGTH ? `${flat.slice(0, REPLY_SNIPPET_LENGTH)}…` : flat
+}
+
+/** Does this message answer the sent one: same conversation, or it cites the letter's Message-ID? */
+function answers(message: MailMessage, sent: MailMessage, sentHeader: string | null): boolean {
+  if (message.threadId === sent.threadId) return true
+  if (!sentHeader) return false
+  return [message.inReplyTo, ...(message.references ?? [])].some(
+    reference => normalizeMessageId(reference) === sentHeader,
+  )
+}
+
+/**
+ * Read-only follow-up on a run after the user sent it: for each sent item,
+ * the later messages from anyone but the account itself, found in the
+ * letter's conversation or by their In-Reply-To/References naming it, plus
+ * the derived reply state. It reads the store as it is; it never syncs,
+ * sends or changes anything.
+ */
+export function getRunRepliesHandler(
+  context: MailAgentToolContext,
+  args: Record<string, unknown>,
+): AgentToolHandlerResult {
+  const run = reconcileRun(context.store, requireRun(context, requireString(args, 'runId')))
+  const sinceArg = optionalString(args, 'since')
+  if (sinceArg && Number.isNaN(Date.parse(sinceArg))) {
+    throw new AgentMailToolError(`"since" must be an ISO date or time (got "${sinceArg}").`)
+  }
+  const since = sinceArg ? new Date(sinceArg).toISOString() : undefined
+  const now = context.now ?? new Date()
+  const store = context.store
+  const fallbackAccount = store.accounts.find(entry => entry.id === context.accountId) ?? store.accounts[0]
+
+  let notSent = 0
+  let replied = 0
+  const items: Array<Record<string, unknown>> = []
+  run.items.forEach((item, index) => {
+    if (item.status !== 'sent' || item.pendingSendId) {
+      notSent += 1
+      return
+    }
+    const draft = store.drafts.find(entry => entry.id === item.draftId)
+    const base = {
+      position: index + 1,
+      draftId: item.draftId,
+      label: item.label ?? null,
+      sentAt: item.sentAt ?? null,
+    }
+    const sent = sentMessageForRunItem(store, item)
+    if (!sent) {
+      items.push({
+        ...base,
+        to: draft?.to.map(contact => contact.email) ?? null,
+        sentCopyFound: false,
+        replies: [],
+        note: 'The sent copy is not in the store (yet), so replies cannot be matched to it.',
+      })
+      return
+    }
+    const thread = store.threads.find(entry => entry.id === sent.threadId)
+    const account =
+      store.accounts.find(entry => entry.id === thread?.accountId) ?? fallbackAccount
+    const own = ownAddresses(account)
+    const sentHeader = normalizeMessageId(sent.messageIdHeader)
+    const after = since && since > sent.receivedAt ? since : sent.receivedAt
+    const replies = store.messages
+      .filter(
+        message =>
+          message.id !== sent.id &&
+          !message.isDraft &&
+          !message.optimistic &&
+          message.receivedAt > after &&
+          !own.has((message.from.email ?? '').trim().toLowerCase()) &&
+          answers(message, sent, sentHeader),
+      )
+      .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+      .map(message => ({
+        messageId: message.id,
+        from: { name: message.from.name, email: message.from.email },
+        date: message.receivedAt,
+        snippet: replySnippet(message.body),
+        threadId: message.threadId,
+      }))
+    if (replies.length) replied += 1
+    const state = thread ? replyStateInStore(store, thread, now) : ({ kind: 'none' } as const)
+    items.push({
+      ...base,
+      to: sent.to.map(contact => contact.email),
+      subject: sent.subject,
+      sentMessageId: sent.id,
+      messageIdHeader: sent.messageIdHeader ?? null,
+      threadId: sent.threadId,
+      ...(thread?.gmailThreadId ? { gmailThreadId: thread.gmailThreadId } : {}),
+      replyState: state,
+      replies,
+    })
+  })
+
+  return ok({
+    runId: run.id,
+    name: run.name,
+    ...(since ? { since } : {}),
+    sent: items.length,
+    replied,
+    notSent,
+    items,
+    note: items.length
+      ? 'Replies are what this mailbox holds now; a reply that has not synced yet is not listed. replyState is the thread\'s derived state (replied | awaiting | none).'
+      : 'Nothing in this run has been sent yet — the user sends with Send & next in the run.',
   })
 }
 
