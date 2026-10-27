@@ -8,7 +8,7 @@ export interface DecisionSettings {
   recent: Array<{id: string; at: string; model: string; status: string; latencyMs?: number; inputTokens?: number; outputTokens?: number}>;
 }
 export type DecisionResult =
-  | (Omit<Extract<TypedJudgmentResult, {status: 'completed'}>, 'provider'> & {provider?: 'openai' | 'typesafe' | 'local-jev' | 'local'})
+  | Extract<TypedJudgmentResult, {status: 'completed'}>
   | {status: 'skipped'; reason: Extract<TypedJudgmentResult, {status: 'skipped'}>['reason'] | 'settings-changed'}
 export const getDecisionModelSettings = () => bridge.call<DecisionSettings>('decisionModels.settings', [])
 export const setDecisionModelOverride = (modelId: string | null) => bridge.call<DecisionSettings>('decisionModels.override', [modelId])

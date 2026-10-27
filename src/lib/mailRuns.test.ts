@@ -275,7 +275,7 @@ describe('the note slot', () => {
     const html = `<p>Hi</p>${emptyNoteRegionHtml()}<p>Bye</p>`
     expect(noteTextFromBodyHtml(html)).toBe('')
     const withNote = setNoteInBodyHtml(html, 'Bring a few\nsheets')!
-    expect(withNote).toBe('<p>Hi</p><div data-run-note=""><p>Bring a few</p><p>sheets</p></div><p>Bye</p>')
+    expect(withNote).toBe('<p>Hi</p><div data-run-note=""><div>Bring a few<br>sheets</div></div><p>Bye</p>')
     expect(noteTextFromBodyHtml(withNote)).toBe('Bring a few\nsheets')
     expect(draftHasNote({ bodyHtml: withNote })).toBe(true)
     expect(setNoteInBodyHtml('<p>no slot</p>', 'x')).toBeNull()

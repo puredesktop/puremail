@@ -486,7 +486,7 @@ export interface MailAiTriageRecord {
   decidedBy: 'agent' | 'user' | 'model'
   confidence?: number
   model?: string
-  provider?: 'typesafe' | 'local' | 'openai' | 'local-jev'
+  provider?: Extract<import('@purescience/platform-ui/bridge/typedJudgments.mjs').TypedJudgmentResult, { status: 'completed' }>['provider']
   /** The assistant's verdict when the user changed it. */
   correctedFrom?: MailAiTriageVerdict
 }
