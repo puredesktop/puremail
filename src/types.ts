@@ -203,6 +203,8 @@ export interface MailMessage {
   to: MailContact[]
   cc?: MailContact[]
   bcc?: MailContact[]
+  /** Delivery header evidence for routing, never proof of sender authority. */
+  deliveredTo?: MailContact[]
   subject: string
   body: string
   bodyHtml?: string
@@ -275,7 +277,7 @@ export interface MailTask {
 
 export interface Draft {
   /** Persisted delivery failure; incoming sync does not clear this. */
-  providerConflict?: Pick<Draft, 'subject' | 'body' | 'bodyHtml' | 'to' | 'cc' | 'bcc' | 'attachments' | 'updatedAt'>
+  providerConflict?: Pick<Draft, 'subject' | 'body' | 'bodyHtml' | 'to' | 'cc' | 'bcc' | 'replyTo' | 'attachments' | 'updatedAt'>
   staleProviderDraftIds?: string[]
   providerSaveUncertain?: boolean
   providerSaveWarning?: string
@@ -292,6 +294,8 @@ export interface Draft {
   to: MailContact[]
   cc?: MailContact[]
   bcc?: MailContact[]
+  /** Optional reply routing retained through provider draft saves and sends. */
+  replyTo?: MailContact[]
   subject: string
   body: string
   /**

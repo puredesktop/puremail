@@ -362,6 +362,7 @@ describe('GmailMailProvider', () => {
       to: [{ name: 'Mira', email: 'mira@example.com' }],
       cc: [{ name: 'Copy Person', email: 'copy@example.com' }],
       bcc: [{ name: 'Blind Person', email: 'blind@example.com' }],
+      replyTo: [{ name: 'Team lead', email: 'me+cto@example.com' }],
       subject: 'Re: Launch copy and rollout notes',
       body: 'Approved.',
       attachments: [],
@@ -408,6 +409,7 @@ describe('GmailMailProvider', () => {
     const decoded = decodeBase64Url(raw)
     expect(decoded).toContain('Cc: Copy Person <copy@example.com>')
     expect(decoded).toContain('Bcc: Blind Person <blind@example.com>')
+    expect(decoded).toContain('Reply-To: Team lead <me+cto@example.com>')
     expect(decoded).toContain('In-Reply-To: <msg-1@mail.example.com>')
     expect(decoded).toContain('References: <msg-1@mail.example.com>')
   })
@@ -1847,4 +1849,23 @@ describe('GmailMailProvider drafts', () => {
     // it sitting in Drafts.
     expect(paths.some(entry => entry.path.endsWith('/messages/send'))).toBe(false)
   })
+})
+
+it('retains Gmail delivery aliases and reply headers without marking the human inbox read', async () => {
+  const thread = gmailThread()
+  thread.messages[0]!.payload.headers.push(
+    { name: 'Bcc', value: 'alex+cos@example.com' },
+    { name: 'Delivered-To', value: 'alex+cto-3d@example.com' },
+    { name: 'Reply-To', value: 'alex+cto@example.com' },
+    { name: 'In-Reply-To', value: '<role-update@example.com>' },
+    { name: 'References', value: '<role-update@example.com>' },
+  )
+  thread.messages[0]!.labelIds.push('UNREAD')
+  const { provider } = createProvider(thread)
+  const message = (await provider.fetchStore()).messages[0]!
+  expect(message.bcc?.[0]?.email).toBe('alex+cos@example.com')
+  expect(message.deliveredTo?.[0]?.email).toBe('alex+cto-3d@example.com')
+  expect(message.replyTo?.[0]?.email).toBe('alex+cto@example.com')
+  expect(message.inReplyTo).toBe('<role-update@example.com>')
+  expect(message.read).toBe(false)
 })

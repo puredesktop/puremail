@@ -2068,6 +2068,7 @@ export function sendDraft(
     to: draft.to,
     cc: draft.cc ?? [],
     bcc: draft.bcc ?? [],
+    ...(draft.replyTo?.length ? { replyTo: draft.replyTo } : {}),
     subject: draft.subject,
     body: draft.body,
     receivedAt: now,
@@ -3690,7 +3691,7 @@ export function mergeMailDrafts(
     }
     if (local.syncState === 'pending' || local.syncState === 'failed') {
       if (local.providerRevision && remoteRevision !== local.providerRevision && remoteRevision !== draftContentRevision(local)) {
-        merged.push({ ...local, ...providerIdentity, providerConflict: { subject: remote.subject, body: remote.body, bodyHtml: remote.bodyHtml, to: remote.to, cc: remote.cc, bcc: remote.bcc, attachments: remote.attachments, updatedAt: remote.updatedAt }, syncState: 'conflict', sendError: 'This draft was also edited in another mail app. Review both versions before sending.', draftWarnings: [...(local.draftWarnings ?? []), 'The account has different draft text. Automatic overwrite is paused.'] })
+        merged.push({ ...local, ...providerIdentity, providerConflict: { subject: remote.subject, body: remote.body, bodyHtml: remote.bodyHtml, to: remote.to, cc: remote.cc, bcc: remote.bcc, replyTo: remote.replyTo, attachments: remote.attachments, updatedAt: remote.updatedAt }, syncState: 'conflict', sendError: 'This draft was also edited in another mail app. Review both versions before sending.', draftWarnings: [...(local.draftWarnings ?? []), 'The account has different draft text. Automatic overwrite is paused.'] })
       } else merged.push({ ...local, ...providerIdentity })
       continue
     }
@@ -3712,6 +3713,7 @@ export function mergeMailDrafts(
       to: remote.to,
       cc: remote.cc ?? [],
       bcc: remote.bcc ?? [],
+      replyTo: remote.replyTo,
       subject: remote.subject,
       body: remote.body,
       bodyHtml: remote.bodyHtml,

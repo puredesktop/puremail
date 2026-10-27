@@ -454,3 +454,34 @@ describe('role-addressed email', () => {
     expect(digestLinesFor(s, configured, ACCOUNT, new Set())).toEqual([])
   })
 })
+
+it('exports BCC, delivery evidence, threaded replies and bounded invitation context for timed and group mail', () => {
+  const s = store(), configured = { ...share, roleAddresses: ['adam+cto@pure.science', 'adam+exec@pure.science'] }
+  const body = 'Private team request. '.repeat(300)
+  s.messages[0] = message('m', 't1', { to: [{ name: '', email: 'external@example.com' }], bcc: [{ name: '', email: 'adam+cto-3d@pure.science' }], body,
+    inReplyTo: '<update@example.com>', references: ['<update@example.com>'],
+    calendarInvite: { uid: 'invite', method: 'REQUEST', sequence: 2, status: 'confirmed', title: 'Review', description: 'Prepare notes.', startsAt: '2026-11-02T10:00:00Z', endsAt: '2026-11-02T11:00:00Z', timeZone: 'UTC', attendees: [], rawSource: 'RAW ICS NEVER EXPORTED' } })
+  let line = digestLinesFor(s, configured, ACCOUNT, new Set())[0]!.line
+  expect(line.text).toBe(body.trim()); expect(line.bcc?.[0]?.address).toBe('adam+cto-3d@pure.science')
+  expect(line.inReplyTo).toBe('<update@example.com>'); expect(line.calendarInvite).toMatchObject({ uid: 'invite', sequence: 2 })
+  expect(line.calendarInvite).not.toHaveProperty('rawSource'); expect(s.messages[0]!.read).toBe(false)
+  s.messages[0] = { ...s.messages[0]!, bcc: [], deliveredTo: [{ name: '', email: 'adam+exec@pure.science' }] }
+  line = digestLinesFor(s, configured, ACCOUNT, new Set())[0]!.line
+  expect(line.text).toBe(body.trim()); expect(line.deliveredTo?.[0]?.address).toBe('adam+exec@pure.science')
+  s.messages[0] = { ...s.messages[0]!, deliveredTo: [{ name: '', email: 'adam+cto-3d@other.science' }] }
+  expect(digestLinesFor(s, configured, ACCOUNT, new Set())[0]!.line.text.length).toBeLessThanOrEqual(DIGEST_TEXT_LIMIT)
+  s.messages[0] = { ...s.messages[0]!, from: { name: '', email: 'private@example.com' }, deliveredTo: [{ name: '', email: 'adam+cto@pure.science' }] }
+  expect(digestLinesFor(s, configured, ACCOUNT, new Set())).toEqual([])
+})
+
+it('creates an unsent update draft with validated reply routing', () => {
+  const key = 'role-update-test'
+  const raw = { v: 1, key, account: ACCOUNT.email, to: [{ address: ACCOUNT.email }], replyTo: [{ name: 'CTO', address: 'adam+cto@pure.science' }], subject: 'CTO update', body: 'Work is ready for review.' }
+  const checked = checkDraftRequest(JSON.stringify(raw), key, share)
+  expect(checked.ok).toBe(true)
+  if (!checked.ok) return
+  const built = buildExecutiveDraft(store(), ACCOUNT, checked.request)
+  expect(built.draft.replyTo).toEqual([{ name: 'CTO', email: 'adam+cto@pure.science' }])
+  expect(built.draft.syncState).toBe('pending'); expect(built.draft.sentAt).toBeUndefined()
+  expect(checkDraftRequest(JSON.stringify({ ...raw, replyTo: [{ address: 'bad\r\nBcc: victim@example.com' }] }), key, share).ok).toBe(false)
+})

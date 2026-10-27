@@ -247,6 +247,7 @@ describe('ImapMailProvider against the fake transport', () => {
     await imapProvider.fetchStore()
     const draft = {
       id: 'draft_1',
+      replyTo: [{ name: 'Team lead', email: 'me+cto@example.com' }],
       threadId: 'imap_thread_x',
       to: [{ name: 'Kim', email: 'kim@fastmail.example' }],
       subject: 'Hello',
@@ -261,6 +262,7 @@ describe('ImapMailProvider against the fake transport', () => {
     expect(providerDraftId).toMatch(/^imap_draft_/)
     expect(imap.appended[0]?.folder).toBe('Drafts')
     expect(imap.appended[0]?.raw).toContain('Subject: Hello')
+    expect(imap.appended[0]?.raw).toContain('Reply-To: Team lead <me+cto@example.com>')
     expect(imap.appended[0]?.raw).toContain('multipart/alternative')
     expect(imap.appended[0]?.raw).toContain('Message-ID: <puremail-draft-draft_1@puremail.local>')
     await imapProvider.updateDraft(providerDraftId, { ...draft, body: 'Updated body.' })
@@ -271,6 +273,7 @@ describe('ImapMailProvider against the fake transport', () => {
       threadId: 'imap_thread_x',
     })
     expect(smtp.sent).toHaveLength(1)
+    expect(smtp.sent[0]?.raw).toContain('Reply-To: Team lead <me+cto@example.com>')
     expect(smtp.sent[0]?.to).toEqual(['kim@fastmail.example'])
     expect(smtp.sent[0]?.raw).toContain('To: Kim <kim@fastmail.example>')
     // A sent copy is appended best-effort.
@@ -1237,4 +1240,15 @@ describe('IMAP draft listing coverage', () => {
     }
     await expect(mail.fetchStore()).rejects.toThrow('Draft listing disconnected')
   })
+})
+
+it('retains IMAP routing evidence and reply addresses through incoming message conversion', async () => {
+  const imap = fakeImap(), source = imap.boxes.get('INBOX')![0]!
+  source.bcc = [{ name: '', email: 'alex+cos@example.com' }]
+  source.deliveredTo = [{ name: '', email: 'alex+cto-3d@example.com' }]
+  source.replyTo = [{ name: '', email: 'alex+cto@example.com' }]
+  const { provider: mail } = provider(imap)
+  const message = (await mail.fetchStore()).messages.find(m => m.messageIdHeader === source.messageId)!
+  expect(message.bcc).toEqual(source.bcc); expect(message.deliveredTo).toEqual(source.deliveredTo)
+  expect(message.replyTo).toEqual(source.replyTo); expect(message.read).toBe(false)
 })
