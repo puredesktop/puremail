@@ -25,6 +25,8 @@ const GMAIL_COMPARISON = /===\s*'gmail'/g
 const ALLOWED_FILES = new Set([
   // The Gmail provider is about Gmail by definition.
   'lib/gmailMailProvider.ts',
+  // Boot restores the persisted Gmail identity for its Gmail-specific token refresh.
+  'hooks/usePureMailBoot.ts',
   // The provider display-name helper maps ids to names.
   'components/mailShellHelpers.ts',
   // The Gmail settings card looks up the Gmail account's address, and the
@@ -35,6 +37,7 @@ const ALLOWED_FILES = new Set([
 
 /** Per-file ceilings so an allowed file cannot quietly accumulate more. */
 const ALLOWED_COUNTS: Record<string, number> = {
+  'hooks/usePureMailBoot.ts': 1,
   'components/MailSettings.tsx': 2,
   'components/PureMailShell.tsx': 1,
   'components/mailShellHelpers.ts': 1,

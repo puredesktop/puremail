@@ -29,6 +29,7 @@ import {
   recipientsFromCsv,
   recipientsFromSheetsWorkbook,
   reconcileRun,
+  sentMessageForRunItem,
   renderRun,
   renderRunBodyHtml,
   renderRunDraftFields,
@@ -274,7 +275,7 @@ describe('the note slot', () => {
     const html = `<p>Hi</p>${emptyNoteRegionHtml()}<p>Bye</p>`
     expect(noteTextFromBodyHtml(html)).toBe('')
     const withNote = setNoteInBodyHtml(html, 'Bring a few\nsheets')!
-    expect(withNote).toBe('<p>Hi</p><div data-run-note=""><p>Bring a few</p><p>sheets</p></div><p>Bye</p>')
+    expect(withNote).toBe('<p>Hi</p><div data-run-note=""><div>Bring a few<br>sheets</div></div><p>Bye</p>')
     expect(noteTextFromBodyHtml(withNote)).toBe('Bring a few\nsheets')
     expect(draftHasNote({ bodyHtml: withNote })).toBe(true)
     expect(setNoteInBodyHtml('<p>no slot</p>', 'x')).toBeNull()
@@ -560,6 +561,51 @@ describe('reconciling with the drafts as they are now', () => {
     )
     expect(allDone.items[2]!.status).toBe('missing')
     expect(allDone.status).toBe('done')
+  })
+
+  it('repoints a sent item from the transient IMAP id to the stored copy, through the sync', () => {
+    const { store, run } = storeWithTemplate()
+    const rendered = renderRun(store, run.id, NOW)
+    const item = rendered.run.items[0]!
+    const draft = rendered.store.drafts.find(entry => entry.id === item.draftId)!
+    const receipt = {
+      id: 'imap_sent_1790000000000',
+      threadId: draft.threadId,
+      deliveryAccepted: true,
+      sentDraftId: draft.id,
+      messageIdHeader: '<puremail-a@puremail.local>',
+      from: { name: 'Me', email: store.accounts[0]!.email },
+      to: draft.to,
+      cc: [],
+      subject: draft.subject,
+      body: draft.body,
+      receivedAt: '2026-09-02T11:00:00.000Z',
+      attachments: [],
+      read: true,
+    }
+    let next = sendDraft(rendered.store, draft.id, '2026-09-02T11:00:00.000Z', { sentMessage: receipt, sentMessageId: receipt.id })
+    // What the shell's onCommitted records for an IMAP send.
+    const committed = markRunItemCommitted(markRunItemSent(rendered.run, draft.id, {}, NOW), draft.id, receipt.id, NOW)
+    expect(committed.items[0]!.sentMessageId).toBe('imap_sent_1790000000000')
+    expect(next.messages.some(message => message.id === receipt.id)).toBe(false)
+
+    const filed = sentMessageForRunItem(next, committed.items[0]!)!
+    expect(filed.id).toMatch(new RegExp(`^msg_sent_${draft.id}_`))
+    const reconciled = reconcileRun(next, committed)
+    expect(reconciled.items[0]!.sentMessageId).toBe(filed.id)
+    expect(reconcileRun(next, reconciled)).toBe(reconciled)
+
+    // The sync swaps the receipt for the server's copy; sentDraftId survives.
+    next = {
+      ...next,
+      messages: next.messages.map(message =>
+        message.id === filed.id ? { ...message, id: 'imap_uid_42', threadId: 'imap_thread_x' } : message,
+      ),
+    }
+    expect(reconcileRun(next, reconciled).items[0]!.sentMessageId).toBe('imap_uid_42')
+    // Under the undo hold nothing is repointed.
+    const held = markRunItemSent(rendered.run, draft.id, { pendingSendId: 'pending_1' }, NOW)
+    expect(reconcileRun(next, held).items[0]!.sentMessageId).toBeUndefined()
   })
 
   it('a rendered draft deleted from Drafts leaves no empty thread behind', () => {

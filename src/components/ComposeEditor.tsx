@@ -157,6 +157,9 @@ import {
 } from './mailShellHelpers'
 import { RecipientChipsInput } from './RecipientChipsInput'
 import { draftAgentRefs } from '../lib/agentRefs'
+import { isPersonGesture } from '@purescience/platform-ui/release/gesture'
+
+type PersonGestureEvent = Parameters<typeof isPersonGesture>[0]
 
 type ComposeSendSnapshot = {
   to: string
@@ -460,7 +463,7 @@ export function ComposeEditor({
   const [subjectReminderOpen, setSubjectReminderOpen] = useState(false)
   const subjectInputRef = useRef<HTMLInputElement>(null)
   // The action Send-anyway resumes: plain send or a specific scheduled send.
-  const pendingSubjectActionRef = useRef<(() => void) | null>(null)
+  const pendingSubjectActionRef = useRef<((event?: PersonGestureEvent) => void) | null>(null)
   const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false)
   const scheduleMenuWrapRef = useRef<HTMLDivElement>(null)
   useOutsideClose(scheduleMenuWrapRef, scheduleMenuOpen, () =>
@@ -1150,12 +1153,14 @@ export function ComposeEditor({
     ]
   }
 
-  const sendComposeMessage = (): void => {
+  const sendComposeMessage = (event?: PersonGestureEvent): void => {
     if (pendingSend?.target === 'compose') {
       undoPendingSend(pendingSend.id)
       return
     }
     if (!canSendCompose) return
+    // Only a person's own press sends (#1017): a scripted click is ignored.
+    if (!isPersonGesture(event)) return
     // Subject reminder: "(no subject)" in someone's inbox is almost always
     // an accident — ask once, inline, before the message leaves.
     if (!subjectReminderOpen && !composeSubject.trim()) {
@@ -1453,7 +1458,7 @@ export function ComposeEditor({
         if (!runChrome.renderDisabled) runChrome.onRender?.()
         return
       }
-      sendComposeMessage()
+      sendComposeMessage(event)
       return
     }
     if (event.key !== 'Escape') return
@@ -1914,11 +1919,11 @@ export function ComposeEditor({
                   </Button>
                   <Button
                     size="sm"
-                    onClick={() => {
+                    onClick={event => {
                       const action =
                         pendingSubjectActionRef.current ?? sendComposeMessage
                       pendingSubjectActionRef.current = null
-                      action()
+                      action(event)
                     }}
                   >
                     Send anyway
@@ -1932,7 +1937,7 @@ export function ComposeEditor({
                   aria-label="Attachment reminder"
                 >
                   The message mentions an attachment, but nothing is attached.
-                  <Button size="sm" onClick={sendComposeMessage}>
+                  <Button size="sm" data-release="send" onClick={sendComposeMessage}>
                     Send anyway
                   </Button>
                   <Button
@@ -2062,11 +2067,12 @@ export function ComposeEditor({
             <ComposeDockFooter>
               <ComposeDockSendButton
                 type="button"
+                data-release="sendRunItem"
                 disabled={!canSendCompose && !composeSendPending}
-                onClick={() =>
+                onClick={event =>
                   composeSendPending
                     ? runChrome.onUndoSend?.()
-                    : sendComposeMessage()
+                    : sendComposeMessage(event)
                 }
               >
                 {composeSendPending ? (
@@ -2162,6 +2168,7 @@ export function ComposeEditor({
               <ComposeDockSendGroup>
                 <ComposeDockSendButton
                   type="button"
+                  data-release="send"
                   disabled={!canSendCompose && !composeSendPending}
                   onClick={sendComposeMessage}
                 >
@@ -2577,11 +2584,11 @@ export function ComposeEditor({
             </Button>
             <Button
               size="sm"
-              onClick={() => {
+              onClick={event => {
                 const action =
                   pendingSubjectActionRef.current ?? sendComposeMessage
                 pendingSubjectActionRef.current = null
-                action()
+                action(event)
               }}
             >
               Send anyway
@@ -2595,7 +2602,7 @@ export function ComposeEditor({
             aria-label="Attachment reminder"
           >
             The message mentions an attachment, but nothing is attached.
-            <Button size="sm" onClick={sendComposeMessage}>
+            <Button size="sm" data-release="send" onClick={sendComposeMessage}>
               Send anyway
             </Button>
             <Button
@@ -2665,6 +2672,7 @@ export function ComposeEditor({
         <Button
           size="sm"
           variant="primary"
+          data-release="send"
           disabled={!canSendCompose && !composeSendPending}
           onClick={sendComposeMessage}
         >
