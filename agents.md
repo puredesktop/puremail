@@ -479,3 +479,15 @@ an internal agent session. No cloud fallback occurs. Local confidence is
 self-reported, with a separate threshold; use shadow comparisons to evaluate
 it before relying on suggestions. The settings connection test uses synthetic
 content only and follows the selected provider/model.
+
+## Organisation review status
+
+The mail share also discovers configured organisation folders in Executive's settings, so the user's main desktop
+can serve all authorised shares without another desktop. PureMail runs in the background and checks for shares,
+drafts and completed review receipts every 30 seconds as well as after sync. Normal mailbox fetching still follows
+PureMail's fetch settings. Closing PureMail explicitly stops it until it is reopened or the desktop restarts.
+
+“Read by team” is a projection of completed review receipts, separate from the provider's human read/unread flags.
+A new incoming reply makes a previously reviewed conversation partly read by team. Neither syncing the digest nor
+reading a receipt changes any mailbox flag. The selected reviewer can be any configured lead; resulting team work
+always requires user approval. Drafts remain ordinary editable PureMail drafts and only the person sends.
