@@ -3,10 +3,12 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@purescience/platform-ui/bridge/typedJudgments.mjs', () => ({
-  getTypedJudgmentStatus: async () => ({ configured: true, today: 51, recent: [] }),
+vi.mock('../lib/decisionModels', async importOriginal => ({
+  ...await importOriginal<typeof import('../lib/decisionModels')>(),
+  getDecisionModelSettings: async () => ({ configured: true, today: 51, recent: [], defaultModelId: 'typesafe:jev', overrideModelId: null, effectiveModelId: 'typesafe:jev', models: [{id: 'typesafe:jev', label: 'Jev', local: false}] }),
+  setDecisionModelOverride: vi.fn(),
 }))
-vi.mock('../lib/triagePersistence', () => ({ readTriageFile: async () => ({ byMessageId: {} }) }))
+vi.mock('../lib/triagePersistence', async importOriginal => ({ ...await importOriginal<typeof import('../lib/triagePersistence')>(), readTriageFile: async () => ({ byMessageId: {} }) }))
 vi.mock('../lib/typedTriageConnection', () => ({
   testTypedTriageConnection: async () => ({ status: 'completed', model: 'jev-1.13.0', latencyMs: 179 }),
   connectionTestMessage: () => 'Connection verified · jev-1.13.0 · 179 ms.',
@@ -19,7 +21,7 @@ const setv = (input: HTMLInputElement, v: string) => { Object.getOwnPropertyDesc
 
 describe('automatic triage settings', () => {
   it('takes a cap typed afresh, and lights the test button green once the connection is verified', async () => {
-    let store = { settings, messages: [], threads: [] } as never
+    let store = { settings, accounts: [], messages: [], threads: [] } as never
     const setStore = (update: unknown) => { store = typeof update === 'function' ? (update as (s: unknown) => unknown)(store) as never : update as never }
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
     const render = () => act(async () => root.render(<TypedTriageSettings store={store} setStore={setStore as never} onRunTriage={vi.fn(async () => ({ completed: 0 })) as never} />))
