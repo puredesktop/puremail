@@ -1,3 +1,4 @@
+import type { TeamReadStatuses } from '../lib/teamMailReview'
 import { InviteDescription } from './InviteDescription'
 import type { InviteActionState } from '../types'
 import {
@@ -302,6 +303,7 @@ export interface ThreadReaderProps {
   /** The workspace Mail folder, created when needed; where files leave Mail for other apps. */
   mailSaveFolder?: () => Promise<string>
   store: MailStore
+  teamReads?: TeamReadStatuses
   setStore: React.Dispatch<React.SetStateAction<MailStore>>
   storeRef: React.MutableRefObject<MailStore>
   providerBacked: MailProvider | undefined
@@ -446,6 +448,7 @@ export const SanitizedMessageBody = memo(function SanitizedMessageBody({
 export function ThreadReader({
   mailSaveFolder,
   store,
+  teamReads = {},
   setStore,
   storeRef,
   providerBacked,
@@ -1886,6 +1889,7 @@ export function ThreadReader({
                 {threadTaskCount} task{threadTaskCount === 1 ? '' : 's'}
               </ReaderTaskChip>
             )}
+            {teamReads[selectedThread.id] && <MailStateChip $tone="label" title={teamReads[selectedThread.id]!.description}>{teamReads[selectedThread.id]!.label}</MailStateChip>}
             {threadStatusLabel(store, selectedThread, store.drafts) && (
               <MailStateChip
                 $tone={threadStatusTone(store, selectedThread, store.drafts)}

@@ -4504,6 +4504,7 @@ export function PureMailShell({
           </Section>
         )}
           <ThreadRail
+              teamReads={executiveShare.teamReads}
             store={store}
             density={density}
             filteredThreads={filteredThreads}
@@ -4919,6 +4920,7 @@ export function PureMailShell({
           })()
         ) : readingActive && selectedThread ? (
           <ThreadReader
+              teamReads={executiveShare.teamReads}
             mailSaveFolder={async () => {
               const root = workspaceFolder ?? (await getPlatformPreferences()).workspaceRoot?.trim()
               if (!root) throw new Error('no workspace is set up')

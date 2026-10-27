@@ -1,3 +1,4 @@
+import type { TeamReadStatuses } from '../lib/teamMailReview'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
@@ -502,6 +503,7 @@ export function ThreadListToolbar({
 }
 
 export interface ThreadRailProps {
+  teamReads?: TeamReadStatuses
   store: MailStore
   filteredThreads: MailThread[]
   filteredThreadEntries: Array<{ thread: MailThread; sortAt: string }>
@@ -523,6 +525,7 @@ export interface ThreadRailProps {
  * nothing reflows). Clicking a row ENTERS reading mode via openThread.
  */
 export function ThreadRail({
+  teamReads = {},
   store,
   filteredThreads,
   filteredThreadEntries,
@@ -822,6 +825,7 @@ export function ThreadRail({
               {thread.participants[0]?.name ?? 'Unknown sender'}
             </RowSender>
             {rowChip(thread)}
+            {teamReads[thread.id] && <MailStateChip $tone="label" title={teamReads[thread.id]!.description}>{teamReads[thread.id]!.label}</MailStateChip>}
             <RowSubject $unread={unread}>
               <strong>{thread.subject}</strong>
               {snippet ? ` — ${snippet}` : ''}

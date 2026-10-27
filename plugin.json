@@ -16,6 +16,7 @@
     "kind": "mail",
     "description": "Modern email with thread-linked tasks, follow-ups, and right-pane work tracking.",
     "usePureDesktopAiPanel": true,
+    "runsInBackground": true,
     "brand": {
       "letter": "m",
       "label": "Mail"

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getPlatformPreferences } from '@purescience/platform-ui/bridge/preferences'
 import {
+  readPlatformStorageJson,
   fsDelete,
   fsListNames,
   fsReadTextIfPresent,
@@ -16,6 +17,7 @@ import {
   type ExecutiveDraftRequest,
   type ExecutiveShareFiles,
 } from '../lib/executiveShare'
+import { mailShareRoots, readTeamMailReceipts, teamReadStatuses, type TeamMailReceipt, type TeamReadStatuses } from '../lib/teamMailReview'
 import type { MailAccount, MailStore } from '../types'
 
 const shellFiles: ExecutiveShareFiles = {
@@ -47,7 +49,9 @@ export function useExecutiveMailShare(input: {
 }): {
   /** Call after a successful sync, with the accounts that sync covered. */
   afterSync: (syncedAccounts: MailAccount[]) => void
+  teamReads: TeamReadStatuses
 } {
+  const [receipts, setReceipts] = useState<TeamMailReceipt[]>([])
   const inputRef = useRef(input)
   inputRef.current = input
   const instanceId = useRef(Math.random().toString(36).slice(2, 10) || 'window')
@@ -59,30 +63,23 @@ export function useExecutiveMailShare(input: {
       if (!current.enabled) return
       try {
         const root = (await getPlatformPreferences()).workspaceRoot?.trim()
-        if (!root) return
-        const share = await readMailShare(shellFiles, root)
-        if (!share) return
-        const synced = syncedAccounts ? sharedAccount({ accounts: syncedAccounts }, share) : null
-        if (synced) {
-          await writeMailDigest({
-            files: shellFiles,
-            root,
-            store: current.readStore(),
-            share,
-            account: synced,
-            instanceId: instanceId.current,
-          })
+        const settings = await readPlatformStorageJson({ appSlug: 'executive', fileName: 'executive.json' }).catch(() => ({ value: null }))
+        const allReceipts: TeamMailReceipt[] = []
+        for (const folder of mailShareRoots(settings.value, root)) {
+          try {
+            const share = await readMailShare(shellFiles, folder)
+            if (!share) continue
+            const account = sharedAccount(current.readStore(), share)
+            if (!account) continue
+            // Cached synced messages bootstrap a newly configured share too. Cursor deduplication is durable.
+            const synced = syncedAccounts ? sharedAccount({ accounts: syncedAccounts }, share) : account
+            if (synced) await writeMailDigest({ files: shellFiles, root: folder, store: current.readStore(), share, account: synced, instanceId: instanceId.current })
+            allReceipts.push(...await readTeamMailReceipts(shellFiles, folder, account.email))
+            const result = await takeExecutiveDrafts({ files: shellFiles, root: folder, share, instanceId: instanceId.current, save: request => inputRef.current.saveDraft(account, request) })
+            if (result.taken.length || result.refused.length) inputRef.current.onDraftsTaken?.(result)
+          } catch { console.warn('[puremail] An organisation mail share could not be refreshed; it will retry.') }
         }
-        const account = sharedAccount(current.readStore(), share)
-        if (!account) return
-        const result = await takeExecutiveDrafts({
-          files: shellFiles,
-          root,
-          share,
-          instanceId: instanceId.current,
-          save: request => inputRef.current.saveDraft(account, request),
-        })
-        if (result.taken.length || result.refused.length) inputRef.current.onDraftsTaken?.(result)
+        setReceipts(previous => JSON.stringify(previous) === JSON.stringify(allReceipts) ? previous : allReceipts)
       } catch (error) {
         // The share is a side channel: a failed look must never disturb mail.
         // The next sync looks again; the files say what was and was not done.
@@ -95,8 +92,9 @@ export function useExecutiveMailShare(input: {
   useEffect(() => {
     if (!input.enabled) return
     const timer = window.setTimeout(() => look.current(null), 0)
-    return () => window.clearTimeout(timer)
+    const poll = window.setInterval(() => look.current(null), 30_000)
+    return () => { window.clearTimeout(timer); window.clearInterval(poll) }
   }, [input.enabled])
 
-  return { afterSync: syncedAccounts => look.current(syncedAccounts) }
+  return { afterSync: syncedAccounts => look.current(syncedAccounts), teamReads: teamReadStatuses(input.readStore(), receipts) }
 }

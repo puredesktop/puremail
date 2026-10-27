@@ -356,7 +356,7 @@ export function bridgeSmtpTransport(config: BridgeTransportConfig): SmtpTranspor
       }))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (message.includes('No stored password under secrets key')) {
+        if (message.includes('No stored password under secrets key') || message.includes('saved secret could not be unlocked')) {
           throw new MailSendError('The saved outgoing-mail password is missing or could not be unlocked. Open Mail settings, edit this connection, and re-save its IMAP and SMTP passwords. For Proton Bridge, use the passwords shown by Bridge. Then retry your response.', 'not_sent')
         }
         throw error
