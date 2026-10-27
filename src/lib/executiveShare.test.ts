@@ -434,3 +434,23 @@ describe('takeExecutiveDrafts', () => {
     expect(disk.has(`${drafts}/refused/${DRAFT.key}.json`)).toBe(true)
   })
 })
+
+
+describe('role-addressed email', () => {
+  it('preserves long requests and quoted context, without changing human unread state', () => {
+    const s = store(), body = 'Request details. '.repeat(300) + '\n> Forwarded requirement to preserve.'
+    s.messages[0] = message('m', 't1', { to: [{ name: '', email: 'ADAM+CTO@PURE.SCIENCE' }], body })
+    const configured = parseMailShare(JSON.stringify({ ...JSON.parse(SHARE_JSON), roleAddresses: ['adam+cto@pure.science'] }))!
+    expect(digestLinesFor(s, configured, ACCOUNT, new Set())[0]!.line.text).toBe(body)
+    expect(s.messages[0].read).toBe(false)
+    expect(digestLinesFor(s, share, ACCOUNT, new Set())[0]!.line.text.length).toBeLessThanOrEqual(DIGEST_TEXT_LIMIT)
+  })
+  it('retains privacy exclusions and sent/inbox Message-ID deduplication for role mail', () => {
+    const s = store(), configured = { ...share, roleAddresses: ['adam+cto@pure.science'] }
+    const m = message('m', 't1', { to: [{ name: '', email: configured.roleAddresses[0] }] })
+    s.messages = [m, { ...m, id: 'copy' }]
+    expect(digestLinesFor(s, configured, ACCOUNT, new Set())).toHaveLength(1)
+    s.messages = [{ ...m, from: { name: '', email: 'private@example.com' } }]
+    expect(digestLinesFor(s, configured, ACCOUNT, new Set())).toEqual([])
+  })
+})
