@@ -4,6 +4,7 @@ import { applyAiTriage } from '../lib/aiTriage'
 import { AI_TRIAGE_LABELS, AI_TRIAGE_VERDICTS, aiTriageCurrent, isAiTriageVerdict, latestDeliveredMessage } from '../lib/aiTriageState'
 import { updateTriageFile } from '../lib/triagePersistence'
 import type { MailStore, MailThread } from '../types'
+import { isLocalDecisionProvider } from '../lib/decisionModels'
 export function AiTriageControl({store,setStore,thread}:{store:MailStore;setStore:React.Dispatch<React.SetStateAction<MailStore>>;thread:MailThread}):React.ReactElement {
   const storeRef=useRef(store)
   storeRef.current=store
@@ -27,7 +28,7 @@ export function AiTriageControl({store,setStore,thread}:{store:MailStore;setStor
     <SelectField variant="compact" aria-label="Triage verdict" value={current?.verdict??''} disabled={busy}
       options={[{value:'',label:current?'Clear triage':'Not triaged'},...AI_TRIAGE_VERDICTS.map(value=>({value,label:AI_TRIAGE_LABELS[value]}))]}
       onValueChange={value=>void change(value)} />
-    {current && <small title={current.reason}>{current.decidedBy==='user'?'Set by you':current.decidedBy==='model'?`${current.provider==='local'?'Local model suggestion':'TypeSafe suggestion'} · ${Math.round((current.confidence??0)*100)}% ${current.provider==='local'?'self-reported confidence':'confidence'}`:'Drawer judgment'}</small>}
+    {current && <small title={current.reason}>{current.decidedBy==='user'?'Set by you':current.decidedBy==='model'?`${isLocalDecisionProvider(current.provider)?'Local model suggestion':'Model suggestion'} · ${Math.round((current.confidence??0)*100)}% ${isLocalDecisionProvider(current.provider)?'self-reported confidence':'confidence'}`:'Drawer judgment'}</small>}
     {error && <span role="alert">{error}</span>}
   </div>
 }

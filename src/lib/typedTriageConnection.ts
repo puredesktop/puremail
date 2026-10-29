@@ -31,6 +31,8 @@ export function connectionTestMessage(result: DecisionResult): string {
     case 'already-attempted': return 'This test was already attempted. Run a new test to verify the connection.'
     case 'local-unavailable': return 'Test failed: no valid local response. Check the local decision runtime and selected model.'
     case 'unavailable': return 'Test failed: no valid response from the decision models provider. Check the API key and connection, then try again.'
+    case 'unsupported-input': return 'Test not run: the chosen decision model cannot take this request.'
+    default: return 'Test failed: the decision models service could not run the test. Try again.'
   }
 }
 
