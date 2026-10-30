@@ -1,5 +1,5 @@
 import { DecisionModelSettings } from './DecisionModelSettings'
-import { getDecisionModelSettings, type DecisionSettings } from '../lib/decisionModels'
+import { effectiveDecisionModel, getDecisionModelSettings, type DecisionSettings } from '../lib/decisionModels'
 import { useEffect, useRef, useState } from 'react'
 import { styled } from 'styled-components'
 import { Badge } from '@purescience/platform-ui/components/common/feedback/Badge'
@@ -37,7 +37,8 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
   const prefs = typedTriageSettings(store)
   const selection = status?.effectiveModelId ?? ''
   const selectionRef = useRef(selection); selectionRef.current = selection
-  const local = status?.effectiveModelId.startsWith('local-jev:') ?? false
+  // Whatever the desktop's Models choice is: local or hosted, never assumed from the model id.
+  const local = effectiveDecisionModel(status)?.local ?? false
   const threshold = prefs.confidence
   function patch(update: Partial<Prefs>) { setStore(current => ({ ...current, settings: { ...current.settings, typedTriage: { ...typedTriageSettings(current), ...update } } })) }
 

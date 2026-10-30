@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { SelectField } from '@purescience/platform-ui/components/common/inputs/SelectField'
-import { getDecisionModelSettings, setDecisionModelOverride, type DecisionSettings } from '../lib/decisionModels'
+import { effectiveDecisionModel, getDecisionModelSettings, setDecisionModelOverride, type DecisionSettings } from '../lib/decisionModels'
 export function DecisionModelSettings({onSettingsChange}: {onSettingsChange?: (settings: DecisionSettings) => void}) {
   const [settings, setSettings] = useState<DecisionSettings | null>(null)
   const [error, setError] = useState('')
@@ -16,8 +16,12 @@ export function DecisionModelSettings({onSettingsChange}: {onSettingsChange?: (s
     <p>Use the global decision models choice, or override it for this app. Provider keys stay in the desktop vault.</p>
     {settings && <>
       <SelectField aria-label="Decision models" value={settings.overrideModelId ?? ''} disabled={saving} options={[{value:'',label:'Use global setting'}, ...settings.models.map(m => ({value:m.id,label:m.label}))]} onValueChange={id => { void save(id) }} />
-      <p>Effective model: {settings.models.find(m => m.id === settings.effectiveModelId)?.label}. {settings.configured ? 'Provider configured.' : 'Add the provider key in the vault, or start the local runtime.'}</p>
+      <p>Effective model: {effectiveDecisionModel(settings)?.label}. {settings.configured ? 'Provider configured.' : 'Add the provider key in the vault, or start the local runtime.'}</p>
+      {(() => { const chosen = effectiveDecisionModel(settings); return chosen && !chosen.local && chosen.sendsContentTo
+        ? <p role="note">Mail sends the messages it triages to {chosen.sendsContentTo}’s servers while {chosen.label} is chosen.</p>
+        : null })()}
     </>}
+    <p>Decision models come from Settings › Models in the desktop.</p>
     {error && <p role="alert">{error}</p>}
   </section>
 }
