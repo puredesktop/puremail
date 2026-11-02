@@ -21,6 +21,7 @@ import {
   pruneOrphanedDraftThreads,
 } from '../lib/mailModel'
 import { readPersistedMailStore } from '../lib/mailPersistence'
+import { recoverInterruptedSends } from '../lib/mailRuns'
 import type { MailProvider, MailSettings, MailStore } from '../types'
 
 export const PUREMAIL_LOCAL_SETTINGS_KEY = 'puremail.localSettings.v1'
@@ -49,7 +50,8 @@ export interface PureMailBootState {
 
 async function readPersistedStore(): Promise<MailStore | null> {
   const { store } = await readPersistedMailStore()
-  return store ? pruneOrphanedDraftThreads(store) : null
+  // Only here, after a successful read: a failed load never reaches recovery.
+  return store ? recoverInterruptedSends(pruneOrphanedDraftThreads(store)) : null
 }
 
 function readPersistedSettings(): Partial<MailSettings> {

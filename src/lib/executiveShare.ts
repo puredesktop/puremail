@@ -26,6 +26,7 @@
  * guarded by renaming the file being worked on (a rename succeeds for one
  * window only).
  */
+import { NO_EVIDENCE_REASON, confirmedSentCopy, draftDelivery, draftDiscardBlock, type DraftDeliveryState } from './mailDeliveryStatus'
 import { attachmentByteSize, attachmentKindLabel } from './mailAttachments'
 import { createComposedMessageDraft, createReplyDraft } from './mailModel'
 import { draftEditVersion } from './mailDrawerDrafts'
@@ -889,6 +890,12 @@ export interface ExecutiveDraftState {
   version: string
   sentAt?: string
   sentMessageId?: string
+  /**
+   * Additive: what happened to a send, on the one reading every view uses
+   * (lib/mailDeliveryStatus). `state` stays draft until the mail service
+   * confirmed it; absent in files written before this field.
+   */
+  delivery?: { state: DraftDeliveryState; reason?: string; at?: string }
 }
 
 const people = (contacts: readonly MailContact[] | undefined): Array<{ name: string; address: string }> =>
@@ -932,14 +939,16 @@ export function executiveDraftState(
     store.drafts.find(item => item.id === draftId && isExecutiveDraftId(key, item.id)) ??
     existingExecutiveDraft(store, key)
   const id = draft?.id ?? draftId
-  if (draft && !draft.sentAt) {
+  const delivery = draftDelivery(store, id)
+  if (draft && delivery.state !== 'submitted') {
     return {
       v: 1, key, draftId: id, state: 'draft', at: now,
       to: people(draft.to), cc: people(draft.cc), subject: draft.subject,
       body: draft.body.slice(0, DRAFT_STATE_BODY_LIMIT), version: draftEditVersion(draft),
+      delivery: { state: delivery.state, ...(delivery.reason ? { reason: delivery.reason } : {}), ...(delivery.at ? { at: delivery.at } : {}) },
     }
   }
-  const sent = sentMessageForRunItem(store, { draftId: id })
+  const sent = confirmedSentCopy(store, id)
   if (draft?.sentAt || sent) {
     return {
       v: 1, key, draftId: id, state: 'sent', at: now,
@@ -949,9 +958,15 @@ export function executiveDraftState(
       version: previous?.version ?? '',
       sentAt: draft?.sentAt ?? sent?.receivedAt ?? now,
       ...(sent ? { sentMessageId: sent.gmailMessageId ?? sent.id } : {}),
+      delivery: { state: 'submitted', ...(delivery.at ? { at: delivery.at } : {}) },
     }
   }
   if (!store.threads.some(thread => thread.accountId === account.id)) return null
+  // Gone while a send was in the air, with no Sent copy to show for it: that is not a discard.
+  const inTheAir = previous?.state === 'draft' && ['held', 'submitting', 'unconfirmed'].includes(previous.delivery?.state ?? '')
+  if (previous && inTheAir) {
+    return { ...previous, at: now, delivery: { state: 'unconfirmed', reason: NO_EVIDENCE_REASON } }
+  }
   return {
     v: 1, key, draftId: id, state: 'discarded', at: now,
     to: previous?.to ?? [], cc: previous?.cc ?? [], subject: previous?.subject ?? '',
@@ -1082,12 +1097,17 @@ export async function takeExecutiveDiscards(input: {
     const previous = parseDraftState(await files.read(statePath))
     const draft = existingExecutiveDraft(store, key)
     const id = draft?.id ?? (named || executiveDraftIds(key).draftId)
-    if (draft?.sentAt || (!draft && sentMessageForRunItem(store, { draftId: id }))) {
+    if (draft?.sentAt || confirmedSentCopy(store, id)) {
       await files.remove(claimPath)
       result.sent.push(key)
       continue
     }
     if (draft) {
+      const blocked = draftDiscardBlock(store, draft.id)
+      if (blocked) {
+        await refuse(`PureMail could not discard it: ${blocked}`)
+        continue
+      }
       const done = discard(draft.id)
       if (!done.ok) {
         await refuse(`PureMail could not discard it: ${done.reason}`)

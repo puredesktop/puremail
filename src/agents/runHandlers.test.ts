@@ -75,8 +75,9 @@ function makeContext(overrides: Partial<MailAgentToolContext> = {}): TestContext
         { ...context.store, drafts: context.store.drafts.map(item => (item.id === finalized.id ? finalized : item)) },
         finalized.id,
         now,
+        { sentGmailMessageId: `gmail_${finalized.id}` },
       )
-      options.onCommitted?.(sentMessageId)
+      options.onCommitted?.(sentMessageId, `pending_${finalized.id}`)
       return { ok: true, pendingId: `pending_${finalized.id}`, undoSeconds: 0 }
     },
     openRun: runId => {
@@ -375,7 +376,7 @@ describe('run tools: following a sent run', () => {
         SENT_AT,
         { sentMessage: receipt, sentMessageId: receipt.id },
       )
-      options.onCommitted?.(receipt.id)
+      options.onCommitted?.(receipt.id, `pending_${finalized.id}`)
       return { ok: true, pendingId: `pending_${finalized.id}`, undoSeconds: 0 }
     }
     return context

@@ -10,8 +10,11 @@ import {
 import {
   advanceRun,
   markRunItemCommitted,
-  markRunItemSent,
+  markRunItemSending,
+  markRunItemSubmitting,
+  markRunItemUnconfirmed,
   markRunItemUnsent,
+  runItemLocked,
   nextPendingIndex,
   previousIndex,
   reconcileRun,
@@ -59,17 +62,9 @@ import {
 } from './runStyles'
 
 /** What the shell's one store-draft send returns. */
-export type SendStoreDraftResult =
-  | { ok: true; pendingId: string; undoSeconds: number }
-  | { ok: false; reason: string }
+import type { SendStoreDraftOptions, SendStoreDraftResult } from '../lib/mailSendRelease'
 
-export interface SendStoreDraftOptions {
-  label?: string
-  /** The hold elapsed and the message left (or the demo account recorded it). */
-  onCommitted?: (sentMessageId: string | undefined) => void
-  /** The provider refused; the draft is still in Drafts. */
-  onFailed?: (reason: string) => void
-}
+export type { SendStoreDraftOptions, SendStoreDraftResult }
 
 /** Shell plumbing every run card needs, passed through untouched. */
 export type RunEditorPlumbing = Pick<
@@ -96,7 +91,7 @@ export interface RunScreenProps {
   updateRun: (runId: string, update: (run: MailRun) => MailRun) => void
   sendStoreDraft: (draft: Draft, options: SendStoreDraftOptions) => SendStoreDraftResult
   pendingSends: PendingSendState[]
-  undoPendingSend: (pendingId: string) => void
+  undoPendingSend: (pendingId: string) => boolean
   setCommandNotice: (notice: string) => void
   onBack: () => void
   onEditTemplate: (() => void) | null
@@ -113,8 +108,11 @@ function timeLabel(iso: string | undefined): string {
 
 function itemMeta(item: MailRunItem, active: boolean): { text: string; accent?: boolean } | null {
   if (item.status === 'sent') return { text: `sent ${timeLabel(item.sentAt)}`.trim() }
+  if (item.status === 'sending') return { text: item.pendingSendId ? 'leaving' : 'sending' }
+  if (item.status === 'unconfirmed') return { text: 'check Sent', accent: true }
   if (active) return { text: 'reviewing', accent: true }
   if (item.status === 'skipped') return { text: 'skipped' }
+  if (item.skipReason && item.status === 'pending') return { text: 'not sent' }
   if (item.status === 'missing') return { text: 'missing' }
   if (item.noteAdded) return { text: 'note added' }
   if (item.emailedThisMonth) return { text: 'emailed this month' }
@@ -141,11 +139,11 @@ export function RunScreen({
   onPause,
 }: RunScreenProps): React.ReactElement {
   const { store, setStore } = plumbing
-  const progress = runProgress(run)
+  const progress = runProgress(run, store)
   const cursor = Math.min(Math.max(run.cursor, 0), Math.max(run.items.length - 1, 0))
   const item = run.items[cursor] ?? null
   const draft =
-    item && item.status !== 'sent'
+    item && !runItemLocked(item)
       ? store.drafts.find(entry => entry.id === item.draftId && !entry.sentAt) ?? null
       : null
   const { card, setters } = useRunCard(draft)
@@ -205,7 +203,7 @@ export function RunScreen({
   }
   const goPrevious = (): void => goTo(previousIndex(run, cursor))
   const skip = (): void => {
-    if (!item || item.status === 'sent') return
+    if (!item || runItemLocked(item)) return
     saveCardRef.current()
     updateRun(run.id, current => advanceRun(skipRunItem(current, item.draftId)))
   }
@@ -215,25 +213,32 @@ export function RunScreen({
     const draftId = savedDraft.id
     const result = sendStoreDraft(savedDraft, {
       label: 'Message',
-      onCommitted: sentMessageId =>
-        updateRun(run.id, current => markRunItemCommitted(current, draftId, sentMessageId)),
-      onFailed: reason =>
-        updateRun(run.id, current => markRunItemUnsent(current, draftId, reason)),
+      fromRun: true,
+      onStart: (attemptId, undoSeconds) =>
+        updateRun(run.id, current =>
+          markRunItemSending(current, draftId, { attemptId, ...(undoSeconds > 0 ? { pendingSendId: attemptId } : {}) }),
+        ),
+      onSubmitting: attemptId =>
+        updateRun(run.id, current => markRunItemSubmitting(current, draftId, attemptId)),
+      onCommitted: (sentMessageId, attemptId) =>
+        updateRun(run.id, current => markRunItemCommitted(current, draftId, sentMessageId, undefined, attemptId)),
+      onFailed: (reason, outcome, attemptId) =>
+        updateRun(run.id, current =>
+          outcome === 'uncertain'
+            ? markRunItemUnconfirmed(current, draftId, reason, undefined, attemptId)
+            : markRunItemUnsent(current, draftId, reason, undefined, attemptId),
+        ),
     })
     if (!result.ok) {
       setCommandNotice(result.reason)
       return
     }
-    // With no undo hold the commit already ran; a hold id would linger.
-    const pendingSendId = result.undoSeconds > 0 ? result.pendingId : undefined
-    updateRun(run.id, current =>
-      advanceRun(markRunItemSent(current, draftId, { pendingSendId })),
-    )
+    updateRun(run.id, current => advanceRun(current))
   }
   const undoItem = (target: MailRunItem): void => {
-    if (!target.pendingSendId) return
-    undoPendingSend(target.pendingSendId)
-    updateRun(run.id, current => markRunItemUnsent(current, target.draftId, undefined))
+    // Undo itself returns the item to the list; if the hold had already
+    // ended the send is on its way and the item is left as it stands.
+    if (target.pendingSendId) undoPendingSend(target.pendingSendId)
   }
   const openHolds = run.items.filter(
     entry => entry.pendingSendId && pendingSends.some(hold => hold.id === entry.pendingSendId),
@@ -244,7 +249,7 @@ export function RunScreen({
     if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
     if (event.key === 'ArrowRight') {
       event.preventDefault()
-      if (item && item.status !== 'sent' && item.status !== 'missing') skip()
+      if (item && !runItemLocked(item) && item.status !== 'missing') skip()
       else goNext()
       return
     }
@@ -277,7 +282,7 @@ export function RunScreen({
     return value || null
   })()
   const cardMeta = item
-    ? [item.label, roleColumn, item.status === 'skipped' ? 'skipped earlier' : null]
+    ? [item.label, roleColumn, item.status === 'skipped' ? 'skipped earlier' : null, item.status !== 'skipped' ? item.skipReason : null]
         .filter(Boolean)
         .join(' · ')
     : ''
@@ -314,7 +319,9 @@ export function RunScreen({
           ))}
         </RunProgressSegments>
         <RunHeaderMeta>
-          {progress.sent} sent · {progress.toGo} to go
+          {progress.sent} sent
+          {progress.leaving ? ` · ${progress.leaving} leaving` : ''}
+          {progress.unconfirmed ? ` · ${progress.unconfirmed} unconfirmed` : ''} · {progress.toGo} to go
         </RunHeaderMeta>
         <RunHeaderSpacer />
         {run.status !== 'done' && (
@@ -339,7 +346,8 @@ export function RunScreen({
               <RunPanelText>
                 {progress.sent} sent
                 {progress.skipped ? ` · ${progress.skipped} skipped` : ''}
-                {progress.missing ? ` · ${progress.missing} missing` : ''}. Sent
+                {progress.missing ? ` · ${progress.missing} missing` : ''}
+                {progress.unconfirmed ? ` · ${progress.unconfirmed} unconfirmed: check Sent before trying those again` : ''}. Sent
                 mail is in Sent as normal; skipped drafts are still in Drafts.
                 Use ⌘← to look back through the items, or return to Runs to
                 archive this one.
@@ -380,6 +388,34 @@ export function RunScreen({
                 </RunHeaderButton>
               </RunPanelActions>
             </RunPanel>
+          ) : item.status === 'sending' || item.status === 'unconfirmed' ? (
+            <RunPanel role="status" aria-label={item.status === 'sending' ? 'Item on its way' : 'Item not confirmed'}>
+              <RunPanelKicker>
+                Draft {cursor + 1} of {run.items.length} · {item.status === 'unconfirmed' ? 'not confirmed' : item.pendingSendId ? 'leaving' : 'sending'}
+              </RunPanelKicker>
+              <RunPanelTitle>
+                {store.drafts.find(entry => entry.id === item.draftId)?.subject ?? item.label ?? 'This message'}
+              </RunPanelTitle>
+              <RunPanelText>
+                To {item.label ?? 'recipient'}.{' '}
+                {item.status === 'unconfirmed'
+                  ? item.skipReason ?? 'This may have gone. Check Sent before allowing another attempt.'
+                  : item.pendingSendId && pendingSends.some(hold => hold.id === item.pendingSendId)
+                    ? 'Not sent yet: leaving in a moment — undo while you can.'
+                    : 'Being submitted to the mail service. Not confirmed yet.'}
+              </RunPanelText>
+              <RunPanelActions>
+                {item.pendingSendId && pendingSends.some(hold => hold.id === item.pendingSendId) && (
+                  <RunHeaderButton type="button" onClick={() => undoItem(item)}>
+                    Undo send
+                  </RunHeaderButton>
+                )}
+                <RunPrimaryButton type="button" onClick={goNext}>
+                  Next
+                  <ChevronRight aria-hidden="true" />
+                </RunPrimaryButton>
+              </RunPanelActions>
+            </RunPanel>
           ) : item.status === 'sent' ? (
             <RunPanel role="status" aria-label="Sent item">
               <RunPanelKicker>
@@ -390,10 +426,8 @@ export function RunScreen({
               </RunPanelTitle>
               <RunPanelText>
                 To {item.label ?? sentMessage?.to[0]?.email ?? 'recipient'}
-                {item.sentAt ? ` · ${timeLabel(item.sentAt)}` : ''}.{' '}
-                {item.pendingSendId && pendingSends.some(hold => hold.id === item.pendingSendId)
-                  ? 'Leaving in a moment — undo while you can.'
-                  : 'It is in Sent as normal mail.'}
+                {item.sentAt ? ` · ${timeLabel(item.sentAt)}` : ''}. The mail service
+                accepted it; that does not show it was received or read.
               </RunPanelText>
               {(sentMessage ?? sentDraft)?.body && (
                 <RunPanelText style={{ whiteSpace: 'pre-wrap' }}>
@@ -401,11 +435,6 @@ export function RunScreen({
                 </RunPanelText>
               )}
               <RunPanelActions>
-                {item.pendingSendId && pendingSends.some(hold => hold.id === item.pendingSendId) && (
-                  <RunHeaderButton type="button" onClick={() => undoItem(item)}>
-                    Undo send
-                  </RunHeaderButton>
-                )}
                 <RunPrimaryButton type="button" onClick={goNext}>
                   Next
                   <ChevronRight aria-hidden="true" />
@@ -504,7 +533,7 @@ export function RunScreen({
               const tone =
                 entry.status === 'sent'
                   ? 'sent'
-                  : active
+                  : active && !runItemLocked(entry)
                     ? 'current'
                     : entry.status === 'skipped' || entry.status === 'missing'
                       ? 'off'

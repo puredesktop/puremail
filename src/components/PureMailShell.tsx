@@ -1,4 +1,6 @@
 import { createMailDeliveryController } from '../lib/mailDelivery'
+import { createStoreDraftSender } from '../lib/mailSendRelease'
+import { draftDiscardBlock, draftEditBlock } from '../lib/mailDeliveryStatus'
 import { beginThreadReadSync } from '../lib/mailThreadReadSync'
 import { reconcileComposeAttachments } from '../lib/composeAttachments'
 import { MailConnectionControl } from './MailDeliveryStatus'
@@ -301,8 +303,6 @@ import { UnsubscribeDrawer } from './UnsubscribeDrawer'
 import { ThreadReader } from './ThreadReader'
 import {
   RunScreen,
-  type SendStoreDraftOptions,
-  type SendStoreDraftResult,
 } from './RunScreen'
 import { RunsIndex } from './RunsIndex'
 import { ReadingRoom } from './ReadingRoom'
@@ -319,10 +319,10 @@ import {
   createRunId,
   createRunTemplateDraft,
   discardRun as discardRunFromStore,
-  finalizeRunDraftForSend,
   findRun,
   pauseRun,
   reconcileRun,
+  settleUndoneHold,
   replaceRun,
   startRun,
 } from '../lib/mailRuns'
@@ -737,8 +737,14 @@ export function PureMailShell({
     schedulePendingSend,
     undoPendingSend,
     markDraftSending,
+    holdForDraft,
+    isDraftSending,
     sendingDraftIds,
   } = usePendingSend({
+    onUndone: pending => {
+      if (pending.draftId) setStore(current => settleUndoneHold(current, pending.draftId!, pending.id))
+      recordTriageOperation('mail.draft.send', `Undid sending "${pending.label}": nothing was sent.`)
+    },
     undoSendDelaySeconds: store.settings.undoSendDelaySeconds,
     setCommandNotice,
   })
@@ -1408,10 +1414,13 @@ export function PureMailShell({
         )
       }
     },
+    deliverySignature: store.drafts.filter(draft => draft.sendAttempt || draft.sendState || draft.sendUndoneAt).map(draft => [draft.id, draft.sendAttempt?.phase, draft.sendState, draft.sendError, draft.sendUndoneAt].join('~')).join('|'),
     discardDraft: draftId => {
       const draft = storeRef.current.drafts.find(item => item.id === draftId)
       if (!draft) return { ok: false, reason: 'It is not in PureMail any more.' }
       if (draft.sentAt) return { ok: false, reason: 'It was sent already.' }
+      const blocked = draftDiscardBlock(storeRef.current, draftId)
+      if (blocked) return { ok: false, reason: blocked }
       discardReplyDraft(draftId)
       return { ok: true }
     },
@@ -1927,6 +1936,12 @@ export function PureMailShell({
               draft => !draft.id.startsWith('draft_forward'),
             )) ??
       null
+    if (existing?.sendAttempt) {
+      // Stopping a queued send is the person's explicit choice: never by opening the draft.
+      const hold = holdForDraft(existing.id)
+      showToast(draftEditBlock(storeRef.current, existing.id) ?? 'This message is on its way.', hold ? { label: 'Undo send', run: () => { undoPendingSend(hold.id) } } : undefined)
+      return
+    }
     if (existing && (existing.sendState === 'uncertain' || existing.providerConflict || existing.syncState === 'conflict')) {
       openMailRecovery()
       setToast({ id: Date.now(), error: true, message: existing.sendState === 'uncertain' ? 'Review the previous send before editing this draft.' : 'Compare the conflicting draft versions before editing.' })
@@ -2248,6 +2263,11 @@ export function PureMailShell({
   const discardReplyDraft = (draftId: string): void => {
     const draft = storeRef.current.drafts.find(item => item.id === draftId)
     if (!draft || draft.sentAt) return
+    const discardBlock = draftDiscardBlock(storeRef.current, draftId)
+    if (discardBlock) {
+      showToast(discardBlock)
+      return
+    }
     // Prune by what the remaining drafts reference rather than rebuilding
     // the thread id from this draft's id: a regenerated draft carries a new
     // id while its filed thread keeps the old one, and that mismatch left
@@ -2921,122 +2941,24 @@ export function PureMailShell({
       ),
     )
 
-  /**
-   * THE store-draft send: an existing draft, as it is in the store, goes
-   * out through the usual undo hold and provider path — the run card's
-   * Send & next and the sendRunItem tool both call exactly this. The
-   * draft is finalized first (an empty note slot is stripped); on commit
-   * the finalized copy is written back so the sent record matches what
-   * left. Nothing here sends more than the one draft it is handed.
-   */
-  const sendStoreDraft = (
-    draft: Draft,
-    options: SendStoreDraftOptions,
-  ): SendStoreDraftResult => {
-    const finalized = finalizeRunDraftForSend(draft)
-    const provider = providerBacked
-    const home = providerName(activeProvider)
-    if (provider && !mailProviderSupports(provider, 'compose')) {
-      return { ok: false, reason: `${home} cannot send from here.` }
-    }
-    if ((!provider || navigator.onLine === false) && activeProvider !== 'demo') {
-      reportSendFailure(finalized.id, 'Mail is disconnected — message not sent.')
-      return {
-        ok: false,
-        reason: `${home} is not connected right now — nothing was sent.`,
-      }
-    }
-    if (!finalized.to.length) {
-      return { ok: false, reason: 'The draft has no recipient.' }
-    }
-    const pendingId = `pending_run_${Date.now()}_${finalized.id}`
-    const label = options.label ?? 'Message'
-    const subject = finalized.subject.trim() || '(no subject)'
-    const recipient = finalized.to[0]?.email ?? 'a recipient'
-    const upsertFinalized = (current: MailStore, now: string): MailStore => {
-      const stamped: Draft = { ...finalized, updatedAt: now, syncState: 'pending' }
-      return {
-        ...current,
-        drafts: current.drafts.some(item => item.id === finalized.id)
-          ? current.drafts.map(item => (item.id === finalized.id ? stamped : item))
-          : [...current.drafts, stamped],
-      }
-    }
-    const commit = (): void => {
-      if (!storeRef.current.drafts.some(item => item.id === finalized.id)) {
-        options.onFailed?.('The draft was removed before sending. Nothing was sent.')
-        setCommandNotice('Send cancelled — the draft was removed before sending.')
-        return
-      }
-      const now = new Date().toISOString()
-      if (provider) {
-        setStore(current => upsertFinalized(current, now))
-        markDraftSending(finalized.id, true)
-        void sendDraftThroughProvider(provider, finalized)
-          .then(message => {
-            const sentMessageId = message.gmailMessageId ?? message.id
-            setStore(current =>
-              sendDraft(current, finalized.id, undefined, {
-                appendMessage: true,
-                keepDraft: false,
-                sentMessageId,
-                sentGmailMessageId: message.gmailMessageId,
-              }),
-            )
-            options.onCommitted?.(sentMessageId)
-            recordTriageOperation(
-              'mail.run.send',
-              `Sent "${subject}" to ${recipient} from a send run through ${home}.`,
-            )
-          })
-          .catch(error => {
-            const reason = error instanceof Error ? error.message : 'Send failed.'
-            reportSendFailure(finalized.id, error)
-            options.onFailed?.(reason)
-            setCommandNotice(
-              `Could not send through ${home} — the draft is still in Drafts. (${reason})`,
-            )
-          })
-          .finally(() => markDraftSending(finalized.id, false))
-        return
-      }
-      // Local/demo account: the local send is the source of truth, so the
-      // appended copy is confirmed by construction — strip the optimistic
-      // marker sendDraft stamps on provider-unconfirmed sends.
-      const sentMessageId = `msg_sent_${finalized.id}_${now.replace(/[^0-9]/g, '')}`
-      setStore(current => {
-        const sent = sendDraft(upsertFinalized(current, now), finalized.id, now)
-        return {
-          ...sent,
-          messages: sent.messages.map(message => {
-            if (message.id !== sentMessageId) return message
-            const { optimistic: _optimistic, ...confirmed } = message
-            return confirmed
-          }),
-        }
-      })
-      options.onCommitted?.(sentMessageId)
-      recordTriageOperation(
-        'mail.run.send',
-        `Sent "${subject}" to ${recipient} from a send run.`,
-      )
-    }
-    const queued = schedulePendingSend(
-      { id: pendingId, target: 'run', draftId: finalized.id, label },
-      commit,
-    )
-    if (!queued) {
-      return {
-        ok: false,
-        reason: 'A send is already waiting. Undo it or let it finish.',
-      }
-    }
-    return {
-      ok: true,
-      pendingId,
-      undoSeconds: storeRef.current.settings.undoSendDelaySeconds ?? 10,
-    }
-  }
+  const sendStoreDraft = createStoreDraftSender({
+    read: () => storeRef.current,
+    update: setStore,
+    provider: () => providerBacked,
+    localAccount: () => activeProvider === 'demo',
+    canCompose: provider => mailProviderSupports(provider, 'compose'),
+    online: () => navigator.onLine !== false,
+    home: () => providerName(activeProvider),
+    undoSeconds: () => storeRef.current.settings.undoSendDelaySeconds ?? 10,
+    schedule: schedulePendingSend,
+    holdForDraft,
+    isDraftSending,
+    markDraftSending,
+    deliver: (provider, draft, attempt) => deliveryController.current!(provider, draft, attempt),
+    reportFailure: reportSendFailure,
+    notice: setCommandNotice,
+    record: (kind, summary) => recordTriageOperation(kind, summary),
+  })
 
   const runTriageAction = (
     threadIds: string[],
@@ -3861,6 +3783,8 @@ export function PureMailShell({
       if (draft.sentAt) {
         return { ok: false, reason: 'That draft has already been sent.' }
       }
+      const editBlock = draftEditBlock(storeRef.current, draftId)
+      if (editBlock) return { ok: false, reason: editBlock }
       setStore(current => ({
         ...current,
         drafts: current.drafts.map(item =>
@@ -3973,6 +3897,8 @@ export function PureMailShell({
       if (draft.sentAt) {
         return { ok: false, reason: 'That draft has already been sent.' }
       }
+      const discardBlock = draftDiscardBlock(storeRef.current, draftId)
+      if (discardBlock) return { ok: false, reason: discardBlock }
       discardReplyDraft(draftId)
       return { ok: true }
     },

@@ -33,8 +33,24 @@ function hash53(text: string, seed: number): string {
  * raw fields carried the whole body plus every attachment's base64 bytes.
  */
 export function draftEditVersion(draft: Draft): string {
-  const state = JSON.stringify({ id: draft.id, body: draft.body, bodyHtml: draft.bodyHtml, subject: draft.subject, to: draft.to, cc: draft.cc, bcc: draft.bcc, attachments: draft.attachments, sentAt: draft.sentAt, updatedAt: draft.updatedAt })
+  const state = JSON.stringify({ id: draft.id, body: draft.body, bodyHtml: draft.bodyHtml, subject: draft.subject, to: draft.to, cc: draft.cc, bcc: draft.bcc, replyTo: draft.replyTo, attachments: draft.attachments, sentAt: draft.sentAt, updatedAt: draft.updatedAt })
   return `v1-${state.length.toString(36)}-${hash53(state, 1)}${hash53(state, 2)}`
+}
+
+/**
+ * What a send would put on the wire, and nothing else: provider saves and
+ * `updatedAt` do not change it, an edit does. A file already held locally is
+ * bound by its bytes; a remote one by its exact source, because its name alone
+ * proves nothing and its bytes are fetched only when it leaves (a failed fetch
+ * refuses the send).
+ */
+export function draftSendFingerprint(draft: Draft): string {
+  const state = JSON.stringify({
+    threadId: draft.threadId, sourceMessageId: draft.sourceMessageId, subject: draft.subject, body: draft.body, bodyHtml: draft.bodyHtml,
+    to: draft.to, cc: draft.cc, bcc: draft.bcc, replyTo: draft.replyTo,
+    attachments: draft.attachments.map(item => [item.id, item.name, item.mimeType, item.size, item.remote ?? item.content]),
+  })
+  return `s1-${state.length.toString(36)}-${hash53(state, 1)}${hash53(state, 2)}`
 }
 
 // Ignore provider bookkeeping, but invalidate on any source or user draft edit.

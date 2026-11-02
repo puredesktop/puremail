@@ -384,6 +384,18 @@ Run change tools reply with what changed, not the run or the template:
 `getDraft`), and `setRunRecipients` / `renderRun` list the first 20
 invalid, duplicate or excluded rows with totals — `getRun` has them all.
 
+## Sent and not sent
+
+Every view (run progress, `getDraft`, `listDrafts`, `getRun`, the team's status file) reads one interpretation, `draftDelivery` in `src/lib/mailDeliveryStatus.ts`. Report what it says:
+
+- `held`: in the undo hold. Nothing has left. `submitting`: going to the mail service, not confirmed.
+- `not_submitted` (with a reason): known not to have left. A person may send it again.
+- `unconfirmed`: it may have gone. Nothing retries it; someone checks Sent and allows another attempt.
+- `conflict`: edited in another mail app; resolve it first.
+- `submitted`: the mail service confirmed it. Say "sent"; never say it was received or read.
+
+A held or unconfirmed draft or run item is not sent, and its content cannot be changed: Undo stops a hold, and the changed draft then needs a fresh approval. A second approval of the same draft reports the attempt under way. Reopening Mail settles interrupted sends from the record and never sends anything.
+
 ## The reading room
 
 The reader can open any message with **Read** and read it like an article.
@@ -439,7 +451,8 @@ model and no network call of its own:
   `draftId`, `takenAt`) or `drafts/refused/` (with a plain `why`, `refusedAt`).
 - writes `drafts/state/<key>.json` for each taken draft when it changes:
   `state` is `draft` (with `to`, `cc`, `subject`, plain `body` as the person
-  edited it, and `version`, getDraft's token), `sent` (`sentAt`,
+  edited it, `version`, getDraft's token, and additive `delivery`: `state`,
+  `reason`, `at`, as under Sent and not sent), `sent` (`sentAt`,
   `sentMessageId`; found by the kept draft's `sentAt`, the receipt's
   `sentDraftId` or the local `msg_sent_<draftId>_` copy) or `discarded` (the
   draft is gone and the account is loaded). Sent and discarded are final;

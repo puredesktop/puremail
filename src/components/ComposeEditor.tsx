@@ -38,6 +38,9 @@ import {
 } from 'lucide-react'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { sendDraft } from '../lib/mailModel'
+import { CHANGED_REASON, holdDraftForSend, settleDraftNotSent } from '../lib/mailDeliveryStatus'
+import { draftSendFingerprint } from '../lib/mailDrawerDrafts'
+import { composeHoldStillApproved } from '../lib/mailSendRelease'
 import { useOutsideClose } from './useOutsideClose'
 import { scheduleSend } from '../lib/mailScheduledSend'
 import {
@@ -275,7 +278,7 @@ export interface ComposeEditorProps {
   onDock?: () => void
   composeToRef: React.RefObject<HTMLInputElement | null>
   pendingSend: PendingSendState | null
-  schedulePendingSend: (pending: PendingSendState, commit: () => void) => void
+  schedulePendingSend: (pending: PendingSendState, commit: () => void, onStart?: () => void) => boolean
   undoPendingSend: (pendingId: string) => void
   sendDraftThroughProvider: (provider: MailProvider, draft: Draft) => Promise<MailMessage>
   markDraftSending: (draftId: string, sending: boolean) => void
@@ -989,13 +992,34 @@ export function ComposeEditor({
   ): void => {
     const pendingId = `pending_reply_${Date.now()}`
     const sentLabel = context.kind === 'forward' ? 'Forward' : context.kind === 'draft' ? 'Message' : 'Reply'
+    // A saved draft this window is sending: approved as it stands, so a change
+    // made elsewhere during the hold stops the send instead of being overwritten.
+    const heldDraft = context.draftId ? storeRef.current.drafts.find(item => item.id === context.draftId) : undefined
+    if (heldDraft?.sendAttempt) {
+      setCommandNotice('A send is already waiting. Undo it or let it finish.')
+      return
+    }
+    const approved = heldDraft && draftSendFingerprint(heldDraft)
+    // This window's own save of the same text during the hold is not a change.
+    const outgoing = heldDraft && createContextDraftStore(storeRef.current, context, snapshot).nextStore.drafts.find(item => item.id === heldDraft.id)
+    const outgoingPrint = outgoing && draftSendFingerprint(outgoing)
     schedulePendingSend(
       {
         id: pendingId,
         target: 'compose',
         label: sentLabel,
+        ...(heldDraft ? { draftId: heldDraft.id } : {}),
       },
       () => {
+        if (heldDraft) {
+          const current = storeRef.current.drafts.find(item => item.id === heldDraft.id)
+          if (!composeHoldStillApproved(current, pendingId, approved, outgoingPrint)) {
+            setStore(store => settleDraftNotSent(store, heldDraft.id, pendingId, CHANGED_REASON))
+            setCommandNotice(CHANGED_REASON)
+            return
+          }
+          setStore(store => ({ ...store, drafts: store.drafts.map(item => (item.id === heldDraft.id ? { ...item, sendAttempt: undefined } : item)) }))
+        }
         const newDraftId = createComposeId(
           context.kind === 'forward' ? 'draft_forward' : 'draft_reply',
         )
@@ -1081,6 +1105,9 @@ export function ComposeEditor({
           `${sentLabel} sent. Attachments were included.`,
         )
         recordReplySend(snapshot.subject)
+      },
+      () => {
+        if (heldDraft) setStore(store => holdDraftForSend(store, heldDraft.id, { id: pendingId, approved: approved!, at: new Date().toISOString() }))
       },
     )
   }

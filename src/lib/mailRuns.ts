@@ -3,6 +3,14 @@ import {
   isValidEmailAddress,
   plainTextToComposeHtml,
 } from './mailCompose'
+import {
+  LOST_HOLD_REASON,
+  LOST_SUBMISSION_REASON,
+  NO_EVIDENCE_REASON,
+  draftDelivery,
+  undoDraftHold,
+  type DraftDelivery,
+} from './mailDeliveryStatus'
 import { stripHtmlToText } from './mailTextUtils'
 import type {
   Attachment,
@@ -1019,7 +1027,7 @@ export function renderRun(
 
   // Unsent items whose row is gone or now invalid: draft and thread go.
   for (const item of run.items) {
-    if (item.rowIndex === undefined || item.status === 'sent') continue
+    if (item.rowIndex === undefined || runItemLocked(item)) continue
     if (validSet.has(item.rowIndex)) continue
     const draft = drafts.find(entry => entry.id === item.draftId)
     if (draft && !draft.sentAt) {
@@ -1041,7 +1049,7 @@ export function renderRun(
     const existingDraft = existing
       ? drafts.find(draft => draft.id === existing.draftId)
       : undefined
-    if (existing?.status === 'sent') {
+    if (existing && runItemLocked(existing)) {
       renderedItems.push(existing)
       continue
     }
@@ -1128,7 +1136,7 @@ export function renderRun(
 
   const inherited = run.items.filter(item => item.rowIndex === undefined)
   const items = [...renderedItems, ...inherited]
-  const hasPending = items.some(item => item.status === 'pending' || item.status === 'reviewing')
+  const hasPending = items.some(item => isOpen(item) || item.status === 'sending')
   const status: MailRun['status'] =
     !hasPending && items.length
       ? 'done'
@@ -1185,10 +1193,6 @@ export function sentMessageForRunItem(
   )
 }
 
-function sentMessageForDraft(store: Pick<MailStore, 'messages'>, draftId: string) {
-  return sentMessageForRunItem(store, { draftId })
-}
-
 /**
  * Bring a run's items up to date with the drafts as they are NOW: a draft
  * sent outside the run counts as sent, a deleted draft becomes `missing`,
@@ -1211,34 +1215,40 @@ export function reconcileRun(
       return { ...item, sentMessageId: sent.id }
     }
     const draft = store.drafts.find(entry => entry.id === item.draftId)
-    if (!draft) {
-      const sent = sentMessageForDraft(store, item.draftId)
-      if (sent) {
-        changed = true
-        return {
-          ...item,
-          status: 'sent' as const,
-          sentAt: item.sentAt ?? sent.receivedAt,
-          sentMessageId: item.sentMessageId ?? sent.id,
-          pendingSendId: undefined,
-        }
+    const delivery = draftDelivery(store, item.draftId)
+    if (delivery.state === 'submitted') {
+      changed = true
+      return {
+        ...item,
+        status: 'sent' as const,
+        sentAt: item.sentAt ?? delivery.at,
+        sentMessageId: item.sentMessageId ?? sentMessageForRunItem(store, item)?.id ?? delivery.sentMessageId,
+        pendingSendId: undefined,
+        sendAttemptId: undefined,
+        skipReason: undefined,
       }
+    }
+    if (delivery.state === 'unconfirmed') {
+      if (item.status === 'unconfirmed' && item.skipReason === delivery.reason) return item
+      changed = true
+      return { ...item, status: 'unconfirmed' as const, pendingSendId: undefined, skipReason: delivery.reason }
+    }
+    if (item.status === 'unconfirmed') {
+      // Someone checked Sent and allowed another attempt, which is the only
+      // way back. A draft that merely vanished proves nothing.
+      if (!draft) return item
+      changed = true
+      return { ...item, status: 'pending' as const, sendAttemptId: undefined, skipReason: delivery.reason }
+    }
+    // A live attempt settles through its own callbacks.
+    if (item.status === 'sending') return item
+    if (!draft) {
       if (item.status === 'missing') return item
       changed = true
       return {
         ...item,
         status: 'missing' as const,
         skipReason: 'The draft was deleted.',
-      }
-    }
-    if (draft.sentAt) {
-      changed = true
-      return {
-        ...item,
-        status: 'sent' as const,
-        sentAt: item.sentAt ?? draft.sentAt,
-        sentMessageId: item.sentMessageId ?? draft.sentMessageId,
-        pendingSendId: undefined,
       }
     }
     const label = draftLabel(draft)
@@ -1262,18 +1272,100 @@ export function reconcileRun(
     }
   })
   if (!changed) return run
-  const hasPending = items.some(item => item.status === 'pending' || item.status === 'reviewing')
+  const hasPending = items.some(item => isOpen(item) || item.status === 'sending')
   return {
     ...run,
     items,
-    status: !hasPending && items.length && run.status !== 'setup' ? 'done' : run.status,
+    status: !hasPending && items.length && run.status !== 'setup' ? 'done' : run.status === 'done' && hasPending ? 'running' : run.status,
   }
+}
+
+/** What a run item says about its send: the draft's evidence first, then the item's own record. */
+export function runItemDelivery(store: Pick<MailStore, 'drafts' | 'messages'>, item: MailRunItem): DraftDelivery {
+  const delivery = draftDelivery(store, item.draftId)
+  if (delivery.state !== 'none') return delivery
+  if (item.status === 'sent') return { state: 'submitted', ...(item.sentAt ? { at: item.sentAt } : {}), ...(item.sentMessageId ? { sentMessageId: item.sentMessageId } : {}) }
+  if (item.status === 'unconfirmed') return { state: 'unconfirmed', reason: item.skipReason ?? NO_EVIDENCE_REASON }
+  if (item.status === 'sending') return { state: item.pendingSendId ? 'held' : 'submitting' }
+  if (item.status === 'pending' || item.status === 'reviewing') return item.skipReason ? { state: 'not_submitted', reason: item.skipReason } : delivery
+  return delivery
+}
+
+/**
+ * After a restart, once saved state has loaded: nothing from before is still
+ * running, so settle what was left in the air from the evidence alone. A hold
+ * never reached the service (the marker is saved before any submission), so it
+ * is known not sent. A marked attempt may have gone, and an older record that
+ * cannot say stays unconfirmed. A confirmed record is kept. Sends nothing, and
+ * running it again changes nothing.
+ */
+export function recoverInterruptedSends(store: MailStore, now = new Date().toISOString()): MailStore {
+  let drafts = store.drafts
+  const patchDrafts = (draftId: string, patch: (draft: Draft) => Draft): void => {
+    drafts = drafts.map(draft => (draft.id === draftId ? patch(draft) : draft))
+  }
+  for (const draft of store.drafts) {
+    if (!draft.sendAttempt) continue
+    const unconfirmed = draft.sendAttempt.phase === 'submitting' || draft.sendState === 'uncertain'
+    patchDrafts(draft.id, item => ({
+      ...item,
+      sendAttempt: undefined,
+      sendState: unconfirmed ? 'uncertain' : 'failed',
+      sendError: unconfirmed ? LOST_SUBMISSION_REASON : LOST_HOLD_REASON,
+    }))
+  }
+  const view = (): Pick<MailStore, 'drafts' | 'messages'> => ({ drafts, messages: store.messages })
+  const settleItem = (item: MailRunItem): MailRunItem => {
+    if (item.status === 'sent' && item.sendAttemptId === undefined && draftDelivery(view(), item.draftId).state === 'submitted' && !item.pendingSendId) return item
+    const draft = drafts.find(entry => entry.id === item.draftId)
+    const delivery = draftDelivery(view(), item.draftId)
+    if (delivery.state === 'submitted') {
+      if (item.status !== 'sent' && item.status !== 'sending') return item
+      return { ...item, status: 'sent', sentAt: item.sentAt ?? delivery.at, sentMessageId: sentMessageForRunItem(view(), item)?.id ?? delivery.sentMessageId ?? item.sentMessageId, pendingSendId: undefined, sendAttemptId: undefined, skipReason: undefined }
+    }
+    if (item.status === 'sending') {
+      // Our own hold or attempt: the draft's marker settles it. No draft left means no evidence either way.
+      if (!draft) return { ...item, status: 'unconfirmed', pendingSendId: undefined, skipReason: NO_EVIDENCE_REASON }
+      if (delivery.state === 'unconfirmed') return { ...item, status: 'unconfirmed', pendingSendId: undefined, skipReason: delivery.reason }
+      return { ...item, status: 'pending', pendingSendId: undefined, sendAttemptId: undefined, sentAt: undefined, skipReason: LOST_HOLD_REASON }
+    }
+    if (item.status !== 'sent') return item
+    // `sent` here is from before holds and attempts were recorded. A reported
+    // id with no draft left stands; anything else cannot show that it left.
+    if (!draft && item.sentMessageId) return item.pendingSendId ? { ...item, pendingSendId: undefined } : item
+    if (draft && draft.sendState !== 'uncertain') {
+      patchDrafts(draft.id, entry => ({ ...entry, sendState: 'uncertain', sendError: NO_EVIDENCE_REASON }))
+    }
+    return { ...item, status: 'unconfirmed', pendingSendId: undefined, skipReason: draft?.sendState === 'uncertain' ? draft.sendError ?? NO_EVIDENCE_REASON : NO_EVIDENCE_REASON }
+  }
+  let runsChanged = false
+  const runs = (store.runs ?? []).map(run => {
+    const items = run.items.map(settleItem)
+    const settled = items.some((item, index) => item !== run.items[index]) ? { ...run, items, updatedAt: now } : run
+    const reconciled = reconcileRun(view(), settled)
+    if (reconciled !== run) runsChanged = true
+    return reconciled
+  })
+  if (drafts === store.drafts && !runsChanged) return store
+  return { ...store, drafts, ...(runsChanged ? { runs } : {}) }
+}
+
+/** The person undid a hold: the draft and any run item on that attempt go back to not sent. */
+export function settleUndoneHold(store: MailStore, draftId: string, attemptId: string, now = new Date().toISOString()): MailStore {
+  const undone = undoDraftHold(store, draftId, attemptId, now)
+  if (!store.runs?.some(run => run.items.some(item => item.draftId === draftId && item.sendAttemptId === attemptId))) return undone
+  return { ...undone, runs: store.runs.map(run => markRunItemUnsent(run, draftId, undefined, now, attemptId)) }
 }
 
 // ── Cursor / progress ──────────────────────────────────────────────────
 
 function isOpen(item: MailRunItem): boolean {
   return item.status === 'pending' || item.status === 'reviewing'
+}
+
+/** Sent, leaving or possibly gone: its draft must not be re-rendered, edited, skipped or thrown away. */
+export function runItemLocked(item: Pick<MailRunItem, 'status'>): boolean {
+  return item.status === 'sent' || item.status === 'sending' || item.status === 'unconfirmed'
 }
 
 /** The first open item at or after the cursor, else the first anywhere; -1 when none. */
@@ -1312,15 +1404,26 @@ export interface RunProgress {
   pending: number
   /** What is still to review: pending + reviewing. */
   toGo: number
+  /** Approved and not confirmed yet: in the undo hold or being submitted. Not sent. */
+  leaving: number
+  /** May have gone: someone has to check Sent. Not sent, not to go. */
+  unconfirmed: number
+  /** To go, but blocked until a conflict with another mail app is resolved (only with a store to look in). */
+  conflict: number
 }
 
-export function runProgress(run: Pick<MailRun, 'items'>): RunProgress {
-  const progress: RunProgress = { total: run.items.length, sent: 0, skipped: 0, missing: 0, pending: 0, toGo: 0 }
+export function runProgress(run: Pick<MailRun, 'items'>, store?: Pick<MailStore, 'drafts' | 'messages'>): RunProgress {
+  const progress: RunProgress = { total: run.items.length, sent: 0, skipped: 0, missing: 0, pending: 0, toGo: 0, leaving: 0, unconfirmed: 0, conflict: 0 }
   for (const item of run.items) {
     if (item.status === 'sent') progress.sent += 1
     else if (item.status === 'skipped') progress.skipped += 1
     else if (item.status === 'missing') progress.missing += 1
-    else progress.pending += 1
+    else if (item.status === 'sending') progress.leaving += 1
+    else if (item.status === 'unconfirmed') progress.unconfirmed += 1
+    else {
+      progress.pending += 1
+      if (store && draftDelivery(store, item.draftId).state === 'conflict') progress.conflict += 1
+    }
   }
   progress.toGo = progress.pending
   return progress
@@ -1331,6 +1434,8 @@ export function runSummaryLine(run: Pick<MailRun, 'name' | 'items' | 'status'>):
   const parts = [`${progress.sent} sent`]
   if (progress.skipped) parts.push(`${progress.skipped} skipped`)
   if (progress.missing) parts.push(`${progress.missing} missing`)
+  if (progress.leaving) parts.push(`${progress.leaving} leaving`)
+  if (progress.unconfirmed) parts.push(`${progress.unconfirmed} unconfirmed`)
   parts.push(run.status === 'done' ? 'done' : `${progress.toGo} to go`)
   return `Run: ${run.name} · ${parts.join(' · ')}`
 }
@@ -1351,11 +1456,11 @@ function withItem(
   }
 }
 
-/** Send pressed: the item counts as sent NOW; the undo hold may still reverse it. */
-export function markRunItemSent(
+/** Send approved: the item is on its way, and not sent until the service confirms it. */
+export function markRunItemSending(
   run: MailRun,
   draftId: string,
-  input: { pendingSendId?: string; sentMessageId?: string },
+  input: { attemptId: string; pendingSendId?: string },
   now = new Date().toISOString(),
 ): MailRun {
   return withItem(
@@ -1363,45 +1468,63 @@ export function markRunItemSent(
     draftId,
     item => ({
       ...item,
-      status: 'sent',
-      sentAt: now,
+      status: 'sending',
+      sentAt: undefined,
+      sendAttemptId: input.attemptId,
       pendingSendId: input.pendingSendId,
-      ...(input.sentMessageId ? { sentMessageId: input.sentMessageId } : {}),
       skipReason: undefined,
     }),
     now,
   )
 }
 
-/** The hold elapsed and the message left: record its id, clear the hold. */
+/** The hold elapsed: the attempt is with the mail service now. */
+export function markRunItemSubmitting(run: MailRun, draftId: string, attemptId: string, now = new Date().toISOString()): MailRun {
+  return withItem(run, draftId, item => (item.sendAttemptId === attemptId && item.status === 'sending' ? { ...item, pendingSendId: undefined } : item), now)
+}
+
+/** The service confirmed this attempt: record its id, clear the hold. */
 export function markRunItemCommitted(
   run: MailRun,
   draftId: string,
   sentMessageId: string | undefined,
   now = new Date().toISOString(),
+  attemptId?: string,
 ): MailRun {
-  return withItem(
+  const next = withItem(
     run,
     draftId,
-    item => ({
+    item => attemptId && item.sendAttemptId && item.sendAttemptId !== attemptId ? item : ({
       ...item,
       status: 'sent',
+      sentAt: item.sentAt ?? now,
       pendingSendId: undefined,
+      sendAttemptId: undefined,
+      skipReason: undefined,
       ...(sentMessageId ? { sentMessageId } : {}),
     }),
     now,
   )
+  return next.items.some(item => isOpen(item) || item.status === 'sending') || next.status !== 'running' ? next : { ...next, status: 'done' }
 }
 
-/** Undo pressed, or the provider refused: back to pending, cursor on it. */
+/**
+ * Undo pressed, or known not submitted: back to pending, cursor on it. A late
+ * answer from an attempt that is no longer current, or anything after a
+ * confirmed send, changes nothing.
+ */
 export function markRunItemUnsent(
   run: MailRun,
   draftId: string,
   reason: string | undefined,
   now = new Date().toISOString(),
+  attemptId?: string,
 ): MailRun {
   const index = run.items.findIndex(item => item.draftId === draftId)
   if (index < 0) return run
+  const current = run.items[index]!
+  if (current.status === 'sent' && !current.pendingSendId) return run
+  if (attemptId && current.sendAttemptId !== attemptId) return run
   const next = withItem(
     run,
     draftId,
@@ -1411,11 +1534,31 @@ export function markRunItemUnsent(
       sentAt: undefined,
       sentMessageId: undefined,
       pendingSendId: undefined,
+      sendAttemptId: undefined,
       skipReason: reason,
     }),
     now,
   )
   return { ...next, cursor: index, status: next.status === 'done' ? 'running' : next.status }
+}
+
+/** The result of this attempt is unknown: it may have gone, so it does not return to the to-go list. */
+export function markRunItemUnconfirmed(
+  run: MailRun,
+  draftId: string,
+  reason: string,
+  now = new Date().toISOString(),
+  attemptId?: string,
+): MailRun {
+  return withItem(
+    run,
+    draftId,
+    item =>
+      item.status === 'sent' || (attemptId && item.sendAttemptId !== attemptId)
+        ? item
+        : { ...item, status: 'unconfirmed', sentAt: undefined, pendingSendId: undefined, skipReason: reason },
+    now,
+  )
 }
 
 export function skipRunItem(
@@ -1428,7 +1571,7 @@ export function skipRunItem(
     run,
     draftId,
     item =>
-      item.status === 'sent'
+      runItemLocked(item)
         ? item
         : { ...item, status: 'skipped', skipReason: reason },
     now,
@@ -1464,7 +1607,7 @@ export function advanceRun(run: MailRun, now = new Date().toISOString()): MailRu
   }
   const next = nextPendingIndex(cleared, cleared.cursor)
   if (next < 0) {
-    const stillOpen = cleared.items.some(isOpen)
+    const stillOpen = cleared.items.some(item => isOpen(item) || item.status === 'sending')
     return {
       ...cleared,
       status: stillOpen ? cleared.status : 'done',
@@ -1514,7 +1657,7 @@ export function discardRun(
   const removable = new Set<string>()
   if (run.template) removable.add(run.template.draftId)
   for (const item of run.items) {
-    if (item.rowIndex !== undefined && item.status !== 'sent') removable.add(item.draftId)
+    if (item.rowIndex !== undefined && !runItemLocked(item)) removable.add(item.draftId)
   }
   const removedDrafts = store.drafts.filter(
     draft => removable.has(draft.id) && !draft.sentAt,
@@ -1560,7 +1703,7 @@ export function runStatusLabel(run: Pick<MailRun, 'status' | 'items'>): string {
     case 'paused':
       return `paused · ${progress.sent} of ${progress.total}`
     case 'done':
-      return `done · ${progress.sent} sent`
+      return `done · ${progress.sent} sent${progress.unconfirmed ? ` · ${progress.unconfirmed} unconfirmed` : ''}`
   }
 }
 

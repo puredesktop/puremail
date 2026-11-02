@@ -511,7 +511,7 @@
           "name": "sendDraft",
           "risk": "release",
           "releaseButton": "Send",
-          "description": "Send ONE prepared draft, exactly as it is now, through the normal send path. A release action: only a person can send, by pressing Send in PureMail, or by approving it in the Executive team (its Send it? card), which then carries out exactly that send once. An agent cannot call this at any trust level; leave the draft and tell the person it is ready.",
+          "description": "Send ONE prepared draft, exactly as it is now, through the normal send path. A release action: only a person can send, by pressing Send in PureMail, or by approving it in the Executive team (its Send it? card), which then carries out exactly that send once. A second approval reports the attempt already under way; a conflicted or unconfirmed draft is refused. Its answer says queued until the mail service confirms, and delivery gives the reading (held, submitting, submitted). An agent cannot call this at any trust level; leave the draft and tell the person it is ready.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -812,7 +812,7 @@
         {
           "name": "getRun",
           "risk": "read",
-          "description": "Read one run in full: status, cursor, every item with its status (pending | reviewing | sent | skipped | missing), draft id, recipient and note flag; the field map and available {{tokens}}; recipient validation (invalid and duplicate rows with reasons); the template's subject, body and tokens. A sent item also carries where its letter lives now: sentMessageId (the stored message), messageIdHeader (the Message-ID a reply cites) and threadId (pass it to getThread; it becomes the provider's conversation once the sent copy syncs). Call this FIRST before renderRun, setRunNote, sendRunItem or skipRunItem \u2014 ids and rows come from here.",
+          "description": "Read one run in full: status, cursor, every item with its status (pending | reviewing | sending | unconfirmed | sent | skipped | missing, where sent means the mail service confirmed submission, not that anyone received or read it) and its delivery reading, draft id, recipient and note flag; the field map and available {{tokens}}; recipient validation (invalid and duplicate rows with reasons); the template's subject, body and tokens. A sent item also carries where its letter lives now: sentMessageId (the stored message), messageIdHeader (the Message-ID a reply cites) and threadId (pass it to getThread; it becomes the provider's conversation once the sent copy syncs). Call this FIRST before renderRun, setRunNote, sendRunItem or skipRunItem \u2014 ids and rows come from here.",
           "inputSchema": {
             "type": "object",
             "properties": {

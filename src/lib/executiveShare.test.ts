@@ -101,6 +101,12 @@ function memoryFiles(initial: Record<string, string> = {}) {
   return { disk, files }
 }
 
+/** The local send with its confirmation: the optimistic placeholder alone proves nothing. */
+function confirmedSend(store: MailStore, draftId: string, at: string): MailStore {
+  const sent = sendDraft(store, draftId, at)
+  return { ...sent, messages: sent.messages.map(message => ({ ...message, optimistic: undefined })) }
+}
+
 describe('share file', () => {
   it('reads a version-1 share and normalises the never-read list', () => {
     expect(share).toEqual({
@@ -470,7 +476,7 @@ describe('where the team’s drafts stand (drafts/state)', () => {
     expect(stateOf(disk)).toMatchObject({ state: 'draft', body: 'Hello Ana,\n\nA kinder chase.' })
     expect(stateOf(disk)!.version).not.toBe(first.version)
     // sent from PureMail: the draft goes, the sent copy stays
-    s = sendDraft(s, draftId, '2026-11-01T09:05:00.000Z')
+    s = confirmedSend(s, draftId, '2026-11-01T09:05:00.000Z')
     expect(s.drafts.some(d => d.id === draftId)).toBe(false)
     await reportExecutiveDraftStates({ files, root: ROOT, store: s, account: ACCOUNT, finalKeys: finals, now: NOW + 3000 })
     expect(stateOf(disk)).toMatchObject({ state: 'sent', sentAt: '2026-11-01T09:05:00.000Z', body: 'Hello Ana,\n\nA kinder chase.' })
@@ -526,7 +532,7 @@ describe('the person’s No (drafts/discard)', () => {
 
   it('leaves a draft that was sent already alone', async () => {
     const { disk, files } = memoryFiles(ask())
-    const sent = sendDraft(withDraft(), draftId, '2026-11-01T08:00:00.000Z')
+    const sent = confirmedSend(withDraft(), draftId, '2026-11-01T08:00:00.000Z')
     const thrown: string[] = []
     const result = await takeExecutiveDiscards({ files, root: ROOT, store: sent, instanceId: 'w1', now: 10, discard: id => { thrown.push(id); return { ok: true } } })
     expect(thrown).toEqual([])

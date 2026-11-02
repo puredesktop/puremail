@@ -1,5 +1,8 @@
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
+import { CHANGED_REASON, CONFLICT_REASON, UNCONFIRMED_REASON, settleDraftNotSent } from './mailDeliveryStatus'
+import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
+import { finalizeRunDraftForSend } from './mailRuns'
 
 export class MailSendError extends Error {
   constructor(message: string, readonly outcome: 'not_sent' | 'uncertain') { super(message) }
@@ -15,24 +18,40 @@ export function createMailDeliveryController(input: {
   online: () => boolean
 }) {
   const sending = new Set<string>()
-  return async (provider: MailProvider, draft: Draft): Promise<MailMessage> => {
+  /** `attempt` names the approved hold this send carries out, and the content it approved. */
+  return async (provider: MailProvider, draft: Draft, attempt?: { id: string; approved: string }): Promise<MailMessage> => {
     if (sending.has(draft.id)) throw new MailSendError('This message is already being sent.', 'not_sent')
+    const attemptId = attempt?.id ?? crypto.randomUUID()
+    const approved = attempt?.approved ?? draftSendFingerprint(finalizeRunDraftForSend(draft))
+    const changed = (): boolean => {
+      const current = input.read().drafts.find(item => item.id === draft.id)
+      return !current || draftSendFingerprint(finalizeRunDraftForSend(current)) !== approved
+    }
+    const refuse = (reason: string): MailSendError => {
+      input.update(store => settleDraftNotSent(store, draft.id, attemptId, reason))
+      return new MailSendError(reason, 'not_sent')
+    }
     if (input.read().messages.some(message => message.deliveryAccepted && message.sentDraftId === draft.id)) {
       input.update(store => ({ ...store, drafts: store.drafts.filter(item => item.id !== draft.id) }))
       throw new MailSendError('This draft was already sent. No second copy was sent.', 'not_sent')
     }
     const saved = input.read().drafts.find(item => item.id === draft.id)
     if (!saved) throw new MailSendError('This draft no longer exists. Nothing was sent.', 'not_sent')
-    if (saved?.syncState === 'conflict' || saved?.providerConflict) throw new MailSendError('This draft has conflicting edits from another mail app. Resolve them before sending.', 'not_sent')
-    if (saved?.sendState === 'uncertain') throw new MailSendError('The previous send was not confirmed. Check Sent before allowing another attempt.', 'uncertain')
-    if (!input.online()) throw new MailSendError('Offline — message not sent. Your draft is saved.', 'not_sent')
+    if (saved.syncState === 'conflict' || saved.providerConflict) throw refuse(CONFLICT_REASON)
+    if (saved.sendState === 'uncertain') throw new MailSendError(UNCONFIRMED_REASON, 'uncertain')
+    if (!input.online()) throw refuse('Offline — message not sent. Your draft is saved.')
+    if (changed()) throw refuse(CHANGED_REASON)
     sending.add(draft.id)
     let submitted = false
     try {
       const prepared = await input.prepare(draft)
+      // Provider saves finish during prepare; an edit that landed meanwhile stops it here.
+      if (changed()) throw new MailSendError(CHANGED_REASON, 'not_sent')
       prepared.sendMessageId = `<puremail-${crypto.randomUUID()}@puremail.local>`
+      const at = new Date().toISOString()
       input.update(store => ({ ...store, drafts: store.drafts.map(item => item.id === draft.id ? {
-        ...item, providerDraftId: prepared.providerDraftId, sendMessageId: prepared.sendMessageId, sendState: 'uncertain', sendError: 'Send confirmation pending. Check Sent before retrying.',
+        ...item, providerDraftId: prepared.providerDraftId, sendMessageId: prepared.sendMessageId, sendState: 'uncertain', sendError: 'Send confirmation pending. Check Sent before retrying.', sendUndoneAt: undefined,
+        sendAttempt: { id: attemptId, phase: 'submitting', approved, at },
       } : item) }))
       // If the process stops after submission, this durable marker blocks an
       // automatic retry instead of quietly turning the message into a draft.
@@ -54,8 +73,10 @@ export function createMailDeliveryController(input: {
     } catch (error) {
       const uncertain = submitted && (!(error instanceof MailSendError) || error.outcome === 'uncertain')
       const reason = error instanceof Error ? error.message : 'Send failed.'
-      input.update(store => ({ ...store, drafts: store.drafts.map(item => item.id === draft.id ? {
-        ...item, sendState: uncertain ? 'uncertain' : 'failed', sendError: reason,
+      // Only this attempt's own record. A Sent copy a sync found in the
+      // meantime has already removed the draft and stays the answer.
+      input.update(store => ({ ...store, drafts: store.drafts.map(item => item.id === draft.id && (!item.sendAttempt || item.sendAttempt.id === attemptId) ? {
+        ...item, sendAttempt: undefined, sendState: uncertain ? 'uncertain' : 'failed', sendError: reason,
       } : item) }))
       await input.persist(input.read()).catch(() => {})
       throw error
