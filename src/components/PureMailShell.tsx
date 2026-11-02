@@ -1414,7 +1414,7 @@ export function PureMailShell({
         )
       }
     },
-    deliverySignature: store.drafts.filter(draft => draft.sendAttempt || draft.sendState || draft.sendUndoneAt).map(draft => [draft.id, draft.sendAttempt?.phase, draft.sendState, draft.sendError, draft.sendUndoneAt].join('~')).join('|'),
+    deliverySignature: store.drafts.filter(draft => draft.sendAttempt || draft.sendState || draft.sendUndoneAt || draft.syncState === 'conflict' || draft.providerConflict).map(draft => [draft.id, draft.sendAttempt?.phase, draft.sendState, draft.sendError, draft.sendUndoneAt, draft.syncState === 'conflict' || Boolean(draft.providerConflict)].join('~')).join('|'),
     discardDraft: draftId => {
       const draft = storeRef.current.drafts.find(item => item.id === draftId)
       if (!draft) return { ok: false, reason: 'It is not in PureMail any more.' }

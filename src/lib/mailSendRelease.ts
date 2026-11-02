@@ -24,6 +24,12 @@ export interface SendStoreDraftOptions {
   onFailed?: (reason: string, outcome: 'not_sent' | 'uncertain', attemptId: string) => void
 }
 
+/** Why a compose window must not start a send of this saved draft; null when it may. */
+export function composeHoldBlock(store: Pick<MailStore, 'drafts' | 'messages'>, draftId: string): string | null {
+  if (store.drafts.find(item => item.id === draftId)?.sendAttempt) return 'A send is already waiting. Undo it or let it finish.'
+  return draftReleaseBlock(store, draftId)?.reason ?? null
+}
+
 /**
  * A compose window's hold on a saved draft: it may still go only if that draft
  * is what was approved, or the same text this window saved itself meanwhile.

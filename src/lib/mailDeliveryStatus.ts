@@ -60,7 +60,7 @@ type DeliveryStore = Pick<MailStore, 'drafts' | 'messages'>
 export const UNCONFIRMED_REASON = 'The previous send was not confirmed. Check Sent before allowing another attempt.'
 export const CONFLICT_REASON = 'This draft has conflicting edits from another mail app. Resolve them before sending.'
 export const CHANGED_REASON = 'It changed after it was approved, so it was not sent. Approve it again.'
-export const LOST_HOLD_REASON = 'Not sent: Mail closed before it left.'
+export const LOST_HOLD_REASON = 'Mail closed before it left. Nothing was sent.'
 export const LOST_SUBMISSION_REASON = 'Mail closed while sending, so this may have gone. Check Sent before allowing another attempt.'
 export const NO_EVIDENCE_REASON = 'Mail has no record of whether this left. Check Sent before allowing another attempt.'
 
@@ -135,7 +135,8 @@ const patchDraft = (store: MailStore, draftId: string, patch: (draft: Draft) => 
 })
 
 export function holdDraftForSend(store: MailStore, draftId: string, attempt: Omit<NonNullable<Draft['sendAttempt']>, 'phase'>): MailStore {
-  return patchDraft(store, draftId, draft => ({ ...draft, sendAttempt: { ...attempt, phase: 'held' }, sendState: undefined, sendError: undefined, sendUndoneAt: undefined }))
+  // An unconfirmed marker is cleared only by someone checking Sent, never by a new hold.
+  return patchDraft(store, draftId, draft => (draft.sendState === 'uncertain' ? draft : { ...draft, sendAttempt: { ...attempt, phase: 'held' }, sendState: undefined, sendError: undefined, sendUndoneAt: undefined }))
 }
 
 /** This attempt ended before anything left. A later or different attempt is left alone. */

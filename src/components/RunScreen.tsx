@@ -1,5 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { runAgentRefs, runItemAgentRefs } from '../lib/agentRefs'
+import type { SendStoreDraftOptions, SendStoreDraftResult } from '../lib/mailSendRelease'
 import {
   ArrowLeft,
   Check,
@@ -61,9 +62,7 @@ import {
   RunSurface,
 } from './runStyles'
 
-/** What the shell's one store-draft send returns. */
-import type { SendStoreDraftOptions, SendStoreDraftResult } from '../lib/mailSendRelease'
-
+/** What the shell's one store-draft send takes and returns. */
 export type { SendStoreDraftOptions, SendStoreDraftResult }
 
 /** Shell plumbing every run card needs, passed through untouched. */

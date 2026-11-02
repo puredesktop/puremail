@@ -65,7 +65,7 @@ it('recovers interrupted sends only after a successful load, and reopening sends
     read.mockResolvedValueOnce({ store, migratedFromLocalStorage: false })
     await act(async () => api.rebootMail())
     const booted = api.boot!.store
-    expect(booted.drafts.find(item => item.id === 'held')).toMatchObject({ sendState: 'failed', sendError: 'Not sent: Mail closed before it left.' })
+    expect(booted.drafts.find(item => item.id === 'held')).toMatchObject({ sendState: 'failed', sendError: 'Mail closed before it left. Nothing was sent.' })
     expect(booted.drafts.find(item => item.id === 'held')!.sendAttempt).toBeUndefined()
     expect(booted.drafts.find(item => item.id === 'gone')).toMatchObject({ sendState: 'uncertain' })
     expect(booted.drafts.find(item => item.id === 'gone')!.sendAttempt).toBeUndefined()

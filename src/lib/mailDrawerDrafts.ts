@@ -1,4 +1,5 @@
 import { cleanModelDraft, prepareReplyContext } from './mailDraftAgent'
+import { draftEditBlock } from './mailDeliveryStatus'
 import { createGeneratedDraftForThread, isGeneratedDraft } from './mailModel'
 import type { Draft, MailStore } from '../types'
 
@@ -38,8 +39,9 @@ export function draftEditVersion(draft: Draft): string {
 }
 
 /**
- * What a send would put on the wire, and nothing else: provider saves and
- * `updatedAt` do not change it, an edit does. A file already held locally is
+ * What a send would put on the wire, and nothing else: provider saves
+ * (including fetching a remote file's bytes) and `updatedAt` do not change it,
+ * an edit does. A file already held locally is
  * bound by its bytes; a remote one by its exact source, because its name alone
  * proves nothing and its bytes are fetched only when it leaves (a failed fetch
  * refuses the send).
@@ -48,7 +50,7 @@ export function draftSendFingerprint(draft: Draft): string {
   const state = JSON.stringify({
     threadId: draft.threadId, sourceMessageId: draft.sourceMessageId, subject: draft.subject, body: draft.body, bodyHtml: draft.bodyHtml,
     to: draft.to, cc: draft.cc, bcc: draft.bcc, replyTo: draft.replyTo,
-    attachments: draft.attachments.map(item => [item.id, item.name, item.mimeType, item.size, item.remote ?? item.content]),
+    attachments: draft.attachments.map(item => [item.id, item.name, item.mimeType, item.size, item.remote ?? item.hydratedFrom ?? item.content]),
   })
   return `s1-${state.length.toString(36)}-${hash53(state, 1)}${hash53(state, 2)}`
 }
@@ -80,6 +82,8 @@ export class MailDrawerDrafts {
     if (drafts.length > 1 || drafts.some(item => !isGeneratedDraft(item))) {
       throw new Error('This thread has a manual or multiple drafts. Read the intended draft with getDraft and edit it explicitly.')
     }
+    const blocked = drafts[0] && draftEditBlock(store, drafts[0].id)
+    if (blocked) throw new Error(blocked)
     // A fresh prepare supersedes the older proposal for this thread.
     for (const [id, item] of this.pending) {
       if (item.expires < Date.now() || item.prepared.threadId === threadId) this.pending.delete(id)
@@ -102,6 +106,9 @@ export class MailDrawerDrafts {
       this.pending.delete(requestId)
       throw new Error('The account, thread or draft changed. Nothing was written. Prepare the reply again from current context.')
     }
+    // A send can start after the prepare without changing the source version.
+    const blocked = prepared.existingDraftId && draftEditBlock(store, prepared.existingDraftId)
+    if (blocked) throw new Error(blocked)
     if (rawBody.length > 100_000) throw new Error('Reply body exceeds 100,000 characters.')
     const body = cleanModelDraft(rawBody)
     if (!body) throw new Error('Provide a nonempty reply body.')

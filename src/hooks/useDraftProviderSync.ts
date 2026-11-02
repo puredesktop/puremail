@@ -49,6 +49,8 @@ function sameRevision(left: Draft, right: Draft): boolean {
     sendState: _sendState,
     sendMessageId: _sendId,
     sendError: _sendError,
+    sendAttempt: _sendAttempt,
+    sendUndoneAt: _sendUndoneAt,
     ...draft
   }: Draft) => draft
   return JSON.stringify(content(left)) === JSON.stringify(content(right))

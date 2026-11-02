@@ -140,6 +140,8 @@ export interface Attachment {
         uid: number
         partId: string
       }
+  /** The remote source these bytes were fetched from, once a provider save replaced it with content. */
+  hydratedFrom?: Attachment['remote']
 }
 
 export interface MailCalendarInvite {

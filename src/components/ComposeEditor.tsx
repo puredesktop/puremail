@@ -40,7 +40,7 @@ import { Button } from '@purescience/platform-ui/components/common/buttons/Butto
 import { sendDraft } from '../lib/mailModel'
 import { CHANGED_REASON, holdDraftForSend, settleDraftNotSent } from '../lib/mailDeliveryStatus'
 import { draftSendFingerprint } from '../lib/mailDrawerDrafts'
-import { composeHoldStillApproved } from '../lib/mailSendRelease'
+import { composeHoldBlock, composeHoldStillApproved } from '../lib/mailSendRelease'
 import { useOutsideClose } from './useOutsideClose'
 import { scheduleSend } from '../lib/mailScheduledSend'
 import {
@@ -995,8 +995,9 @@ export function ComposeEditor({
     // A saved draft this window is sending: approved as it stands, so a change
     // made elsewhere during the hold stops the send instead of being overwritten.
     const heldDraft = context.draftId ? storeRef.current.drafts.find(item => item.id === context.draftId) : undefined
-    if (heldDraft?.sendAttempt) {
-      setCommandNotice('A send is already waiting. Undo it or let it finish.')
+    const blocked = heldDraft && composeHoldBlock(storeRef.current, heldDraft.id)
+    if (blocked) {
+      setCommandNotice(blocked)
       return
     }
     const approved = heldDraft && draftSendFingerprint(heldDraft)

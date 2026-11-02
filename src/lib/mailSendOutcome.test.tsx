@@ -8,12 +8,12 @@ import type { MailAgentToolContext } from '../agents/catalog'
 import { usePendingSend } from '../hooks/usePendingSend'
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
 import { createMailDeliveryController, MailSendError } from './mailDelivery'
-import { CHANGED_REASON, LOST_HOLD_REASON, deliveryNote, draftDelivery } from './mailDeliveryStatus'
+import { CHANGED_REASON, LOST_HOLD_REASON, deliveryNote, draftDelivery, holdDraftForSend } from './mailDeliveryStatus'
 import { draftEditVersion, draftSendFingerprint } from './mailDrawerDrafts'
 import { EXECUTIVE_TAKEN_DIR, executiveDraftIds, executiveDraftState, parseDraftState, reportExecutiveDraftStates, type ExecutiveShareFiles } from './executiveShare'
 import { createComposedMessageDraft, emptyMailStore, persistableMailStore } from './mailModel'
 import { createRunFromDrafts, markRunItemCommitted, markRunItemUnconfirmed, markRunItemUnsent, reconcileRun, recoverInterruptedSends, replaceRun, runItemDelivery, runProgress, runSummaryLine, settleUndoneHold, startRun } from './mailRuns'
-import { composeHoldStillApproved, createStoreDraftSender } from './mailSendRelease'
+import { composeHoldBlock, composeHoldStillApproved, createStoreDraftSender } from './mailSendRelease'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const parse = (result: { content: string }): any => JSON.parse(result.content)
@@ -366,6 +366,40 @@ describe('what was approved is what leaves', () => {
     const before = draftSendFingerprint(draft)
     expect(draftSendFingerprint({ ...draft, attachments: [{ ...draft.attachments[0]!, remote: { provider: 'imap', folderPath: 'INBOX', uid: 2, partId: '2' } }] })).not.toBe(before)
     expect(draftSendFingerprint({ ...draft, providerDraftId: 'x', updatedAt: 'later', syncState: 'synced' })).toBe(before)
+    // An IMAP save fetches the bytes and drops the reference: same file, so a valid send is not refused
+    const { remote, ...local } = draft.attachments[0]!
+    expect(draftSendFingerprint({ ...draft, attachments: [{ ...local, content: 'data:;base64,QQ==', hydratedFrom: remote }] })).toBe(before)
+    expect(draftSendFingerprint({ ...draft, attachments: [{ ...local, content: 'data:;base64,QQ==' }] })).not.toBe(before)
+    r.unmount()
+  })
+
+  it('an open compose window cannot clear an unconfirmed marker and send again', async () => {
+    const r = rig()
+    r.send.mockRejectedValue(new Error('Connection closed after submission'))
+    approve(r)
+    await elapse()
+    expect(r.send).toHaveBeenCalledTimes(1)
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('unconfirmed')
+    // Send pressed in the window that was already open on this draft
+    expect(composeHoldBlock(r.read(), r.draftId)).toMatch(/Check Sent/)
+    // and no route can erase the marker by starting a hold anyway
+    r.update(store => holdDraftForSend(store, r.draftId, { id: 'window', approved: 'x', at: 'now' }))
+    expect(r.read().drafts[0]).toMatchObject({ sendState: 'uncertain' })
+    expect(r.read().drafts[0]!.sendAttempt).toBeUndefined()
+    expect(composeHoldStillApproved(r.read().drafts[0], 'window', 'x', 'x')).toBe(false)
+    expect(() => sendDraftHandler(r.context, { draftId: r.draftId })).toThrow(/Check Sent/)
+    expect(r.send).toHaveBeenCalledTimes(1)
+    r.unmount()
+  })
+
+  it('a conflict or a waiting send also stops a compose window', () => {
+    const r = rig()
+    expect(composeHoldBlock(r.read(), r.draftId)).toBeNull()
+    r.update(store => ({ ...store, drafts: store.drafts.map(item => ({ ...item, syncState: 'conflict' as const })) }))
+    expect(composeHoldBlock(r.read(), r.draftId)).toMatch(/conflicting edits/)
+    r.update(store => ({ ...store, drafts: store.drafts.map(item => ({ ...item, syncState: 'synced' as const })) }))
+    approve(r)
+    expect(composeHoldBlock(r.read(), r.draftId)).toMatch(/already waiting/)
     r.unmount()
   })
 
