@@ -7,6 +7,7 @@ import { getRunHandler, sendRunItemHandler, skipRunItemHandler } from '../agents
 import type { MailAgentToolContext } from '../agents/catalog'
 import { usePendingSend } from '../hooks/usePendingSend'
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
+import { retainHydratedAttachments } from './composeAttachments'
 import { createMailDeliveryController, MailSendError } from './mailDelivery'
 import { CHANGED_REASON, LOST_HOLD_REASON, deliveryNote, draftDelivery, holdDraftForSend } from './mailDeliveryStatus'
 import { draftEditVersion, draftSendFingerprint } from './mailDrawerDrafts'
@@ -370,6 +371,9 @@ describe('what was approved is what leaves', () => {
     const { remote, ...local } = draft.attachments[0]!
     expect(draftSendFingerprint({ ...draft, attachments: [{ ...local, content: 'data:;base64,QQ==', hydratedFrom: remote }] })).toBe(before)
     expect(draftSendFingerprint({ ...draft, attachments: [{ ...local, content: 'data:;base64,QQ==' }] })).not.toBe(before)
+    // A window's stale copy merged with those bytes is still the same file
+    const hydrated = { ...local, content: 'data:;base64,QQ==', hydratedFrom: remote }
+    expect(draftSendFingerprint({ ...draft, attachments: retainHydratedAttachments(draft.attachments, [hydrated]) })).toBe(before)
     r.unmount()
   })
 

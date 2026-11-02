@@ -995,11 +995,6 @@ export function ComposeEditor({
     // A saved draft this window is sending: approved as it stands, so a change
     // made elsewhere during the hold stops the send instead of being overwritten.
     const heldDraft = context.draftId ? storeRef.current.drafts.find(item => item.id === context.draftId) : undefined
-    const blocked = heldDraft && composeHoldBlock(storeRef.current, heldDraft.id)
-    if (blocked) {
-      setCommandNotice(blocked)
-      return
-    }
     const approved = heldDraft && draftSendFingerprint(heldDraft)
     // This window's own save of the same text during the hold is not a change.
     const outgoing = heldDraft && createContextDraftStore(storeRef.current, context, snapshot).nextStore.drafts.find(item => item.id === heldDraft.id)
@@ -1113,6 +1108,17 @@ export function ComposeEditor({
     )
   }
 
+  /**
+   * The window's draft may have moved on while it stayed open: sent from the
+   * team's card, unconfirmed, conflicted or already waiting. Asked by id, since
+   * a confirmed send removes the draft, and a send then would mint a new one.
+   */
+  const contextSendBlocked = (): boolean => {
+    const blocked = composeContext?.draftId ? composeHoldBlock(storeRef.current, composeContext.draftId) : null
+    if (blocked) setCommandNotice(blocked)
+    return Boolean(blocked)
+  }
+
   const scheduleComposeSend = (sendAt: string): void => {
     if (!subjectReminderOpen && !composeSubject.trim()) {
       pendingSubjectActionRef.current = () => scheduleComposeSend(sendAt)
@@ -1123,6 +1129,7 @@ export function ComposeEditor({
     setSubjectReminderOpen(false)
     pendingSubjectActionRef.current = null
     if (!canSendCompose) return
+    if (contextSendBlocked()) return
     const sendAtMs = Date.parse(sendAt)
     if (!Number.isFinite(sendAtMs) || sendAtMs <= Date.now()) {
       setCommandNotice('Pick a future time for the scheduled send.')
@@ -1189,6 +1196,7 @@ export function ComposeEditor({
     if (!canSendCompose) return
     // Only a person's own press sends (#1017): a scripted click is ignored.
     if (!isPersonGesture(event)) return
+    if (contextSendBlocked()) return
     // Subject reminder: "(no subject)" in someone's inbox is almost always
     // an accident — ask once, inline, before the message leaves.
     if (!subjectReminderOpen && !composeSubject.trim()) {
@@ -2104,7 +2112,7 @@ export function ComposeEditor({
                 }
               >
                 {composeSendPending ? (
-                  <PendingSendLabel>Sent · Undo</PendingSendLabel>
+                  <PendingSendLabel>Sending · Undo</PendingSendLabel>
                 ) : (
                   <>
                     Send &amp; next
@@ -2201,7 +2209,7 @@ export function ComposeEditor({
                   onClick={sendComposeMessage}
                 >
                   {composeSendPending ? (
-                    <PendingSendLabel>Sent · Undo</PendingSendLabel>
+                    <PendingSendLabel>Sending · Undo</PendingSendLabel>
                   ) : (
                     <>
                       Send
@@ -2705,7 +2713,7 @@ export function ComposeEditor({
           onClick={sendComposeMessage}
         >
           {composeSendPending ? (
-            <PendingSendLabel>Sent · Undo</PendingSendLabel>
+            <PendingSendLabel>Sending · Undo</PendingSendLabel>
           ) : (
             'Send'
           )}
