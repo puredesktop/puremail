@@ -1,7 +1,7 @@
 import type { PendingSendState } from '../components/mailShellHelpers'
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
 import { MailSendError } from './mailDelivery'
-import { CHANGED_REASON, draftDelivery, draftReleaseBlock, holdDraftForSend, settleDraftNotSent } from './mailDeliveryStatus'
+import { CHANGED_REASON, draftDelivery, draftReleaseBlock, holdDraftForSend, markDraftPreparing, settleDraftNotSent } from './mailDeliveryStatus'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
 import { finalizeRunDraftForSend } from './mailRuns'
@@ -22,6 +22,21 @@ export interface SendStoreDraftOptions {
   onCommitted?: (sentMessageId: string | undefined, attemptId: string) => void
   /** Known not submitted (`not_sent`), or it may have gone (`uncertain`). The draft is still in Drafts. */
   onFailed?: (reason: string, outcome: 'not_sent' | 'uncertain', attemptId: string) => void
+}
+
+/**
+ * What a failed send means and how to say it, on every route. `uncertain` may
+ * have gone, so it is never "could not send"; a confirmed copy found meanwhile
+ * is the answer, and there is nothing to say.
+ */
+export function sendFailure(store: Pick<MailStore, 'drafts' | 'messages'>, draftId: string, error: unknown, home: string, kept: string): { outcome: 'not_sent' | 'uncertain' | 'submitted'; reason: string; notice: string } {
+  const reason = error instanceof Error ? error.message : 'Send failed.'
+  const state = draftDelivery(store, draftId).state
+  if (state === 'submitted') return { outcome: 'submitted', reason, notice: '' }
+  if (state === 'unconfirmed' || (error instanceof MailSendError && error.outcome === 'uncertain')) {
+    return { outcome: 'uncertain', reason, notice: `${home} did not confirm this send. Check Sent before allowing another attempt. (${reason})` }
+  }
+  return { outcome: 'not_sent', reason, notice: `Could not send through ${home} — ${kept}. (${reason})` }
 }
 
 /** Why a compose window must not start a send of this saved draft; null when it may. */
@@ -150,7 +165,7 @@ export function createStoreDraftSender(input: {
         input.record(kind, `Sent "${subject}" to ${recipients}${origin}.`)
         return
       }
-      input.update(stamp)
+      input.update(store => markDraftPreparing(stamp(store), finalized.id, attemptId))
       options.onSubmitting?.(attemptId)
       input.markDraftSending(finalized.id, true)
       void input.deliver(provider, finalized, { id: attemptId, approved })
@@ -160,17 +175,12 @@ export function createStoreDraftSender(input: {
           input.record(kind, `Sent "${subject}" to ${recipients}${origin} through ${home}.`)
         })
         .catch(error => {
-          const reason = error instanceof Error ? error.message : 'Send failed.'
-          // The delivery controller has recorded which it was; ask the record, not the error.
-          const state = draftDelivery(input.read(), finalized.id).state
-          const outcome = state === 'unconfirmed' || (error instanceof MailSendError && error.outcome === 'uncertain') ? 'uncertain' as const : 'not_sent' as const
-          // A confirmed Sent copy found meanwhile is the answer: a late failure never replaces it.
-          if (state === 'submitted') return
+          // The delivery controller has recorded which it was; a late failure never replaces a confirmed send.
+          const { outcome, reason, notice } = sendFailure(input.read(), finalized.id, error, home, 'the draft is still in Drafts')
+          if (outcome === 'submitted') return
           if (outcome === 'not_sent') input.reportFailure(finalized.id, error)
           options.onFailed?.(reason, outcome, attemptId)
-          input.notice(outcome === 'uncertain'
-            ? `${home} did not confirm this send. Check Sent before allowing another attempt. (${reason})`
-            : `Could not send through ${home} — the draft is still in Drafts. (${reason})`)
+          input.notice(notice)
           input.record(kind, outcome === 'uncertain'
             ? `Could not confirm "${subject}" to ${recipients}${origin} through ${home}: ${reason}`
             : `Did not send "${subject}" to ${recipients}${origin} through ${home}: ${reason}`)

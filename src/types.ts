@@ -279,8 +279,12 @@ export interface MailTask {
 
 export interface DraftSendAttempt {
   id: string
-  /** held: nothing has left, Undo still works. submitting: the request may have reached the service. */
-  phase: 'held' | 'submitting'
+  /**
+   * held: nothing has left, Undo still works. preparing: the hold is over and
+   * the marker is not saved yet, so nothing has left and Undo no longer works.
+   * submitting: the request may have reached the service.
+   */
+  phase: 'held' | 'preparing' | 'submitting'
   /** draftSendFingerprint of what was approved: anything else is refused before it can leave. */
   approved: string
   at: string
@@ -680,6 +684,8 @@ export type ScheduledSendStatus =
   | 'sent'
   | 'cancelled'
   | 'failed'
+  /** May have reached the mail service: someone checks Sent. */
+  | 'unconfirmed'
 
 export interface ScheduledSend {
   id: string

@@ -394,7 +394,7 @@ Every view (run progress, `getDraft`, `listDrafts`, `getRun`, the team's status 
 - `conflict`: edited in another mail app; resolve it first.
 - `submitted`: the mail service confirmed it. Say "sent"; never say it was received or read.
 
-A held or unconfirmed draft or run item is not sent, and its content cannot be changed: Undo stops a hold, and the changed draft then needs a fresh approval. A second approval of the same draft reports the attempt under way. Reopening Mail settles interrupted sends from the record and never sends anything.
+A held or unconfirmed draft or run item is not sent, and its content cannot be changed: Undo stops a hold, and the changed draft then needs a fresh approval. A second approval of the same draft reports the attempt under way. Reopening Mail settles interrupted sends from the record and never starts or retries one; only a send the person scheduled earlier goes at its time.
 
 ## The reading room
 

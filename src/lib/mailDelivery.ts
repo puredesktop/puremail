@@ -19,7 +19,7 @@ export function createMailDeliveryController(input: {
 }) {
   const sending = new Set<string>()
   /** `attempt` names the approved hold this send carries out, and the content it approved. */
-  return async (provider: MailProvider, draft: Draft, attempt?: { id: string; approved: string }): Promise<MailMessage> => {
+  return async (provider: MailProvider, draft: Draft, attempt?: { id: string; approved?: string }): Promise<MailMessage> => {
     if (sending.has(draft.id)) throw new MailSendError('This message is already being sent.', 'not_sent')
     const attemptId = attempt?.id ?? crypto.randomUUID()
     const approved = attempt?.approved ?? draftSendFingerprint(finalizeRunDraftForSend(draft))

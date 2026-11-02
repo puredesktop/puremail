@@ -14,14 +14,14 @@ import { draftEditVersion, draftSendFingerprint } from './mailDrawerDrafts'
 import { EXECUTIVE_TAKEN_DIR, executiveDraftIds, executiveDraftState, parseDraftState, reportExecutiveDraftStates, type ExecutiveShareFiles } from './executiveShare'
 import { createComposedMessageDraft, emptyMailStore, persistableMailStore } from './mailModel'
 import { createRunFromDrafts, markRunItemCommitted, markRunItemUnconfirmed, markRunItemUnsent, reconcileRun, recoverInterruptedSends, replaceRun, runItemDelivery, runProgress, runSummaryLine, settleUndoneHold, startRun } from './mailRuns'
-import { composeHoldBlock, composeHoldStillApproved, createStoreDraftSender } from './mailSendRelease'
+import { composeHoldBlock, composeHoldStillApproved, createStoreDraftSender, sendFailure } from './mailSendRelease'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const parse = (result: { content: string }): any => JSON.parse(result.content)
 const accepted = (draft: Draft): MailMessage => ({ id: 'accepted-1', threadId: draft.threadId, from: { name: 'Me', email: 'me@example.test' }, to: draft.to, subject: draft.subject, body: draft.body, attachments: [], receivedAt: '2026-11-02T10:00:00Z', read: true, messageIdHeader: draft.sendMessageId })
 
 /** The real hold, sender and delivery controller over a store in memory, a fake mail service and fake timers. */
-function rig(options: { undoSeconds?: number; drafts?: number; run?: boolean } = {}) {
+function rig(options: { undoSeconds?: number; drafts?: number; run?: boolean; prepare?: (draft: Draft) => Promise<Draft> } = {}) {
   let store: MailStore = emptyMailStore()
   const ids: string[] = []
   for (let n = 0; n < (options.drafts ?? 1); n += 1) {
@@ -40,7 +40,7 @@ function rig(options: { undoSeconds?: number; drafts?: number; run?: boolean } =
   const update = (updater: (current: MailStore) => MailStore) => { store = updater(store) }
   const record = vi.fn()
   const notice = vi.fn()
-  const deliver = createMailDeliveryController({ read, update, persist, prepare: async draft => ({ ...draft }), release: () => {}, online: () => true })
+  const deliver = createMailDeliveryController({ read, update, persist, prepare: options.prepare ?? (async draft => ({ ...draft })), release: () => {}, online: () => true })
   let hold!: ReturnType<typeof usePendingSend>
   const undoSeconds = options.undoSeconds ?? 10
   function Harness() {
@@ -462,6 +462,46 @@ describe('what was approved is what leaves', () => {
     expect(r.send).toHaveBeenCalledTimes(1)
     expect(r.send.mock.calls[0]![0].body).toBe('Reworded')
     r.unmount()
+  })
+})
+
+describe('between the hold and the marker', () => {
+  it('reads as being sent, not as Undo still working; closing here is still known not sent', async () => {
+    let ready!: (draft: Draft) => void
+    const r = rig({ run: true, prepare: () => new Promise(resolve => { ready = resolve }) })
+    approveItem(r)
+    await elapse()
+    const draft = r.read().drafts[0]!
+    expect(draft.sendAttempt?.phase).toBe('preparing')
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('submitting')
+    expect(() => updateDraftHandler(r.context, { draftId: r.draftId, body: 'x', expectedVersion: draftEditVersion(draft) })).toThrow(/being sent/)
+    expect(approve(r)).toMatchObject({ alreadyQueued: true, delivery: { state: 'submitting' } })
+    expect(r.send).not.toHaveBeenCalled()
+    const opened = recoverInterruptedSends(JSON.parse(JSON.stringify(persistableMailStore(r.read()))))
+    expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'not_submitted', reason: LOST_HOLD_REASON })
+    await act(async () => { ready({ ...draft }); await vi.advanceTimersByTimeAsync(0) })
+    expect(r.send).toHaveBeenCalledTimes(1)
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('submitted')
+    r.unmount()
+  })
+})
+
+describe('what a failed send is called', () => {
+  const store = (patch = {}) => { const r = rig(); r.update(s => ({ ...s, drafts: s.drafts.map(item => ({ ...item, ...patch })) })); const out = { store: r.read(), id: r.draftId }; r.unmount(); return out }
+  it('may have gone: never "could not send"', () => {
+    const lost = store({ sendState: 'uncertain', sendError: 'x' })
+    const byRecord = sendFailure(lost.store, lost.id, new Error('Socket closed'), 'Gmail', 'saved')
+    expect(byRecord.outcome).toBe('uncertain')
+    expect(byRecord.notice).toContain('did not confirm this send. Check Sent')
+    expect(byRecord.notice).not.toMatch(/Could not send/)
+    const clean = store()
+    expect(sendFailure(clean.store, clean.id, new MailSendError('Timed out', 'uncertain'), 'Gmail', 'saved').outcome).toBe('uncertain')
+  })
+  it('known not sent says so; a confirmed copy leaves nothing to say', () => {
+    const clean = store()
+    expect(sendFailure(clean.store, clean.id, new MailSendError('Refused', 'not_sent'), 'Gmail', 'the draft is saved').notice).toBe('Could not send through Gmail — the draft is saved. (Refused)')
+    const sent = { ...clean.store, messages: [{ ...accepted(clean.store.drafts[0]!), sentDraftId: clean.id }] }
+    expect(sendFailure(sent, clean.id, new Error('late'), 'Gmail', 'saved')).toMatchObject({ outcome: 'submitted', notice: '' })
   })
 })
 

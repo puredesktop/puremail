@@ -1,5 +1,5 @@
 import { createMailDeliveryController } from '../lib/mailDelivery'
-import { createStoreDraftSender } from '../lib/mailSendRelease'
+import { createStoreDraftSender, sendFailure } from '../lib/mailSendRelease'
 import { draftDiscardBlock, draftEditBlock } from '../lib/mailDeliveryStatus'
 import { beginThreadReadSync } from '../lib/mailThreadReadSync'
 import { reconcileComposeAttachments } from '../lib/composeAttachments'
@@ -1446,7 +1446,7 @@ export function PureMailShell({
     release: id => deliveryInputs.current.releaseSend(id),
     online: () => navigator.onLine !== false,
   })
-  const sendDraftThroughProvider = (provider: MailProvider, draft: Draft) => deliveryController.current!(provider, draft)
+  const sendDraftThroughProvider = (provider: MailProvider, draft: Draft, attempt?: { id: string }) => deliveryController.current!(provider, draft, attempt)
 
   useEffect(() => {
     if (mailFetching || !selectedThreadId || !providerBacked?.fetchThreadById) return
@@ -3478,6 +3478,9 @@ export function PureMailShell({
       setCommandNotice('A scheduled send failed: its draft no longer exists.')
       return
     }
+    // An approved send of this draft is under way: its outcome settles this
+    // entry. Starting here would take the send out from under its Undo.
+    if (draft.sendAttempt || holdForDraft(draft.id) || isDraftSending(draft.id)) return
     setStore(current => markScheduledSend(current, entry.id, 'sending'))
     const finishLocal = (): void => {
       let sentMailboxId = ''
@@ -3509,18 +3512,18 @@ export function PureMailShell({
       void sendDraftThroughProvider(providerBacked, draft)
         .then(() => finishLocal())
         .catch(error => {
-          reportSendFailure(draft.id, error)
+          const failure = sendFailure(storeRef.current, draft.id, error, providerName(activeProvider), 'the draft is still in Drafts')
+          if (failure.outcome !== 'submitted') reportSendFailure(draft.id, error)
           setStore(current =>
             markScheduledSend(
               current,
               entry.id,
-              'failed',
-              error instanceof Error ? error.message : 'Send failed.',
+              failure.outcome === 'not_sent' ? 'failed' : failure.outcome === 'uncertain' ? 'unconfirmed' : 'sent',
+              failure.reason,
             ),
           )
-          setCommandNotice(
-            'A scheduled send failed — the draft is still in Drafts.',
-          )
+          if (failure.outcome === 'not_sent') setCommandNotice('A scheduled send failed — the draft is still in Drafts.')
+          else if (failure.outcome === 'uncertain') setCommandNotice(`A scheduled send: ${failure.notice}`)
         })
         .finally(() => markDraftSending(draft.id, false))
       return

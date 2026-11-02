@@ -38,9 +38,9 @@ import {
 } from 'lucide-react'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { sendDraft } from '../lib/mailModel'
-import { CHANGED_REASON, holdDraftForSend, settleDraftNotSent } from '../lib/mailDeliveryStatus'
+import { CHANGED_REASON, holdDraftForSend, markDraftPreparing, settleDraftNotSent } from '../lib/mailDeliveryStatus'
 import { draftSendFingerprint } from '../lib/mailDrawerDrafts'
-import { composeHoldBlock, composeHoldStillApproved } from '../lib/mailSendRelease'
+import { composeHoldBlock, composeHoldStillApproved, sendFailure } from '../lib/mailSendRelease'
 import { useOutsideClose } from './useOutsideClose'
 import { scheduleSend } from '../lib/mailScheduledSend'
 import {
@@ -280,7 +280,7 @@ export interface ComposeEditorProps {
   pendingSend: PendingSendState | null
   schedulePendingSend: (pending: PendingSendState, commit: () => void, onStart?: () => void) => boolean
   undoPendingSend: (pendingId: string) => void
-  sendDraftThroughProvider: (provider: MailProvider, draft: Draft) => Promise<MailMessage>
+  sendDraftThroughProvider: (provider: MailProvider, draft: Draft, attempt?: { id: string }) => Promise<MailMessage>
   markDraftSending: (draftId: string, sending: boolean) => void
   setSelectedMailboxId: React.Dispatch<React.SetStateAction<string>>
   setSelectedThreadId: React.Dispatch<React.SetStateAction<string>>
@@ -1007,6 +1007,8 @@ export function ComposeEditor({
         ...(heldDraft ? { draftId: heldDraft.id } : {}),
       },
       () => {
+        const contextProvider =
+          activeProvider !== 'demo' && navigator.onLine !== false ? mailProviderRef.current : undefined
         if (heldDraft) {
           const current = storeRef.current.drafts.find(item => item.id === heldDraft.id)
           if (!composeHoldStillApproved(current, pendingId, approved, outgoingPrint)) {
@@ -1014,7 +1016,8 @@ export function ComposeEditor({
             setCommandNotice(CHANGED_REASON)
             return
           }
-          setStore(store => ({ ...store, drafts: store.drafts.map(item => (item.id === heldDraft.id ? { ...item, sendAttempt: undefined } : item)) }))
+          // Going to the service: still on its way. Otherwise the hold simply ends here.
+          setStore(store => contextProvider ? markDraftPreparing(store, heldDraft.id, pendingId) : ({ ...store, drafts: store.drafts.map(item => (item.id === heldDraft.id ? { ...item, sendAttempt: undefined } : item)) }))
         }
         const newDraftId = createComposeId(
           context.kind === 'forward' ? 'draft_forward' : 'draft_reply',
@@ -1029,8 +1032,7 @@ export function ComposeEditor({
           item => item.id === result.draftId,
         )
         if (!draft) return
-        const provider =
-          activeProvider !== 'demo' && navigator.onLine !== false ? mailProviderRef.current : undefined
+        const provider = contextProvider
         const home = providerName(activeProvider)
         if (provider) {
           setStore(() => result.nextStore)
@@ -1038,7 +1040,7 @@ export function ComposeEditor({
           resetCompose()
           setComposeOpen(false)
           setCommandNotice(`Sending through ${home}…`)
-          void sendDraftThroughProvider(provider, draft)
+          void sendDraftThroughProvider(provider, draft, heldDraft ? { id: pendingId } : undefined)
             .then(message => {
               setStore(current =>
                 sendDraft(current, result.draftId, undefined, {
@@ -1056,12 +1058,10 @@ export function ComposeEditor({
               recordReplySend(snapshot.subject)
             })
             .catch(error => {
+              const failure = sendFailure(storeRef.current, result.draftId, error, home, 'the draft is saved on the thread')
+              if (failure.outcome === 'submitted') return
               reportSendFailure(result.draftId, error)
-              setCommandNotice(
-                error instanceof Error
-                  ? `Could not send through ${home} — the draft is saved on the thread. (${error.message})`
-                  : `Could not send through ${home} — the draft is saved on the thread.`,
-              )
+              setCommandNotice(failure.notice)
             })
             .finally(() => markDraftSending(result.draftId, false))
           return
@@ -1296,12 +1296,10 @@ export function ComposeEditor({
               recordComposeSend(snapshot.subject)
             })
             .catch(error => {
+              const failure = sendFailure(storeRef.current, result.draftId, error, providerName(activeProvider), 'the draft is saved in Drafts')
+              if (failure.outcome === 'submitted') return
               reportSendFailure(result.draftId, error)
-              setCommandNotice(
-                error instanceof Error
-                  ? `Could not send through ${providerName(activeProvider)} — the draft is saved in Drafts. (${error.message})`
-                  : `Could not send through ${providerName(activeProvider)} — the draft is saved in Drafts.`,
-              )
+              setCommandNotice(failure.notice)
             })
             .finally(() => markDraftSending(result.draftId, false))
           return

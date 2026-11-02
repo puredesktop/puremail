@@ -18,6 +18,14 @@ export function draftContentRevision(draft: Draft): string {
   return JSON.stringify({ subject: draft.subject, body: draft.body.replace(/\r\n/g, '\n'), to: emails(draft.to), cc: emails(draft.cc ?? []), bcc: emails(draft.bcc ?? []), ...(draft.replyTo?.length ? { replyTo: emails(draft.replyTo) } : {}), attachments: draft.attachments.map(attachment => [attachment.name, attachment.mimeType]) })
 }
 
+/** The hold is over: Undo no longer applies, and the marker saved next is what says it may have gone. */
+export function markDraftPreparing(store: MailStore, draftId: string, attemptId: string): MailStore {
+  return {
+    ...store,
+    drafts: store.drafts.map(draft => (draft.id === draftId && draft.sendAttempt?.id === attemptId ? { ...draft, sendAttempt: { ...draft.sendAttempt, phase: 'preparing' as const } } : draft)),
+  }
+}
+
 /** Send failures belong to the draft, independently of incoming-mail sync. */
 export function markDraftSendFailed(store: MailStore, draftId: string, error: unknown): MailStore {
   const reason = error instanceof Error ? error.message : String(error || 'Send failed.')
@@ -86,7 +94,7 @@ export function draftDelivery(store: DeliveryStore, draftId: string): DraftDeliv
     return { state: 'submitted', ...(at ? { at } : {}), ...(sentMessageId ? { sentMessageId } : {}) }
   }
   if (!draft) return { state: 'none' }
-  if (draft.sendAttempt) return { state: draft.sendAttempt.phase, at: draft.sendAttempt.at }
+  if (draft.sendAttempt) return { state: draft.sendAttempt.phase === 'held' ? 'held' : 'submitting', at: draft.sendAttempt.at }
   if (draft.sendState === 'uncertain') return { state: 'unconfirmed', reason: draft.sendError || UNCONFIRMED_REASON }
   if (draft.syncState === 'conflict' || draft.providerConflict) return { state: 'conflict', reason: CONFLICT_REASON }
   if (draft.sendState === 'failed' || draft.sendError) return { state: 'not_submitted', reason: draft.sendError || 'The send failed. Nothing was sent.' }
