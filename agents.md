@@ -441,9 +441,17 @@ model and no network call of its own:
   `state` is `draft` (with `to`, `cc`, `subject`, plain `body` as the person
   edited it, and `version`, getDraft's token), `sent` (`sentAt`,
   `sentMessageId`; found by the kept draft's `sentAt`, the receipt's
-  `sentDraftId` or the local `msg_sent_<draftId>_` copy) or `discarded` (the
-  draft is gone and the account is loaded). Sent and discarded are final;
-  drafts taken more than 30 days ago are not reported.
+  `sentDraftId` or the local `msg_sent_<draftId>_` copy), `discarded` (only
+  after a real discard, a request or the person's action in Mail, named in
+  `discardedBy`) or `missing` (not in this store and nobody is known to have
+  discarded it; the account must be loaded). Absence alone is never discarded,
+  and a draft is found whatever its id: by key, by the Message-ID PureMail gave
+  it, or by `providerDraftId`, so `draftId` can change and the latest one reported is the one to use.
+  `heldBy` / `takenBy` name the mail store holding it (`draftsStoreId`): a
+  store without that draft leaves it to the store that has it, since one shared
+  folder is read by every desktop of the organisation. Sent and discarded are
+  final (a `discarded` with no `discardedBy` was inferred by an older build and
+  is looked at again); drafts taken more than 30 days ago are not reported.
 - takes each `drafts/discard/<key>.json` (`{ v: 1, key, draftId }`, the
   person's No in the Executive app) first: the draft made for that key is
   discarded here and at the provider when still unsent (a request not made

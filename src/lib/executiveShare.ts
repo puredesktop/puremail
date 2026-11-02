@@ -13,8 +13,10 @@
  *                         DRAFT, then moved to drafts/taken/ or drafts/refused/.
  *   drafts/state/<key>.json written here: where each draft the team left
  *                         stands now (a draft as the person edited it, sent,
- *                         or discarded), so the Executive's "Send it?" card
- *                         shows what would leave and when it has gone.
+ *                         discarded, or missing), so the Executive's "Send
+ *                         it?" card shows what would leave and when it has
+ *                         gone. Discarded only ever follows a real discard:
+ *                         a draft simply not in this store is missing.
  *   drafts/discard/<key>.json written by the Executive app when the person
  *                         says No: the draft for that key is discarded here.
  *
@@ -26,6 +28,7 @@
  * guarded by renaming the file being worked on (a rename succeeds for one
  * window only).
  */
+import { imapDraftMessageId } from './mailDeliveryStatus'
 import { attachmentByteSize, attachmentKindLabel } from './mailAttachments'
 import { createComposedMessageDraft, createReplyDraft } from './mailModel'
 import { draftEditVersion } from './mailDrawerDrafts'
@@ -597,7 +600,11 @@ export function executiveDraftIds(key: string): { draftId: string; replyDraftId:
 /** The draft already made for this key, if a window made it before. */
 export function existingExecutiveDraft(store: Pick<MailStore, 'drafts'>, key: string): Draft | null {
   const ids = executiveDraftIds(key)
-  return store.drafts.find(draft => draft.id === ids.draftId || draft.id === ids.replyDraftId) ?? null
+  const exact = store.drafts.find(draft => draft.id === ids.draftId || draft.id === ids.replyDraftId)
+  if (exact) return exact
+  // Brought in from the account's listing under the provider's id: its Message-ID still names the draft.
+  const minted = new Set([imapDraftMessageId({ id: ids.draftId }), imapDraftMessageId({ id: ids.replyDraftId })])
+  return store.drafts.find(draft => draft.providerDraftMessageIdHeader && minted.has(imapDraftMessageId(draft))) ?? null
 }
 
 /**
@@ -805,8 +812,10 @@ export async function takeExecutiveDrafts(input: {
   instanceId: string
   save: (request: ExecutiveDraftRequest) => { draftId: string }
   now?: number
+  /** This mail store's id, recorded on what it takes. */
+  storeId?: string
 }): Promise<DraftImportResult> {
-  const { files, root, share, instanceId, save } = input
+  const { files, root, share, instanceId, save, storeId } = input
   const now = input.now ?? Date.now()
   const stamp = new Date(now).toISOString()
   const dir = joinPath(root, EXECUTIVE_DRAFTS_DIR)
@@ -864,7 +873,7 @@ export async function takeExecutiveDrafts(input: {
     }
     await files.write(
       `${takenDir}/${key}.json`,
-      `${JSON.stringify({ ...checked.record, draftId, takenAt: stamp }, null, 2)}\n`,
+      `${JSON.stringify({ ...checked.record, draftId, takenAt: stamp, ...(storeId ? { takenBy: storeId } : {}) }, null, 2)}\n`,
     )
     await files.remove(claimPath)
     result.taken.push({ key, draftId })
@@ -879,7 +888,8 @@ export interface ExecutiveDraftState {
   v: 1
   key: string
   draftId: string
-  state: 'draft' | 'sent' | 'discarded'
+  /** missing: not in this mail store, and nobody is known to have discarded it. */
+  state: 'draft' | 'sent' | 'discarded' | 'missing'
   at: string
   to: Array<{ name: string; address: string }>
   cc: Array<{ name: string; address: string }>
@@ -889,6 +899,12 @@ export interface ExecutiveDraftState {
   version: string
   sentAt?: string
   sentMessageId?: string
+  /** Why it says discarded: a discard request, or the person's action in Mail. Absent in files from before missing existed. */
+  discardedBy?: 'request' | 'mail'
+  /** The mail store holding it (draftsStoreId): a store without it does not speak for it. */
+  heldBy?: string
+  /** The account's id for it: how it is still found if its id here changes (Gmail's listing has no Message-ID of ours). */
+  providerDraftId?: string
 }
 
 const people = (contacts: readonly MailContact[] | undefined): Array<{ name: string; address: string }> =>
@@ -898,13 +914,14 @@ export function parseDraftState(raw: string | null): ExecutiveDraftState | null 
   if (!raw) return null
   try {
     const value = JSON.parse(raw) as ExecutiveDraftState
-    return value && value.v === 1 && typeof value.key === 'string' && ['draft', 'sent', 'discarded'].includes(value.state) ? value : null
+    return value && value.v === 1 && typeof value.key === 'string' && ['draft', 'sent', 'discarded', 'missing'].includes(value.state) ? value : null
   } catch {
     return null
   }
 }
 
-const isFinal = (state: ExecutiveDraftState | null): boolean => state?.state === 'sent' || state?.state === 'discarded'
+/** Discarded without saying why was inferred from absence by an older build: looked at again. */
+const isFinal = (state: ExecutiveDraftState | null): boolean => state?.state === 'sent' || (state?.state === 'discarded' && Boolean(state.discardedBy))
 
 /** The two ids a draft made for this key can have: never any other draft. */
 function isExecutiveDraftId(key: string, draftId: string): boolean {
@@ -917,8 +934,11 @@ function isExecutiveDraftId(key: string, draftId: string): boolean {
  * cannot be told yet. Sent is found however the send happened (PureMail's
  * own Send, a run, sendDraft): a kept draft with sentAt, else the sent copy
  * (the receipt's sentDraftId survives the sync that replaces the local
- * `msg_sent_<draftId>_` copy). Discarded only when the account is loaded
- * (its threads are in the store): a booting store says nothing.
+ * `msg_sent_<draftId>_` copy). Absence says nothing about why: discarded needs
+ * a real discard (`discardedAt`), otherwise it is missing. And only when the
+ * account is loaded (a booting store says nothing) and this store is the one
+ * that held it: a shared folder is read by every desktop of the organisation,
+ * so a draft another desktop's store holds is that desktop's to report.
  */
 export function executiveDraftState(
   store: Pick<MailStore, 'drafts' | 'messages' | 'threads'>,
@@ -927,19 +947,37 @@ export function executiveDraftState(
   draftId: string,
   previous: ExecutiveDraftState | null,
   now: string,
+  options: {
+    /** This mail store's id. */
+    storeId?: string
+    /** The store that took the request, from taken/<key>.json. */
+    takenBy?: string
+    /** When this draft was really discarded in this store, if it was. */
+    discardedAt?: (draftId: string) => string | undefined
+  } = {},
 ): ExecutiveDraftState | null {
   const draft =
     store.drafts.find(item => item.id === draftId && isExecutiveDraftId(key, item.id)) ??
-    existingExecutiveDraft(store, key)
+    existingExecutiveDraft(store, key) ??
+    (previous?.providerDraftId ? store.drafts.find(item => item.providerDraftId === previous.providerDraftId) : undefined) ??
+    null
   const id = draft?.id ?? draftId
+  const holder = previous?.heldBy ?? options.takenBy
+  const heldElsewhere = Boolean(holder && options.storeId && holder !== options.storeId)
+  // A copy brought in from the account: the store that made the draft speaks for it.
+  if (draft && heldElsewhere && (draft.importedFromProvider || !isExecutiveDraftId(key, draft.id))) return null
   if (draft && !draft.sentAt) {
     return {
       v: 1, key, draftId: id, state: 'draft', at: now,
       to: people(draft.to), cc: people(draft.cc), subject: draft.subject,
       body: draft.body.slice(0, DRAFT_STATE_BODY_LIMIT), version: draftEditVersion(draft),
+      ...(options.storeId ? { heldBy: options.storeId } : {}),
+      ...(draft.providerDraftId ? { providerDraftId: draft.providerDraftId } : {}),
     }
   }
-  const sent = sentMessageForRunItem(store, { draftId: id })
+  // The last id reported can differ from the one first taken, when it was reported under the account's id.
+  const lastId = previous?.draftId && previous.draftId !== id ? previous.draftId : null
+  const sent = sentMessageForRunItem(store, { draftId: id }) ?? (lastId ? sentMessageForRunItem(store, { draftId: lastId }) : null)
   if (draft?.sentAt || sent) {
     return {
       v: 1, key, draftId: id, state: 'sent', at: now,
@@ -952,11 +990,14 @@ export function executiveDraftState(
     }
   }
   if (!store.threads.some(thread => thread.accountId === account.id)) return null
-  return {
-    v: 1, key, draftId: id, state: 'discarded', at: now,
+  const known = {
     to: previous?.to ?? [], cc: previous?.cc ?? [], subject: previous?.subject ?? '',
     body: previous?.body ?? '', version: previous?.version ?? '',
   }
+  const discardedAt = options.discardedAt?.(id) ?? (lastId ? options.discardedAt?.(lastId) : undefined)
+  if (discardedAt) return { v: 1, key, draftId: id, state: 'discarded', at: discardedAt, discardedBy: 'mail', ...known }
+  if (heldElsewhere) return null
+  return { v: 1, key, draftId: id, state: 'missing', at: now, ...known, ...(holder ? { heldBy: holder } : {}) }
 }
 
 const sameState = (a: ExecutiveDraftState | null, b: ExecutiveDraftState): boolean =>
@@ -966,6 +1007,7 @@ const sameState = (a: ExecutiveDraftState | null, b: ExecutiveDraftState): boole
  * Write `drafts/state/<key>.json` for each draft taken (taken/<key>.json
  * holds its draftId), only when it changed. Sent and discarded are final:
  * never rewritten, and remembered in `finalKeys` so later looks skip them.
+ * Missing is not: the draft can turn up, from another desktop's store.
  */
 export async function reportExecutiveDraftStates(input: {
   files: ExecutiveShareFiles
@@ -974,8 +1016,10 @@ export async function reportExecutiveDraftStates(input: {
   account: Pick<MailAccount, 'id'>
   finalKeys?: Set<string>
   now?: number
+  storeId?: string
+  discardedAt?: (draftId: string) => string | undefined
 }): Promise<{ written: string[] }> {
-  const { files, root, store, account } = input
+  const { files, root, store, account, storeId, discardedAt } = input
   const now = input.now ?? Date.now()
   const stamp = new Date(now).toISOString()
   const finalKeys = input.finalKeys ?? new Set<string>()
@@ -985,7 +1029,7 @@ export async function reportExecutiveDraftStates(input: {
   for (const name of await files.list(takenDir)) {
     const key = /^(.+)\.json$/.exec(name)?.[1]
     if (!key || !DRAFT_KEY_PATTERN.test(key) || finalKeys.has(key)) continue
-    let taken: { draftId?: unknown; takenAt?: unknown } = {}
+    let taken: { draftId?: unknown; takenAt?: unknown; takenBy?: unknown } = {}
     try {
       taken = JSON.parse((await files.read(`${takenDir}/${name}`)) ?? '{}') as typeof taken
     } catch {
@@ -1004,7 +1048,8 @@ export async function reportExecutiveDraftStates(input: {
       finalKeys.add(key)
       continue
     }
-    const next = executiveDraftState(store, account, key, draftId, previous, stamp)
+    const takenBy = typeof taken.takenBy === 'string' ? taken.takenBy : undefined
+    const next = executiveDraftState(store, account, key, draftId, previous, stamp, { storeId, takenBy, discardedAt })
     if (!next || sameState(previous, next)) continue
     await files.write(path, `${JSON.stringify(next, null, 2)}\n`)
     written.push(key)
@@ -1074,13 +1119,13 @@ export async function takeExecutiveDiscards(input: {
       await refuse('The file is not a version 1 discard request for this key.')
       continue
     }
-    if (named && !isExecutiveDraftId(key, named)) {
+    const draft = existingExecutiveDraft(store, key)
+    if (named && !isExecutiveDraftId(key, named) && named !== draft?.id) {
       await refuse('That draft was not made by the executive team, so it was not discarded.')
       continue
     }
     const statePath = `${stateDir}/${key}.json`
     const previous = parseDraftState(await files.read(statePath))
-    const draft = existingExecutiveDraft(store, key)
     const id = draft?.id ?? (named || executiveDraftIds(key).draftId)
     if (draft?.sentAt || (!draft && sentMessageForRunItem(store, { draftId: id }))) {
       await files.remove(claimPath)
@@ -1107,6 +1152,7 @@ export async function takeExecutiveDiscards(input: {
       to: previous?.to ?? people(draft?.to), cc: previous?.cc ?? people(draft?.cc),
       subject: previous?.subject ?? draft?.subject ?? '', body: previous?.body ?? (draft?.body ?? '').slice(0, DRAFT_STATE_BODY_LIMIT),
       version: previous?.version ?? (draft ? draftEditVersion(draft) : ''),
+      discardedBy: 'request',
     }
     await files.write(statePath, `${JSON.stringify(gone, null, 2)}\n`)
     await files.remove(claimPath)

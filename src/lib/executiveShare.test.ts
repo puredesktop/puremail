@@ -489,12 +489,60 @@ describe('where the team’s drafts stand (drafts/state)', () => {
     expect(stateOf(disk)).toMatchObject({ state: 'sent', sentAt: '2026-11-01T08:00:00Z', sentMessageId: 'imap_msg_Sent_9' })
   })
 
-  it('says discarded only once the account is loaded, never from a booting store', async () => {
+  it('never says discarded because a draft is simply not in this store', async () => {
     const { disk, files } = memoryFiles(takenFile)
     await reportExecutiveDraftStates({ files, root: ROOT, store: { ...store(), threads: [], messages: [], drafts: [] }, account: ACCOUNT, now: NOW })
     expect(stateOf(disk)).toBeNull()
     await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW })
-    expect(stateOf(disk)).toMatchObject({ state: 'discarded', draftId })
+    expect(stateOf(disk)).toMatchObject({ state: 'missing', draftId })
+  })
+
+  it('says discarded when Mail really discarded it, and says who', async () => {
+    const { disk, files } = memoryFiles(takenFile)
+    await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW, discardedAt: id => (id === draftId ? '2026-11-01T07:00:00.000Z' : undefined) })
+    expect(stateOf(disk)).toMatchObject({ state: 'discarded', draftId, discardedBy: 'mail', at: '2026-11-01T07:00:00.000Z' })
+  })
+
+  it('leaves a draft another desktop’s store took for that desktop to report', async () => {
+    const { disk, files } = memoryFiles({ [`${drafts}/taken/${DRAFT.key}.json`]: JSON.stringify({ ...DRAFT, draftId, takenAt: '2026-11-01T09:00:00.000Z', takenBy: 'store-other' }) })
+    await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+    expect(stateOf(disk)).toBeNull()
+  })
+
+  it('settles when two desktops share a folder: the holder’s word stands', async () => {
+    const { disk, files } = memoryFiles(takenFile)
+    await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW, storeId: 'store-empty' })
+    expect(stateOf(disk)?.state).toBe('missing')
+    await reportExecutiveDraftStates({ files, root: ROOT, store: withDraft(), account: ACCOUNT, now: NOW, storeId: 'store-holder' })
+    expect(stateOf(disk)).toMatchObject({ state: 'draft', heldBy: 'store-holder' })
+    await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW, storeId: 'store-empty' })
+    expect(stateOf(disk)).toMatchObject({ state: 'draft', heldBy: 'store-holder' })
+  })
+
+  it('says missing when the store that held it no longer does, and a found draft turns back', async () => {
+    const { disk, files } = memoryFiles(takenFile)
+    await reportExecutiveDraftStates({ files, root: ROOT, store: withDraft(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+    await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+    expect(stateOf(disk)).toMatchObject({ state: 'missing', heldBy: 'store-here', subject: 'Re: pilot terms' })
+    await reportExecutiveDraftStates({ files, root: ROOT, store: withDraft(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+    expect(stateOf(disk)?.state).toBe('draft')
+  })
+
+  it('looks again at a discarded that says no reason: an older build inferred it from absence', async () => {
+    const legacy = { v: 1, key: DRAFT.key, draftId, state: 'discarded', at: '2026-11-02T17:50:33.236Z', to: [], cc: [], subject: '', body: '', version: '' }
+    const alive = memoryFiles({ ...takenFile, [`${drafts}/state/${DRAFT.key}.json`]: JSON.stringify(legacy) })
+    await reportExecutiveDraftStates({ files: alive.files, root: ROOT, store: withDraft(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+    expect(stateOf(alive.disk)?.state).toBe('draft')
+    const gone = memoryFiles({ ...takenFile, [`${drafts}/state/${DRAFT.key}.json`]: JSON.stringify(legacy) })
+    await reportExecutiveDraftStates({ files: gone.files, root: ROOT, store: store(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+    expect(stateOf(gone.disk)?.state).toBe('missing')
+  })
+
+  it('keeps a real discard final, even when the draft turns up again', async () => {
+    const real = { v: 1, key: DRAFT.key, draftId, state: 'discarded', discardedBy: 'request', at: '2026-11-01T07:00:00.000Z', to: [], cc: [], subject: '', body: '', version: '' }
+    const { disk, files } = memoryFiles({ ...takenFile, [`${drafts}/state/${DRAFT.key}.json`]: JSON.stringify(real) })
+    await reportExecutiveDraftStates({ files, root: ROOT, store: withDraft(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+    expect(stateOf(disk)).toMatchObject({ state: 'discarded', discardedBy: 'request' })
   })
 
   it('stops reporting drafts taken more than 30 days ago', async () => {
@@ -520,7 +568,7 @@ describe('the person’s No (drafts/discard)', () => {
     const result = await takeExecutiveDiscards({ files, root: ROOT, store: withDraft(), instanceId: 'w1', now: 10, discard: id => { thrown.push(id); return { ok: true } } })
     expect(thrown).toEqual([draftId])
     expect(result).toEqual({ discarded: [DRAFT.key], sent: [], refused: [] })
-    expect(parseDraftState(disk.get(`${drafts}/state/${DRAFT.key}.json`)!)).toMatchObject({ state: 'discarded', draftId, subject: 'Re: pilot terms' })
+    expect(parseDraftState(disk.get(`${drafts}/state/${DRAFT.key}.json`)!)).toMatchObject({ state: 'discarded', discardedBy: 'request', draftId, subject: 'Re: pilot terms' })
     expect([...disk.keys()].filter(path => path.includes('/discard/'))).toEqual([])
   })
 
