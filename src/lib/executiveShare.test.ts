@@ -489,12 +489,12 @@ describe('where the team’s drafts stand (drafts/state)', () => {
     expect(stateOf(disk)).toMatchObject({ state: 'sent', sentAt: '2026-11-01T08:00:00Z', sentMessageId: 'imap_msg_Sent_9' })
   })
 
-  it('says discarded only once the account is loaded, never from a booting store', async () => {
+  it('never says discarded because a draft is simply not in this store', async () => {
     const { disk, files } = memoryFiles(takenFile)
     await reportExecutiveDraftStates({ files, root: ROOT, store: { ...store(), threads: [], messages: [], drafts: [] }, account: ACCOUNT, now: NOW })
     expect(stateOf(disk)).toBeNull()
     await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW })
-    expect(stateOf(disk)).toMatchObject({ state: 'discarded', draftId })
+    expect(stateOf(disk)).toMatchObject({ state: 'missing', draftId })
   })
 
   it('stops reporting drafts taken more than 30 days ago', async () => {

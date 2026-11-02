@@ -286,3 +286,40 @@ describe('mail persistence', () => {
     expect(store?.messages.map(message => message.id)).toEqual(['unrelated', 'same-id', 'gmail-receipt', 'rfc-receipt'])
   })
 })
+
+/**
+ * Each running copy of Mail is its own JavaScript realm over one file. Fresh
+ * module instances stand in for those realms: what one copy holds in memory
+ * the other cannot see.
+ */
+describe('two running copies of Mail over one drafts file', () => {
+  type Copy = typeof import('./mailPersistence')
+  const openCopy = async (): Promise<{ copy: Copy; store: MailStore }> => {
+    vi.resetModules()
+    const copy = await import('./mailPersistence')
+    const { store } = await copy.readPersistedMailStore()
+    return { copy, store: store! }
+  }
+  const draftsOnDisk = (): Draft[] => (files.get(MAIL_DRAFTS_FILE) as { drafts: Draft[] }).drafts
+  const ids = (drafts: Draft[]) => drafts.map(item => item.id).sort()
+
+  beforeEach(async () => {
+    files.clear()
+    failing.clear()
+    unreadable.clear()
+    await writePersistedMailStore(storeWith([draft('old', 'kept')]))
+  })
+
+  it('keeps a reply saved by one copy when a copy with an older view saves', async () => {
+    const a = await openCopy()
+    const b = await openCopy()
+    await a.copy.writePersistedMailStore({ ...a.store, drafts: [...a.store.drafts, draft('barbara', 'Dear Barbara')] })
+    expect(ids(draftsOnDisk())).toEqual(['barbara', 'old'])
+
+    // The second copy opens with its older view and saves that view.
+    await b.copy.writePersistedMailStore(b.store)
+
+    expect(ids(draftsOnDisk())).toEqual(['barbara', 'old'])
+    expect(draftsOnDisk().find(item => item.id === 'barbara')?.body).toBe('Dear Barbara')
+  })
+})
