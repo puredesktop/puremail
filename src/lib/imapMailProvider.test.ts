@@ -1212,7 +1212,10 @@ describe('IMAP draft listing coverage', () => {
     imap.boxes.set('Drafts', [])
     const after = await mail.fetchStore()
     expect(after.syncCoverage?.draftsCovered).toBe(true)
-    expect(mergeMailProviderSyncResult(before, after).drafts).toHaveLength(0)
+    // Gone means two complete listings in a row.
+    const once = mergeMailProviderSyncResult(before, after)
+    expect(once.drafts).toHaveLength(1)
+    expect(mergeMailProviderSyncResult(once, after).drafts).toHaveLength(0)
   })
 
   it.each([{ total: 2401, repeat: false }, { total: 400, repeat: true }])('preserves absent local drafts when pagination is incomplete: %j', async ({ total, repeat }) => {

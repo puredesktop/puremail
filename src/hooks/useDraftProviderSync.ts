@@ -41,6 +41,8 @@ function sameRevision(left: Draft, right: Draft): boolean {
     providerDraftId: _id,
     providerDraftMessageId: _message,
     providerRevision: _revision,
+    providerAbsentOnce: _absent,
+    importedFromProvider: _imported,
     providerConflict: _conflict,
     providerSaveWarning: _saveWarning,
     providerSaveError: _saveError,
@@ -79,6 +81,8 @@ export function useDraftProviderSync(input: {
   provider: DraftSyncProvider | null | undefined
   onError?: (message: string) => void
   onNotice?: (message: string) => void
+  /** Another running copy of Mail is pushing this draft: left to it, or two account copies appear. */
+  heldElsewhere?: (draftId: string) => boolean
 }): {
   /**
    * This draft is gone locally — make it gone at the provider too.
@@ -93,7 +97,7 @@ export function useDraftProviderSync(input: {
   prepareSend: (draft: Draft) => Promise<Draft>
   releaseSend: (draftId: string) => void
 } {
-  const { store, setStore, provider, onError, onNotice } = input
+  const { store, setStore, provider, onError, onNotice, heldElsewhere } = input
   // Account changes start a fresh lifecycle. Pending completions keep their
   // original scope and must never patch or delete another account's drafts.
   const scopeRef = useRef({
@@ -177,7 +181,7 @@ export function useDraftProviderSync(input: {
     if (typeof window === 'undefined') return
     if (!provider || !mailProviderSupports(provider, 'drafts')) return
     const pending = store.drafts.filter(
-      draft => worthSyncing(draft) && !scope.inFlight.has(draft.id) && !scope.sending.has(draft.id),
+      draft => worthSyncing(draft) && !scope.inFlight.has(draft.id) && !scope.sending.has(draft.id) && !heldElsewhere?.(draft.id),
     )
     if (pending.length === 0) return
 
@@ -192,7 +196,7 @@ export function useDraftProviderSync(input: {
         const active = providerRef.current
         if (!current || !worthSyncing(current) || !active) continue
         if (scope.inFlight.has(current.id) || scope.sending.has(current.id)) continue
-        if (scope.discarded.has(current.id)) continue
+        if (scope.discarded.has(current.id) || heldElsewhere?.(current.id)) continue
         scope.inFlight.add(current.id)
 
         const settle = (): void => {

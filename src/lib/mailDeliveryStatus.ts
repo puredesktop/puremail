@@ -12,6 +12,17 @@ export function imapDraftMessageId(draft: Pick<Draft, 'id' | 'providerDraftMessa
     : `<puremail-draft-${encodeURIComponent(draft.id)}@puremail.local>`
 }
 
+/** The draft id a Message-ID minted by imapDraftMessageId names, if it is one. */
+export function draftIdFromMessageId(header: string | undefined): string | null {
+  const minted = /^<?puremail-draft-([^@<>\s]+)@puremail\.local>?$/.exec(header?.trim() ?? '')?.[1]
+  if (!minted) return null
+  try {
+    return decodeURIComponent(minted)
+  } catch {
+    return null
+  }
+}
+
 /** Content-only baseline for detecting edits made in another mail client. */
 export function draftContentRevision(draft: Draft): string {
   const emails = (contacts: Draft['to']) => contacts.map(contact => contact.email.trim().toLowerCase()).sort()

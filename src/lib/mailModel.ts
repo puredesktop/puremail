@@ -1,4 +1,4 @@
-import { draftContentRevision, imapDraftMessageId } from './mailDeliveryStatus'
+import { draftContentRevision, draftIdFromMessageId, imapDraftMessageId } from './mailDeliveryStatus'
 import {
   calendarDraftResourceId,
   type CalendarDraftIntent,
@@ -3652,16 +3652,51 @@ export function mergeMailDrafts(
   const remoteReplacements = indexReplacements(providerDrafts)
   const currentProviderIds = new Set(currentDrafts.map(draft => draft.providerDraftId))
 
-  for (const local of currentDrafts) {
+  // A listing can land before its save is acknowledged. Its Message-ID still
+  // says which draft it is, so it links to that draft instead of becoming a
+  // second record.
+  const remoteByMessageId = new Map<string, Draft>()
+  for (const remote of providerDrafts) {
+    if (remote.providerDraftId && remote.providerDraftMessageIdHeader) remoteByMessageId.set(imapDraftMessageId(remote), remote)
+  }
+
+  for (let local of currentDrafts) {
     if (!local.providerDraftId) {
-      merged.push(local)
+      const named = remoteByMessageId.get(imapDraftMessageId(local))
+      if (!named || claimed.has(named.providerDraftId!) || currentProviderIds.has(named.providerDraftId)) {
+        merged.push(local)
+        continue
+      }
+      claimed.add(named.providerDraftId!)
+      const remoteRevision = draftContentRevision(named)
+      merged.push({
+        ...local,
+        providerDraftId: named.providerDraftId,
+        providerDraftMessageId: named.providerDraftMessageId,
+        providerDraftMessageIdHeader: named.providerDraftMessageIdHeader,
+        providerRevision: remoteRevision,
+        syncState: remoteRevision === draftContentRevision(local) ? 'synced' : local.syncState,
+      })
       continue
     }
     const key = replacementKey(local)
     const candidates = draftsCovered && key && localReplacements.get(key)?.length === 1 ? remoteReplacements.get(key) : undefined
     const replacement = candidates?.length === 1 && !currentProviderIds.has(candidates[0].providerDraftId) ? candidates[0] : undefined
     const remote = providerById.get(local.providerDraftId) ?? replacement
+    if (remote && local.providerAbsentOnce) {
+      const { providerAbsentOnce: _seenAgain, ...seen } = local
+      local = seen
+    }
     if (!remote) {
+      // A listing begun before this draft was saved cannot show it. Dropping
+      // it on that word meant the next listing brought the same message back
+      // as a new record under a new id, off its thread: to everything holding
+      // the old id, the draft had vanished. Gone means two listings in a row.
+      const unsynced = local.syncState !== 'synced' || local.providerSaveUncertain || local.providerConflict
+      if (draftsCovered && !local.sentAt && !local.providerAbsentOnce && (unsynced || !local.sendError)) {
+        merged.push({ ...local, providerAbsentOnce: true })
+        continue
+      }
       if (draftsCovered && !local.sentAt && (local.syncState !== 'synced' || local.providerSaveUncertain || local.providerConflict)) {
         merged.push({
           ...local,
@@ -3732,9 +3767,15 @@ export function mergeMailDrafts(
     })
   }
 
+  const usedIds = new Set([...currentDrafts, ...merged].map(draft => draft.id))
   for (const remote of providerDrafts) {
     if (!remote.providerDraftId || claimed.has(remote.providerDraftId)) continue
-    merged.push({ ...remote, providerRevision: draftContentRevision(remote) })
+    // Saved by PureMail in another store, or by a copy that lost it: the
+    // Message-ID names the draft, so it comes back under that identity.
+    const named = draftIdFromMessageId(remote.providerDraftMessageIdHeader)
+    const id = named && !usedIds.has(named) ? named : remote.id
+    usedIds.add(id)
+    merged.push({ ...remote, id, importedFromProvider: true, providerRevision: draftContentRevision(remote) })
   }
   return merged
 }
