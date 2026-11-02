@@ -10,9 +10,12 @@ import {
 } from '../bridge/platformBridge'
 import {
   readMailShare,
+  reportExecutiveDraftStates,
   sharedAccount,
+  takeExecutiveDiscards,
   takeExecutiveDrafts,
   writeMailDigest,
+  type DiscardResult,
   type DraftImportResult,
   type ExecutiveDraftRequest,
   type ExecutiveShareFiles,
@@ -34,8 +37,10 @@ const shellFiles: ExecutiveShareFiles = {
  * Present only when the Executive app has written share.json in this
  * workspace and it names the connected account. After each successful sync
  * it appends the new messages to the digest; after each sync and when Mail
- * opens it takes the drafts the team left, as DRAFTS. No model, no network
- * call of its own, and no path to sending.
+ * opens it takes the drafts the team left, as DRAFTS, discards the ones the
+ * person said No to, and reports where each stands (drafts/state/). No
+ * model, no network call of its own, and no path to sending (sending one is
+ * the sendDraft release, a person's approval).
  *
  * Looks never overlap within a window; across windows the file claims in
  * the lib keep them apart.
@@ -45,7 +50,10 @@ export function useExecutiveMailShare(input: {
   enabled: boolean
   readStore: () => MailStore
   saveDraft: (account: MailAccount, request: ExecutiveDraftRequest) => { draftId: string }
+  /** Throw away a draft the team made, here and at the provider (the person said No in the Executive app). */
+  discardDraft: (draftId: string) => { ok: true } | { ok: false; reason: string }
   onDraftsTaken?: (result: DraftImportResult) => void
+  onDraftsDiscarded?: (result: DiscardResult) => void
 }): {
   /** Call after a successful sync, with the accounts that sync covered. */
   afterSync: (syncedAccounts: MailAccount[]) => void
@@ -56,6 +64,8 @@ export function useExecutiveMailShare(input: {
   inputRef.current = input
   const instanceId = useRef(Math.random().toString(36).slice(2, 10) || 'window')
   const tail = useRef<Promise<void>>(Promise.resolve())
+  /** Per folder: drafts whose state is final (sent or discarded), not looked at again. */
+  const finalKeys = useRef(new Map<string, Set<string>>())
 
   const look = useRef((syncedAccounts: MailAccount[] | null) => {
     tail.current = tail.current.then(async () => {
@@ -75,8 +85,14 @@ export function useExecutiveMailShare(input: {
             const synced = syncedAccounts ? sharedAccount({ accounts: syncedAccounts }, share) : account
             if (synced) await writeMailDigest({ files: shellFiles, root: folder, store: current.readStore(), share, account: synced, instanceId: instanceId.current })
             allReceipts.push(...await readTeamMailReceipts(shellFiles, folder, account.email))
+            // The person's No first, so a draft withdrawn before it was made is never made.
+            const discards = await takeExecutiveDiscards({ files: shellFiles, root: folder, store: current.readStore(), instanceId: instanceId.current, discard: draftId => inputRef.current.discardDraft(draftId) })
+            if (discards.discarded.length || discards.refused.length) inputRef.current.onDraftsDiscarded?.(discards)
             const result = await takeExecutiveDrafts({ files: shellFiles, root: folder, share, instanceId: instanceId.current, save: request => inputRef.current.saveDraft(account, request) })
             if (result.taken.length || result.refused.length) inputRef.current.onDraftsTaken?.(result)
+            const finals = finalKeys.current.get(folder) ?? new Set<string>()
+            finalKeys.current.set(folder, finals)
+            await reportExecutiveDraftStates({ files: shellFiles, root: folder, store: current.readStore(), account, finalKeys: finals })
           } catch { console.warn('[puremail] An organisation mail share could not be refreshed; it will retry.') }
         }
         setReceipts(previous => JSON.stringify(previous) === JSON.stringify(allReceipts) ? previous : allReceipts)

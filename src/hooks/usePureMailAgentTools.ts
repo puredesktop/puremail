@@ -17,6 +17,7 @@ import {
   deleteViewHandler,
   composeMessageHandler,
   discardDraftHandler,
+  sendDraftHandler,
   draftReplyHandler,
   commitReplyDraftHandler,
   getDraftHandler,
@@ -156,6 +157,8 @@ export function usePureMailAgentTools(
         updateDraftHandler(contextRef.current, invoke.arguments),
       discardDraft: async invoke =>
         discardDraftHandler(contextRef.current, invoke.arguments),
+      sendDraft: async invoke =>
+        sendDraftHandler(contextRef.current, invoke.arguments),
       composeMessage: async invoke =>
         composeMessageHandler(contextRef.current, invoke.arguments),
       addDraftAttachments: async invoke =>

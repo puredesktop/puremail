@@ -46,6 +46,8 @@ tool use.
   run's `sendRunItem` is a release action: only a person can send, by
   pressing Send & next in PureMail, or by approving it as CEO in the
   Executive team. You cannot call it at any trust level (see Send runs).
+  `sendDraft` (one prepared draft, as it is now) is a release too: the
+  person's Send in PureMail or the Executive team's "Send it?" card.
   Never claim a reply was sent — but triage you applied IS applied;
   report it as done.
 
@@ -435,6 +437,22 @@ model and no network call of its own:
   opens) and saves it as a DRAFT in that account, a reply in its thread when
   `inReplyTo` is found here, then moves the file to `drafts/taken/` (with
   `draftId`, `takenAt`) or `drafts/refused/` (with a plain `why`, `refusedAt`).
+- writes `drafts/state/<key>.json` for each taken draft when it changes:
+  `state` is `draft` (with `to`, `cc`, `subject`, plain `body` as the person
+  edited it, and `version`, getDraft's token), `sent` (`sentAt`,
+  `sentMessageId`; found by the kept draft's `sentAt`, the receipt's
+  `sentDraftId` or the local `msg_sent_<draftId>_` copy) or `discarded` (the
+  draft is gone and the account is loaded). Sent and discarded are final;
+  drafts taken more than 30 days ago are not reported.
+- takes each `drafts/discard/<key>.json` (`{ v: 1, key, draftId }`, the
+  person's No in the Executive app) first: the draft made for that key is
+  discarded here and at the provider when still unsent (a request not made
+  yet is withdrawn to `drafts/refused/`), a sent one is left alone, and a
+  request naming any draft the team did not make goes to
+  `drafts/discard/refused/`.
+- opens `purescience://mail/draft/<draftId>` (the Executive's
+  `workspace.openApp({ appSlug: 'mail', resourceId: 'draft/<id>' })`) in the
+  compose window.
 
 These drafts are ordinary drafts: read them with `getDraft`, change them with
 `updateDraft`. Their provenance says they came from the executive team. Never

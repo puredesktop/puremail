@@ -27,6 +27,8 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   'getDraft',
   'updateDraft',
   'discardDraft',
+  // A release: only a person's approval (Send in PureMail, or the Executive team's Send) runs it.
+  'sendDraft',
   'addDraftAttachments',
   'removeDraftAttachment',
   // Documents out of mail: attachments saved as files, an email as a PDF.

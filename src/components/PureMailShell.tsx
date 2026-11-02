@@ -61,6 +61,8 @@ import { useExecutiveMailShare } from '../hooks/useExecutiveMailShare'
 import {
   addExecutiveDraft,
   buildExecutiveDraft,
+  DRAFT_LINK_PREFIX,
+  draftLinkTarget,
   existingExecutiveDraft,
 } from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
@@ -1404,6 +1406,21 @@ export function PureMailShell({
         setCommandNotice(
           `The executive team left ${result.taken.length === 1 ? 'a draft' : `${result.taken.length} drafts`} in Drafts. Nothing was sent.`,
         )
+      }
+    },
+    discardDraft: draftId => {
+      const draft = storeRef.current.drafts.find(item => item.id === draftId)
+      if (!draft) return { ok: false, reason: 'It is not in PureMail any more.' }
+      if (draft.sentAt) return { ok: false, reason: 'It was sent already.' }
+      discardReplyDraft(draftId)
+      return { ok: true }
+    },
+    onDraftsDiscarded: result => {
+      for (const key of result.discarded) {
+        recordTriageOperation('mail.executive.discarded', `Discarded a draft the executive team left (${key}): the person said no.`, 'agent')
+      }
+      for (const item of result.refused) {
+        recordTriageOperation('mail.executive.discard-refused', `Did not discard (${item.key}): ${item.why}`, 'agent')
       }
     },
   })
@@ -3304,12 +3321,30 @@ export function PureMailShell({
     }
   }, [])
 
+  /** Open one draft by its link (purescience://mail/draft/<id>): its thread, and the draft in the compose window. */
+  const openDraftLink = (path: string): void => {
+    const target = draftLinkTarget(storeRef.current, path)
+    if (!target) return
+    if ('notice' in target) {
+      setCommandNotice(target.notice)
+      return
+    }
+    if (target.threadHasMessages) openThread(target.draft.threadId)
+    openDraftInComposeWindow(target.draft)
+  }
+  const openDraftLinkRef = useRef(openDraftLink)
+  openDraftLinkRef.current = openDraftLink
   const emailDocumentRef = useRef(emailDocument)
   emailDocumentRef.current = emailDocument
   useEffect(() => {
     const path = openedFile?.path?.trim()
     if (!path) return
     onOpenedFileHandled?.()
+    // A draft the executive team left, opened from its Send it? card.
+    if (path.startsWith(DRAFT_LINK_PREFIX)) {
+      openDraftLinkRef.current(path)
+      return
+    }
     // purescience:// opens are app requests (compose intents), not files.
     if (path.startsWith('purescience://')) return
     void emailDocumentRef.current(path)

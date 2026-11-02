@@ -10,18 +10,24 @@ import {
   checkDraftRequest,
   digestLinesFor,
   digestText,
+  draftLinkTarget,
   existingExecutiveDraft,
   isNeverReadAddress,
   isNeverReadPlace,
   localDay,
   parseDigestCursor,
+  parseDraftState,
   parseMailShare,
+  reportExecutiveDraftStates,
   serializeDigestCursor,
   sharedAccount,
+  takeExecutiveDiscards,
   takeExecutiveDrafts,
   writeMailDigest,
   type ExecutiveShareFiles,
 } from './executiveShare'
+import { sendDraft } from './mailModel'
+import { draftEditVersion } from './mailDrawerDrafts'
 import type { MailAccount, MailMessage, MailStore, MailThread } from '../types'
 
 const ROOT = '/org'
@@ -435,6 +441,138 @@ describe('takeExecutiveDrafts', () => {
   })
 })
 
+
+describe('where the team’s drafts stand (drafts/state)', () => {
+  const drafts = `${MAIL}/drafts`
+  const NOW = Date.parse('2026-11-01T09:00:00Z')
+  const withDraft = (): MailStore => {
+    const checked = checkDraftRequest(JSON.stringify(DRAFT), DRAFT.key, share)
+    if (!checked.ok) throw new Error(checked.why)
+    return addExecutiveDraft(store(), buildExecutiveDraft(store(), ACCOUNT, checked.request, { now: '2026-10-27T09:00:00Z' }))
+  }
+  const draftId = 'draft_reply_exec-cos-chase-fu-0003-1'
+  const takenFile = { [`${drafts}/taken/${DRAFT.key}.json`]: JSON.stringify({ ...DRAFT, draftId, takenAt: '2026-10-31T09:00:00.000Z' }) }
+  const stateOf = (disk: Map<string, string>) => parseDraftState(disk.get(`${drafts}/state/${DRAFT.key}.json`) ?? null)
+
+  it('reports the draft as it is, then the person’s edit, then sent; and never again once final', async () => {
+    const { disk, files } = memoryFiles(takenFile)
+    let s = withDraft()
+    const finals = new Set<string>()
+    expect((await reportExecutiveDraftStates({ files, root: ROOT, store: s, account: ACCOUNT, finalKeys: finals, now: NOW })).written).toEqual([DRAFT.key])
+    const first = stateOf(disk)!
+    expect(first).toMatchObject({ v: 1, key: DRAFT.key, draftId, state: 'draft', subject: 'Re: pilot terms', to: [{ name: 'Ana Ruiz', address: 'ana@example.com' }], body: 'Hello Ana,\n\nA polite chase.' })
+    expect(first.version).toBe(draftEditVersion(s.drafts.find(d => d.id === draftId)!))
+    // nothing changed: not rewritten
+    expect((await reportExecutiveDraftStates({ files, root: ROOT, store: s, account: ACCOUNT, finalKeys: finals, now: NOW + 1000 })).written).toEqual([])
+    // the person edits it in PureMail
+    s = { ...s, drafts: s.drafts.map(d => (d.id === draftId ? { ...d, body: 'Hello Ana,\n\nA kinder chase.', updatedAt: '2026-11-01T09:01:00Z' } : d)) }
+    await reportExecutiveDraftStates({ files, root: ROOT, store: s, account: ACCOUNT, finalKeys: finals, now: NOW + 2000 })
+    expect(stateOf(disk)).toMatchObject({ state: 'draft', body: 'Hello Ana,\n\nA kinder chase.' })
+    expect(stateOf(disk)!.version).not.toBe(first.version)
+    // sent from PureMail: the draft goes, the sent copy stays
+    s = sendDraft(s, draftId, '2026-11-01T09:05:00.000Z')
+    expect(s.drafts.some(d => d.id === draftId)).toBe(false)
+    await reportExecutiveDraftStates({ files, root: ROOT, store: s, account: ACCOUNT, finalKeys: finals, now: NOW + 3000 })
+    expect(stateOf(disk)).toMatchObject({ state: 'sent', sentAt: '2026-11-01T09:05:00.000Z', body: 'Hello Ana,\n\nA kinder chase.' })
+    expect(stateOf(disk)!.sentMessageId).toMatch(/^msg_sent_draft_reply_exec-/)
+    expect(finals.has(DRAFT.key)).toBe(true)
+    // final: a later look with the draft gone and no sent copy does not rewrite it
+    const later = await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW + 4000 })
+    expect(later.written).toEqual([])
+    expect(stateOf(disk)!.state).toBe('sent')
+  })
+
+  it('finds a send by the receipt’s sentDraftId after the sync replaced the local copy', async () => {
+    const { disk, files } = memoryFiles(takenFile)
+    const s = { ...store(), messages: [...store().messages, message('imap_msg_Sent_9', 't1', { sentDraftId: draftId, deliveryAccepted: true, receivedAt: '2026-11-01T08:00:00Z' })] }
+    await reportExecutiveDraftStates({ files, root: ROOT, store: s, account: ACCOUNT, now: NOW })
+    expect(stateOf(disk)).toMatchObject({ state: 'sent', sentAt: '2026-11-01T08:00:00Z', sentMessageId: 'imap_msg_Sent_9' })
+  })
+
+  it('says discarded only once the account is loaded, never from a booting store', async () => {
+    const { disk, files } = memoryFiles(takenFile)
+    await reportExecutiveDraftStates({ files, root: ROOT, store: { ...store(), threads: [], messages: [], drafts: [] }, account: ACCOUNT, now: NOW })
+    expect(stateOf(disk)).toBeNull()
+    await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW })
+    expect(stateOf(disk)).toMatchObject({ state: 'discarded', draftId })
+  })
+
+  it('stops reporting drafts taken more than 30 days ago', async () => {
+    const { disk, files } = memoryFiles({ [`${drafts}/taken/${DRAFT.key}.json`]: JSON.stringify({ ...DRAFT, draftId, takenAt: '2026-09-01T09:00:00.000Z' }) })
+    await reportExecutiveDraftStates({ files, root: ROOT, store: withDraft(), account: ACCOUNT, now: NOW })
+    expect(stateOf(disk)).toBeNull()
+  })
+})
+
+describe('the person’s No (drafts/discard)', () => {
+  const drafts = `${MAIL}/drafts`
+  const draftId = 'draft_reply_exec-cos-chase-fu-0003-1'
+  const ask = (patch: Record<string, unknown> = {}) => ({ [`${drafts}/discard/${DRAFT.key}.json`]: JSON.stringify({ v: 1, key: DRAFT.key, draftId, askedAt: '2026-11-01T09:00:00Z', ...patch }) })
+  const withDraft = (): MailStore => {
+    const checked = checkDraftRequest(JSON.stringify(DRAFT), DRAFT.key, share)
+    if (!checked.ok) throw new Error(checked.why)
+    return addExecutiveDraft(store(), buildExecutiveDraft(store(), ACCOUNT, checked.request, { now: '2026-10-27T09:00:00Z' }))
+  }
+
+  it('discards the unsent draft and says so in its state file', async () => {
+    const { disk, files } = memoryFiles(ask())
+    const thrown: string[] = []
+    const result = await takeExecutiveDiscards({ files, root: ROOT, store: withDraft(), instanceId: 'w1', now: 10, discard: id => { thrown.push(id); return { ok: true } } })
+    expect(thrown).toEqual([draftId])
+    expect(result).toEqual({ discarded: [DRAFT.key], sent: [], refused: [] })
+    expect(parseDraftState(disk.get(`${drafts}/state/${DRAFT.key}.json`)!)).toMatchObject({ state: 'discarded', draftId, subject: 'Re: pilot terms' })
+    expect([...disk.keys()].filter(path => path.includes('/discard/'))).toEqual([])
+  })
+
+  it('leaves a draft that was sent already alone', async () => {
+    const { disk, files } = memoryFiles(ask())
+    const sent = sendDraft(withDraft(), draftId, '2026-11-01T08:00:00.000Z')
+    const thrown: string[] = []
+    const result = await takeExecutiveDiscards({ files, root: ROOT, store: sent, instanceId: 'w1', now: 10, discard: id => { thrown.push(id); return { ok: true } } })
+    expect(thrown).toEqual([])
+    expect(result.sent).toEqual([DRAFT.key])
+    expect(disk.has(`${drafts}/state/${DRAFT.key}.json`)).toBe(false)
+  })
+
+  it('refuses a request naming a draft the team did not make', async () => {
+    const { disk, files } = memoryFiles(ask({ draftId: 'draft_compose_someone-else' }))
+    const thrown: string[] = []
+    const result = await takeExecutiveDiscards({ files, root: ROOT, store: withDraft(), instanceId: 'w1', now: 10, discard: id => { thrown.push(id); return { ok: true } } })
+    expect(thrown).toEqual([])
+    expect(result.refused).toEqual([{ key: DRAFT.key, why: 'That draft was not made by the executive team, so it was not discarded.' }])
+    expect(disk.has(`${drafts}/discard/refused/${DRAFT.key}.json`)).toBe(true)
+  })
+
+  it('withdraws a draft not made yet, so it never is', async () => {
+    const { disk, files } = memoryFiles({ ...ask(), [`${drafts}/${DRAFT.key}.json`]: JSON.stringify(DRAFT) })
+    await takeExecutiveDiscards({ files, root: ROOT, store: store(), instanceId: 'w1', now: 10, discard: () => ({ ok: true }) })
+    expect(disk.has(`${drafts}/${DRAFT.key}.json`)).toBe(false)
+    expect(JSON.parse(disk.get(`${drafts}/refused/${DRAFT.key}.json`)!).why).toMatch(/^withdrawn/)
+    expect(parseDraftState(disk.get(`${drafts}/state/${DRAFT.key}.json`)!)?.state).toBe('discarded')
+    const made: string[] = []
+    await takeExecutiveDrafts({ files, root: ROOT, share, instanceId: 'w1', now: 11, save: request => { made.push(request.key); return { draftId: 'x' } } })
+    expect(made).toEqual([])
+  })
+})
+
+describe('opening one draft (purescience://mail/draft/<id>)', () => {
+  const draftId = 'draft_reply_exec-cos-chase-fu-0003-1'
+  const withDraft = (): MailStore => {
+    const checked = checkDraftRequest(JSON.stringify(DRAFT), DRAFT.key, share)
+    if (!checked.ok) throw new Error(checked.why)
+    return addExecutiveDraft(store(), buildExecutiveDraft(store(), ACCOUNT, checked.request, { now: '2026-10-27T09:00:00Z' }))
+  }
+  const link = `purescience://mail/draft/${encodeURIComponent(draftId)}`
+
+  it('opens the draft, in its thread', () => {
+    expect(draftLinkTarget(withDraft(), link)).toMatchObject({ draft: { id: draftId, threadId: 't1' }, threadHasMessages: true })
+  })
+  it('says so when it was sent or is gone, and ignores other links', () => {
+    expect(draftLinkTarget(sendDraft(withDraft(), draftId, '2026-11-01T09:00:00Z'), link)).toEqual({ notice: 'This draft was sent already.' })
+    expect(draftLinkTarget(store(), link)).toEqual({ notice: 'This draft is not in PureMail any more.' })
+    expect(draftLinkTarget(store(), 'purescience://mail/invitation/t1')).toBeNull()
+  })
+})
 
 describe('role-addressed email', () => {
   it('preserves long requests and quoted context, without changing human unread state', () => {

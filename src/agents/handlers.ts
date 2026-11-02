@@ -666,6 +666,46 @@ export function discardDraftHandler(
   })
 }
 
+/**
+ * sendDraft (risk: release): send ONE prepared draft, as it is now, through
+ * the same store-draft send the run loop's Send & next uses. Only a person
+ * sends: by pressing Send in PureMail, or by approving it in the Executive
+ * team, which carries out exactly that send once with a one-time grant. The
+ * runner refuses release tools to agents at every trust level. `version`
+ * (getDraft's token) ties the send to the text the person saw.
+ */
+export function sendDraftHandler(
+  context: MailAgentToolContext,
+  args: Record<string, unknown>,
+): AgentToolHandlerResult {
+  if (!context.sendStoreDraft) throw new AgentMailToolError('Sending is unavailable in this session.')
+  const draftId = requireString(args, 'draftId')
+  const version = optionalString(args, 'version')
+  const draft = context.store.drafts.find(item => item.id === draftId)
+  if (draft?.sentAt || (!draft && context.store.messages.some(message => !message.isDraft && (message.sentDraftId === draftId || message.id.startsWith(`msg_sent_${draftId}_`))))) {
+    throw new AgentMailToolError('This draft was sent already.')
+  }
+  if (!draft) throw new AgentMailToolError('This draft is not in PureMail any more, so nothing was sent.')
+  if (version && version !== draftEditVersion(draft)) {
+    throw new AgentMailToolError('It changed after you approved it, so it was not sent. Look at it again.')
+  }
+  let sentMessageId: string | undefined
+  const result = context.sendStoreDraft(draft, {
+    label: 'Message',
+    onCommitted: id => { sentMessageId = id },
+  })
+  if (!result.ok) throw new AgentMailToolError(result.reason)
+  return ok({
+    draftId,
+    to: draft.to.map(contact => contact.email),
+    subject: draft.subject,
+    status: result.undoSeconds > 0 || !sentMessageId ? 'queued' : 'sent',
+    undoSeconds: result.undoSeconds,
+    ...(sentMessageId ? { sentMessageId } : {}),
+    note: result.undoSeconds > 0 ? `Leaves in ${result.undoSeconds}s unless the person undoes it.` : sentMessageId ? 'Sent.' : 'Sending now.',
+  })
+}
+
 function requireUnsentDraft(
   context: MailAgentToolContext,
   draftId: string,
