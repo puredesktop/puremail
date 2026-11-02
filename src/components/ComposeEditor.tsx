@@ -790,6 +790,10 @@ export function ComposeEditor({
 
   const windowFields = useRef<ComposeSendSnapshot | null>(null)
   windowFields.current = { to: composeTo, cc: composeCc, bcc: composeBcc, subject: composeSubject, body: composeBody, bodyHtml: composeBodyHtml, attachments: composeAttachments }
+  // A confirmed send removes the draft: what it last said is what this window's words are compared with.
+  const lastSeenDraft = useRef<Draft | undefined>(undefined)
+  const seenDraft = composeContext?.draftId ? storeRef.current.drafts.find(item => item.id === composeContext.draftId) : undefined
+  if (seenDraft) lastSeenDraft.current = seenDraft
   const windowThread = useRef<string | undefined>(undefined)
   windowThread.current = composeContext?.threadId
   /**
@@ -966,7 +970,7 @@ export function ComposeEditor({
         subject: composeSubject, body: bodyWithQuote(composeBody, composeQuote),
         bodyHtml: composeBodyHtml ? bodyHtmlWithQuote(composeBodyHtml, composeQuote) : composeQuote ? bodyHtmlWithQuote('', composeQuote) : '',
         attachments: composeAttachments,
-      })
+      }, lastSeenDraft.current)
       if (target === 'nothing') {
         resetCompose()
         setComposeOpen(false)

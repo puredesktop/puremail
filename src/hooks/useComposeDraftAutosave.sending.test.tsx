@@ -239,6 +239,15 @@ describe('where a window\'s words may go when it closes or is put aside', () => 
     expect(composeSaveTarget(withDraft({}), null, fields(TYPED))).toBe('free')
   })
 
+  it('a draft that went is compared on every field with what it last said, the way the shell puts a window aside', () => {
+    const gone = { drafts: [], messages: [{ id: `msg_sent_${draft.id}_1`, threadId: draft.threadId, from: { name: 'Me', email: 'me@example.test' }, to: draft.to, subject: 'Letter', body: APPROVED, attachments: [], receivedAt: '2026-11-02T10:00:00Z', read: true, deliveryAccepted: true, sentDraftId: draft.id }] }
+    expect(composeSaveTarget(gone, draft.id, fields(APPROVED), draft)).toBe('nothing')
+    expect(composeSaveTarget(gone, draft.id, { ...fields(APPROVED), subject: 'Retitled' }, draft)).toBe('apart')
+    expect(composeSaveTarget(gone, draft.id, { ...fields(APPROVED), to: parseComposeRecipients('bo@example.test') }, draft)).toBe('apart')
+    expect(composeSaveTarget(gone, draft.id, { ...fields(APPROVED), attachments: [{ id: 'f', name: 'a.pdf', mimeType: 'application/pdf', size: 1 }] as unknown as Draft['attachments'] }, draft)).toBe('apart')
+    expect(composeSaveTarget({ drafts: [], messages: gone.messages }, draft.id, { ...fields(APPROVED), subject: 'Retitled' })).toBe('apart')
+  })
+
   it('fetched bytes do not count as a change of words', () => {
     const file = { id: 'f', name: 'a.pdf', mimeType: 'application/pdf', size: 1 }
     const stored = { ...draft, attachments: [{ ...file, content: 'bytes' }] } as unknown as Draft

@@ -50,12 +50,14 @@ export function composeWordsDiffer(existing: Draft, fields: ComposeFields): bool
  * draft (`free`), nowhere because the draft already says them (`nothing`), or
  * as a draft of their own because the draft is leaving or has gone (`apart`).
  */
-export function composeSaveTarget(store: Pick<MailStore, 'drafts' | 'messages'>, draftId: string | null | undefined, fields: ComposeFields): 'free' | 'nothing' | 'apart' {
+export function composeSaveTarget(store: Pick<MailStore, 'drafts' | 'messages'>, draftId: string | null | undefined, fields: ComposeFields, lastSeen?: Draft): 'free' | 'nothing' | 'apart' {
   if (!draftId) return 'free'
   if (!draftEditBlock(store, draftId) && draftDelivery(store, draftId).state !== 'submitted') return 'free'
   const draft = store.drafts.find(item => item.id === draftId)
-  if (draft) return composeWordsDiffer(draft, fields) ? 'apart' : 'nothing'
-  return confirmedSentCopy(store, draftId)?.body === fields.body ? 'nothing' : 'apart'
+  // Gone: what it last said is what went. Every field counts, not only the body;
+  // with neither to compare against, keeping the words apart is the safe side.
+  const went = draft ?? (lastSeen?.id === draftId ? lastSeen : (confirmedSentCopy(store, draftId) as unknown as Draft | undefined))
+  return went && !composeWordsDiffer(went, fields) ? 'nothing' : 'apart'
 }
 
 /**
@@ -82,7 +84,7 @@ export function useComposeDraftAutosave(input: {
   sentAway?: boolean
   onLocked?: (reason: string) => void
   onKeptSeparately?: () => void
-}): void {
+}): RefObject<Draft | undefined> {
   const {
     active,
     pending,
@@ -220,4 +222,5 @@ export function useComposeDraftAutosave(input: {
     editBlock,
     sentAway,
   ])
+  return lastDraft
 }

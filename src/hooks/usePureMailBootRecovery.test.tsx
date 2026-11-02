@@ -64,6 +64,7 @@ it('recovers interrupted sends only after a successful load, and reopening sends
     store.drafts = [draft, ambiguous] as unknown as typeof store.drafts
     read.mockResolvedValueOnce({ store, migratedFromLocalStorage: false })
     await act(async () => api.rebootMail())
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
     const booted = api.boot!.store
     expect(booted.drafts.find(item => item.id === 'held')).toMatchObject({ sendState: 'failed', sendError: 'Mail closed before it left. Nothing was sent.' })
     expect(booted.drafts.find(item => item.id === 'held')!.sendAttempt).toBeUndefined()
@@ -71,6 +72,7 @@ it('recovers interrupted sends only after a successful load, and reopening sends
     expect(booted.drafts.find(item => item.id === 'gone')!.sendAttempt).toBeUndefined()
     read.mockResolvedValueOnce({ store: booted, migratedFromLocalStorage: false })
     await act(async () => api.rebootMail())
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
     expect(api.boot!.store.drafts).toEqual(booted.drafts)
     for (const send of sends) expect(send).not.toHaveBeenCalled()
   } finally {

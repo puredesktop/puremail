@@ -323,8 +323,9 @@ import {
   settleUndoneHold,
   replaceRun,
   startRun,
-  recoverInterruptedSends,
 } from '../lib/mailRuns'
+import { answerSendOwnership, settleAbandonedSends } from '../lib/mailSendOwners'
+import { readPersistedMailStore } from '../lib/mailPersistence'
 
 type MailRailFilter = 'attachments'
 
@@ -1179,7 +1180,7 @@ export function PureMailShell({
   const { persistFailure, flush: flushStorePersistence, flushForSend } =
     useMailStorePersistence(store)
 
-  useComposeDraftAutosave({
+  const composeLastDraft = useComposeDraftAutosave({
     active: composeHoldsDraft(composeMode), pending: pendingSend?.target === 'compose',
     session: composeSession, accountId: selectedAccount?.id, signature: signatureValue,
     context: composeContext, quote: composeQuote,
@@ -1861,7 +1862,7 @@ export function PureMailShell({
   const stashOpenCompose = (): void => {
     const now = new Date().toISOString()
     if (composeContext) {
-      const target = composeSaveTarget(storeRef.current, composeContext.draftId, { to: parseComposeRecipients(composeTo), cc: parseComposeRecipients(composeCc), bcc: parseComposeRecipients(composeBcc), subject: composeSubject, body: bodyWithQuote(composeBody, composeQuote), bodyHtml: composeBodyHtml ? bodyHtmlWithQuote(composeBodyHtml, composeQuote) : composeQuote ? bodyHtmlWithQuote('', composeQuote) : '', attachments: composeAttachments })
+      const target = composeSaveTarget(storeRef.current, composeContext.draftId, { to: parseComposeRecipients(composeTo), cc: parseComposeRecipients(composeCc), bcc: parseComposeRecipients(composeBcc), subject: composeSubject, body: bodyWithQuote(composeBody, composeQuote), bodyHtml: composeBodyHtml ? bodyHtmlWithQuote(composeBodyHtml, composeQuote) : composeQuote ? bodyHtmlWithQuote('', composeQuote) : '', attachments: composeAttachments }, composeLastDraft.current)
       if (target === 'nothing') return
       // A draft on its way, unconfirmed or gone is never rewritten; later words become their own draft.
       const context = target === 'apart' ? { ...composeContext, draftId: null } : composeContext
@@ -3493,8 +3494,10 @@ export function PureMailShell({
 
   // Boot catch-up, then a timer. Each pass first settles attempts no window can
   // still be running, so a schedule never fires over an abandoned one.
+  const sendingHere = (draftId: string): boolean => Boolean(holdForDraft(draftId) || isDraftSending(draftId))
+  useEffect(() => answerSendOwnership(draftId => sendingHere(draftId)), [])
   useScheduledSendTimer(() => {
-    setStore(current => recoverInterruptedSends(current, undefined, { scope: draftId => !holdForDraft(draftId) && !isDraftSending(draftId) }))
+    void settleAbandonedSends({ read: () => storeRef.current, update: setStore, mine: sendingHere, readSaved: async () => (await readPersistedMailStore()).store })
     return storeRef.current
   }, id => dispatchScheduledSendRef.current(id))
 

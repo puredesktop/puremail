@@ -8,7 +8,7 @@ import {
   parsePersistedMailStoreValue,
   persistableMailStore,
 } from './mailStoreData'
-import type { Draft, MailRun, MailStore, MailMessage } from '../types'
+import type { Draft, MailRun, MailStore, MailMessage, ScheduledSend } from '../types'
 
 export const MAIL_APP_SLUG = 'mail'
 
@@ -40,6 +40,12 @@ interface PersistedDraftsFile {
    * at. Absent in files written before runs existed.
    */
   runs?: MailRun[]
+  /**
+   * With the drafts they would send, in one write: a recovered or undone draft
+   * and its stopped schedule cannot come apart if the cache write fails. Absent
+   * in files written before this; the cache's copy is used then.
+   */
+  scheduledSends?: ScheduledSend[]
   /** Delivery confirmations survive a failed mailbox-cache write. */
   sentReceipts?: MailMessage[]
   recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'>
@@ -47,7 +53,7 @@ interface PersistedDraftsFile {
 
 function parseDraftsFile(
   value: unknown,
-): { drafts: Draft[]; runs: MailRun[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null {
+): { drafts: Draft[]; runs: MailRun[] | null; scheduledSends: ScheduledSend[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null {
   if (!value || typeof value !== 'object') return null
   const file = value as PersistedDraftsFile
   const drafts = file.drafts
@@ -63,6 +69,7 @@ function parseDraftsFile(
       ? { ...draft, sendState: 'failed' as const, sendError: `Message not sent. An attachment could not be downloaded from its old Drafts copy. Open the draft and reattach the missing file. (${draft.sendError})` }
       : draft),
     runs: Array.isArray(file.runs) ? file.runs : null,
+    scheduledSends: Array.isArray(file.scheduledSends) ? file.scheduledSends : null,
     recovery: file.recovery && Array.isArray(file.recovery.accounts) && Array.isArray(file.recovery.mailboxes) && Array.isArray(file.recovery.threads) ? file.recovery : undefined,
     sentReceipts: Array.isArray(file.sentReceipts) ? file.sentReceipts.filter(message => message && typeof message.id === 'string' && message.deliveryAccepted === true) : [],
   }
@@ -71,7 +78,7 @@ function parseDraftsFile(
 /** Drafts (and runs, when the drafts file carries them) over the cache. */
 function withDraftsFile(
   store: MailStore,
-  draftsFile: { drafts: Draft[]; runs: MailRun[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null,
+  draftsFile: { drafts: Draft[]; runs: MailRun[] | null; scheduledSends: ScheduledSend[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null,
 ): MailStore {
   if (!draftsFile) return store
   const receipts = draftsFile.sentReceipts
@@ -98,6 +105,7 @@ function withDraftsFile(
     ],
   }
   if (draftsFile.runs) merged.runs = draftsFile.runs
+  if (draftsFile.scheduledSends) merged.scheduledSends = draftsFile.scheduledSends
   // The drafts file is raw JSON; run entries need the same tolerant pass
   // the cache gets.
   return draftsFile.runs ? parsePersistedMailStoreValue(merged) ?? merged : merged
@@ -138,7 +146,7 @@ export async function readPersistedMailStore(): Promise<{
   migratedFromLocalStorage: boolean
 }> {
   let cached: MailStore | null = null
-  let drafts: { drafts: Draft[]; runs: MailRun[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null = null
+  let drafts: { drafts: Draft[]; runs: MailRun[] | null; scheduledSends: ScheduledSend[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null = null
 
   const [storeFile, draftsFile] = await Promise.allSettled([
     readPlatformStorageJson({
@@ -212,6 +220,7 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
       value: {
         drafts: persistable.drafts,
         runs: persistable.runs ?? [],
+        scheduledSends: persistable.scheduledSends ?? [],
         recovery: { accounts: persistable.accounts, mailboxes: persistable.mailboxes, threads: persistable.threads.filter(thread => recoveryThreadIds.has(thread.id)) },
         sentReceipts: sentReceipts.map(message => ({ ...message, attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) })),
       },
@@ -227,7 +236,7 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
       fileName: MAIL_STORE_FILE,
       // Drafts live in their own file; keeping a second copy here would let
       // the two disagree after a partial write.
-      value: { ...persistable, drafts: [], runs: [] },
+      value: { ...persistable, drafts: [], runs: [], scheduledSends: [] },
     })
     cacheWritten = true
   } catch (cause) {

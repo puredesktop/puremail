@@ -92,12 +92,15 @@ describe('mail persistence', () => {
       drafts: [draft('d1', 'Approved, shipping Friday.')],
       // Send runs travel with the drafts they point at.
       runs: [],
+      // So do the schedules that would send them: one write, so they cannot disagree.
+      scheduledSends: [],
       sentReceipts: [],
       recovery: { accounts: storeWith([]).accounts, mailboxes: storeWith([]).mailboxes, threads: storeWith([]).threads },
     })
     // The cache file must not carry a second copy: two copies can disagree.
     expect((files.get(MAIL_STORE_FILE) as MailStore).drafts).toEqual([])
     expect((files.get(MAIL_STORE_FILE) as MailStore).runs).toEqual([])
+    expect((files.get(MAIL_STORE_FILE) as MailStore).scheduledSends).toEqual([])
     expect((files.get(MAIL_STORE_FILE) as MailStore).threads).toHaveLength(1)
   })
 

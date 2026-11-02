@@ -36,7 +36,7 @@ async function open(options: { offline?: boolean } = {}) {
     const props = {
       store: storeRef.current, setStore, storeRef, activeProvider: 'gmail', mailProviderRef: { current: options.offline ? undefined : provider },
       selectedAccount: { id: 'account', provider: 'gmail', name: 'Me', email: 'me@example.test', syncState: 'online' },
-      composeTo: rest.to ?? 'ana@example.test', composeCc: '', composeBcc: '', composeCcBccOpen: false, composeSubject: rest.subject ?? 'Letter', composeBody, composeBodyHtml: '', composeAttachments: rest.attachments ?? ATTACHED, composeDropActive: false, variant: 'docked',
+      composeTo: rest.to ?? 'Ana <ana@example.test>', composeCc: '', composeBcc: '', composeCcBccOpen: false, composeSubject: rest.subject ?? 'Letter', composeBody, composeBodyHtml: '', composeAttachments: rest.attachments ?? ATTACHED, composeDropActive: false, variant: 'docked',
       setComposeTo: noop, setComposeCc: noop, setComposeBcc: noop, setComposeCcBccOpen: noop, setComposeSubject: noop, setComposeBody: noop, setComposeBodyHtml: noop, setComposeAttachments: noop, setComposeDropActive: noop, setComposeOpen,
       composeContext: { threadId: rest.threadId ?? made.threadId, messageId: null, kind: 'draft', draftId: made.draftId }, composeQuote: null, setComposeQuote: noop, switchComposeReplyKind: noop, onResetComposeContext: noop, discardContextDraft: noop,
       composeToRef: { current: null }, pendingSend: hold.pendingSend, schedulePendingSend: hold.schedulePendingSend, undoPendingSend: hold.undoPendingSend, sendDraftThroughProvider: deliver, markDraftSending: hold.markDraftSending, setCommandNotice: noop,
@@ -53,6 +53,7 @@ async function open(options: { offline?: boolean } = {}) {
     clear: () => act(() => setWindow({ body: '', subject: '', to: '', attachments: [] })),
     other: () => act(() => setWindow({ body: 'Words for someone else', threadId: 'another-thread' })),
     attachmentsFetched: () => act(() => setWindow({ attachments: [] })),
+    edit: (next: { subject?: string; to?: string; attachments?: unknown[] }) => act(() => setWindow(next)),
     close: () => act(() => root.unmount()),
     press: async (selector: string) => {
       const button = host.querySelector<HTMLButtonElement>(selector)
@@ -169,4 +170,24 @@ it('closing a window on a draft that already went saves no copy of it; words typ
   await typed.press('button[aria-label="Close"]')
   expect(typed.storeRef.current.drafts.map(draft => draft.body)).toEqual(['Text, and more'])
   typed.close()
+})
+
+it.each([
+  ['subject', { subject: 'Letter, retitled' }],
+  ['recipient', { to: 'bo@example.test' }],
+  ['attachment', { attachments: [{ id: 'f1', name: 'later.pdf', mimeType: 'application/pdf', size: 1 }] }],
+])('a %s changed after it went is kept when the window closes before autosave', async (_field, next) => {
+  const w = await open()
+  const draft = w.storeRef.current.drafts[0]!
+  w.storeRef.current = { ...w.storeRef.current, drafts: [], messages: [...w.storeRef.current.messages, { id: `msg_sent_${draft.id}_1`, threadId: draft.threadId, from: { name: 'Me', email: 'me@example.test' }, to: draft.to, subject: draft.subject, body: draft.body, attachments: [], receivedAt: '2026-11-02T10:00:00Z', read: true, deliveryAccepted: true, sentDraftId: draft.id }] }
+  w.edit(next)
+  await w.press('button[aria-label="Close"]')
+  expect(w.storeRef.current.drafts).toHaveLength(1)
+  const kept = w.storeRef.current.drafts[0]!
+  expect(kept.id).not.toBe(draft.id)
+  expect(kept.sendAttempt).toBeUndefined()
+  if ('subject' in next) expect(kept.subject).toBe(next.subject)
+  if ('to' in next) expect(kept.to.map(contact => contact.email)).toEqual([next.to])
+  if ('attachments' in next) expect(kept.attachments.map(file => file.name)).toEqual(['later.pdf'])
+  w.close()
 })

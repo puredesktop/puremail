@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
-import { act, useRef } from 'react'
+import { act, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMailDeliveryController, MailSendError } from '../lib/mailDelivery'
 import { LOST_HOLD_REASON, draftDelivery } from '../lib/mailDeliveryStatus'
 import { readPersistedMailStore } from '../lib/mailPersistence'
 import { createComposedMessageDraft, emptyMailStore, persistableMailStore } from '../lib/mailModel'
-import { recoverInterruptedSends, settleUndoneHold } from '../lib/mailRuns'
+import { settleUndoneHold } from '../lib/mailRuns'
+import { answerSendOwnership, settleAbandonedSends } from '../lib/mailSendOwners'
 import { scheduleSend } from '../lib/mailScheduledSend'
 import { createStoreDraftSender } from '../lib/mailSendRelease'
 import type { Draft, DraftSendAttempt, MailMessage, MailProvider, MailStore, ScheduledSend } from '../types'
@@ -20,6 +21,19 @@ vi.mock('../bridge/platformBridge', async importOriginal => ({
   fetchGoogleCredentialStatus: vi.fn(async () => ({ connected: true, email: 'me@example.test' })),
 }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+/** Windows of one origin hearing each other, as BroadcastChannel delivers: to every other object of that name. */
+class FakeChannel {
+  static open = new Set<FakeChannel>()
+  onmessage: ((event: { data: unknown }) => void) | null = null
+  constructor(readonly name: string) { FakeChannel.open.add(this) }
+  postMessage(data: unknown): void {
+    for (const other of FakeChannel.open) if (other !== this && other.name === this.name) queueMicrotask(() => other.onmessage?.({ data }))
+  }
+  close(): void { FakeChannel.open.delete(this) }
+}
+vi.stubGlobal('BroadcastChannel', FakeChannel)
+let onDisk: MailStore | null = null
 
 const NOW = '2026-11-02T12:00:00.000Z'
 const LONG_AGO = '2026-11-02T10:00:00.000Z'
@@ -36,7 +50,8 @@ function saved(patch: Partial<Draft> & { sendAttempt?: DraftSendAttempt } = {}, 
 }
 
 /** The real boot, recovery, hold, sender, delivery controller, dispatcher and timer, wired as the shell wires them. */
-function reopen(from: MailStore | Error) {
+function reopen(from: MailStore | Error, options: { prepare?: (draft: Draft) => Promise<Draft> } = {}) {
+  if (!(from instanceof Error)) onDisk = from
   if (from instanceof Error) read.mockRejectedValueOnce(from)
   else read.mockResolvedValueOnce({ store: JSON.parse(JSON.stringify(persistableMailStore(from))), migratedFromLocalStorage: false })
   let store: MailStore | null = null
@@ -47,7 +62,7 @@ function reopen(from: MailStore | Error) {
   function Desk({ initial }: { initial: MailStore }) {
     if (!store) store = initial
     hold = usePendingSend({ undoSendDelaySeconds: store.settings.undoSendDelaySeconds, setCommandNotice: () => {}, onUndone: pending => { if (pending.draftId) update(current => settleUndoneHold(current, pending.draftId!, pending.id)) } })
-    const deliver = useRef(createMailDeliveryController({ read: () => store!, update, persist: async () => {}, prepare: async draft => ({ ...draft }), release: () => {}, online: () => true })).current
+    const deliver = useRef(createMailDeliveryController({ read: () => store!, update, persist: async () => {}, prepare: options.prepare ?? (async draft => ({ ...draft })), release: () => {}, online: () => true })).current
     sender = createStoreDraftSender({
       read: () => store!, update, provider: () => provider, localAccount: () => false, canCompose: () => true, online: () => true, home: () => 'Fake', undoSeconds: () => store!.settings.undoSendDelaySeconds ?? 10,
       schedule: hold.schedulePendingSend, holdForDraft: hold.holdForDraft, isDraftSending: hold.isDraftSending, markDraftSending: hold.markDraftSending,
@@ -58,8 +73,10 @@ function reopen(from: MailStore | Error) {
       holdForDraft: hold.holdForDraft, isDraftSending: hold.isDraftSending, markDraftSending: hold.markDraftSending,
       deliver: (p, draft) => deliver(p, draft), reportFailure: () => {}, notice: () => {}, record: () => {},
     })
+    const mine = (id: string) => Boolean(hold.holdForDraft(id) || hold.isDraftSending(id))
+    useEffect(() => answerSendOwnership(id => mine(id)), [])
     useScheduledSendTimer(() => {
-      update(current => recoverInterruptedSends(current, undefined, { scope: id => !hold.holdForDraft(id) && !hold.isDraftSending(id) }))
+      void settleAbandonedSends({ read: () => store!, update, mine, readSaved: async () => onDisk })
       return store!
     }, dispatch)
     return null
@@ -71,7 +88,8 @@ function reopen(from: MailStore | Error) {
   const root = createRoot(document.createElement('div'))
   return {
     start: async () => {
-      await act(async () => { root.render(<App />); await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => root.render(<App />))
+      await pass(400)
     },
     store: () => store,
     bootError: () => booted.bootError,
@@ -82,7 +100,7 @@ function reopen(from: MailStore | Error) {
   }
 }
 
-const open = async (from: MailStore | Error) => { const desk = reopen(from); await desk.start(); return desk }
+const open = async (from: MailStore | Error, options: { prepare?: (draft: Draft) => Promise<Draft> } = {}) => { const desk = reopen(from, options); await desk.start(); return desk }
 
 beforeEach(() => {
   localStorage.clear()
@@ -165,7 +183,7 @@ describe('reopening Mail with a schedule on an interrupted draft', () => {
     await pass(30_000)
     expect(draftDelivery(desk.store()!, draftId).state).toBe('held')
     expect(send).not.toHaveBeenCalled()
-    await pass(60_000)
+    await pass(61_000)
     expect(draftDelivery(desk.store()!, draftId).state).toBe('not_submitted')
     expect(desk.entry(entryId)!.status).toBe('failed')
     await pass(600_000)
@@ -182,6 +200,53 @@ describe('reopening Mail with a schedule on an interrupted draft', () => {
     expect(send).toHaveBeenCalledTimes(1)
     expect(desk.entry(entryId)!.status).toBe('sent')
     expect(draftDelivery(desk.store()!, draftId).state).toBe('submitted')
+    desk.close()
+  })
+})
+
+describe('two Mail windows open on one store', () => {
+  it('a preparation outlasting any age limit is not called dead by the other window, which then reports how it really ended', async () => {
+    const { store, draftId } = saved({}, new Date(Date.parse(NOW) + 3_600_000).toISOString())
+    let ready!: () => void
+    const first = await open(store, { prepare: draft => new Promise(resolve => { ready = () => resolve({ ...draft }) }) })
+    first.approve(draftId)
+    await pass(10_000)
+    expect(first.store()!.drafts[0]!.sendAttempt?.phase).toBe('preparing')
+    await pass(300_000)
+    const second = await open(first.store()!)
+    expect(draftDelivery(second.store()!, draftId).state).toBe('submitting')
+    await pass(120_000)
+    expect(draftDelivery(second.store()!, draftId).state).toBe('submitting')
+    expect(second.approve(draftId)).toMatchObject({ ok: true, already: 'submitting' })
+    expect(send).not.toHaveBeenCalled()
+    await act(async () => { ready(); await vi.advanceTimersByTimeAsync(0) })
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(draftDelivery(first.store()!, draftId).state).toBe('submitted')
+    onDisk = first.store()
+    await pass(120_000)
+    expect(draftDelivery(second.store()!, draftId).state).toBe('submitted')
+    expect(send).toHaveBeenCalledTimes(1)
+    first.close()
+    second.close()
+  })
+
+  it('a window that says nothing and left no record of the outcome reads as unconfirmed, never as nothing sent', async () => {
+    const { store, draftId } = saved({ sendAttempt: { id: 'h1', phase: 'held', approved: 'x', at: LONG_AGO } }, new Date(Date.parse(NOW) + 3_600_000).toISOString())
+    const desk = reopen({ ...store, drafts: store.drafts.map(draft => ({ ...draft, sendAttempt: { ...draft.sendAttempt!, at: new Date(Date.parse(NOW) - 5000).toISOString() } })) })
+    await desk.start()
+    onDisk = { ...store, drafts: [] }
+    await pass(120_000)
+    expect(draftDelivery(desk.store()!, draftId).state).toBe('unconfirmed')
+    expect(send).not.toHaveBeenCalled()
+    desk.close()
+  })
+
+  it('a failed read of the saved record settles nothing', async () => {
+    const { store, draftId } = saved({ sendAttempt: { id: 'h1', phase: 'held', approved: 'x', at: new Date(Date.parse(NOW) - 5000).toISOString() } }, new Date(Date.parse(NOW) + 3_600_000).toISOString())
+    const desk = await open(store)
+    onDisk = null
+    await pass(120_000)
+    expect(draftDelivery(desk.store()!, draftId).state).toBe('held')
     desk.close()
   })
 })
