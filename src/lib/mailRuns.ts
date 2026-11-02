@@ -11,6 +11,7 @@ import {
   undoDraftHold,
   type DraftDelivery,
 } from './mailDeliveryStatus'
+import { cancelScheduledSend } from './mailScheduledSend'
 import { stripHtmlToText } from './mailTextUtils'
 import type {
   Attachment,
@@ -1291,31 +1292,53 @@ export function runItemDelivery(store: Pick<MailStore, 'drafts' | 'messages'>, i
   return delivery
 }
 
+/** How long past an attempt's own hold it may still be running in another Mail window (browser tabs share one store). */
+export const SEND_ATTEMPT_LIVE_GRACE_MS = 60_000
+
+function attemptMayBeLive(attempt: NonNullable<Draft['sendAttempt']>, store: MailStore, now: string): boolean {
+  const at = Date.parse(attempt.at)
+  if (!Number.isFinite(at)) return false
+  const hold = (store.settings?.undoSendDelaySeconds ?? 10) * 1000
+  return Math.abs(Date.parse(now) - at) < hold + SEND_ATTEMPT_LIVE_GRACE_MS
+}
+
 /**
- * After a restart, once saved state has loaded: nothing from before is still
- * running, so settle what was left in the air from the evidence alone. A hold
- * never reached the service (the marker is saved before any submission), so it
- * is known not sent. A marked attempt may have gone, and an older record that
- * cannot say stays unconfirmed. A confirmed record is kept. Sends nothing, and
- * running it again changes nothing.
+ * After a restart, once saved state has loaded: settle what was left in the air
+ * from the evidence alone. Only a hold or preparation recorded under its own
+ * attempt, or an explicit not-sent record of that attempt, proves nothing left
+ * (the marker is saved before any submission). Everything else stays
+ * unconfirmed, on the draft as well as the item, so every view agrees. A
+ * confirmed record is kept. A schedule on an interrupted draft does not fire:
+ * another attempt is the person's new decision. An attempt young enough to be
+ * running in another Mail window is left alone until it cannot be. `scope`
+ * limits the pass to drafts this window is not itself sending. Sends nothing,
+ * and running it again changes nothing.
  */
-export function recoverInterruptedSends(store: MailStore, now = new Date().toISOString()): MailStore {
+export function recoverInterruptedSends(store: MailStore, now = new Date().toISOString(), options: { scope?: (draftId: string) => boolean } = {}): MailStore {
+  const inScope = options.scope ?? (() => true)
   let drafts = store.drafts
   const patchDrafts = (draftId: string, patch: (draft: Draft) => Draft): void => {
     drafts = drafts.map(draft => (draft.id === draftId ? patch(draft) : draft))
   }
+  const noEvidence = (draftId: string): void => patchDrafts(draftId, entry => (entry.sendState === 'uncertain' ? entry : { ...entry, sendState: 'uncertain', sendError: NO_EVIDENCE_REASON }))
+  const live = new Set<string>()
+  const interrupted = new Set<string>()
   for (const draft of store.drafts) {
-    if (!draft.sendAttempt) continue
-    const unconfirmed = draft.sendAttempt.phase === 'submitting' || draft.sendState === 'uncertain'
-    patchDrafts(draft.id, item => ({
-      ...item,
-      sendAttempt: undefined,
-      sendState: unconfirmed ? 'uncertain' : 'failed',
-      sendError: unconfirmed ? LOST_SUBMISSION_REASON : LOST_HOLD_REASON,
-    }))
+    const attempt = draft.sendAttempt
+    if (!attempt || !inScope(draft.id)) continue
+    if (attemptMayBeLive(attempt, store, now)) {
+      live.add(draft.id)
+      continue
+    }
+    interrupted.add(draft.id)
+    const notLeft = (attempt.phase === 'held' || attempt.phase === 'preparing') && Boolean(attempt.id) && draft.sendState !== 'uncertain'
+    patchDrafts(draft.id, item => (notLeft
+      ? { ...item, sendAttempt: undefined, sendState: 'failed', sendError: LOST_HOLD_REASON, sendSettledAttemptId: attempt.id }
+      : { ...item, sendAttempt: undefined, sendState: 'uncertain', sendError: attempt.phase === 'submitting' || draft.sendState === 'uncertain' ? LOST_SUBMISSION_REASON : NO_EVIDENCE_REASON }))
   }
   const view = (): Pick<MailStore, 'drafts' | 'messages'> => ({ drafts, messages: store.messages })
   const settleItem = (item: MailRunItem): MailRunItem => {
+    if (!inScope(item.draftId) || live.has(item.draftId)) return item
     if (item.status === 'sent' && item.sendAttemptId === undefined && draftDelivery(view(), item.draftId).state === 'submitted' && !item.pendingSendId) return item
     const draft = drafts.find(entry => entry.id === item.draftId)
     const delivery = draftDelivery(view(), item.draftId)
@@ -1324,37 +1347,60 @@ export function recoverInterruptedSends(store: MailStore, now = new Date().toISO
       return { ...item, status: 'sent', sentAt: item.sentAt ?? delivery.at, sentMessageId: sentMessageForRunItem(view(), item)?.id ?? delivery.sentMessageId ?? item.sentMessageId, pendingSendId: undefined, sendAttemptId: undefined, skipReason: undefined }
     }
     if (item.status === 'sending') {
-      // Our own hold or attempt: the draft's marker settles it. No draft left means no evidence either way.
+      // Our own hold or attempt: the draft's record settles it. No draft left means no evidence either way.
       if (!draft) return { ...item, status: 'unconfirmed', pendingSendId: undefined, skipReason: NO_EVIDENCE_REASON }
       if (delivery.state === 'unconfirmed') return { ...item, status: 'unconfirmed', pendingSendId: undefined, skipReason: delivery.reason }
-      return { ...item, status: 'pending', pendingSendId: undefined, sendAttemptId: undefined, sentAt: undefined, skipReason: LOST_HOLD_REASON }
+      // Known not sent only when the record is this attempt's. A missing or mismatched one does not show that nothing left.
+      if (delivery.state === 'not_submitted' && item.sendAttemptId && draft.sendSettledAttemptId === item.sendAttemptId) {
+        return { ...item, status: 'pending', pendingSendId: undefined, sendAttemptId: undefined, sentAt: undefined, skipReason: delivery.reason }
+      }
+      noEvidence(draft.id)
+      interrupted.add(draft.id)
+      return { ...item, status: 'unconfirmed', pendingSendId: undefined, skipReason: NO_EVIDENCE_REASON }
     }
     if (item.status !== 'sent') return item
     // `sent` here is from before holds and attempts were recorded. A reported
     // id with no draft left stands; anything else cannot show that it left.
     if (!draft && item.sentMessageId) return item.pendingSendId ? { ...item, pendingSendId: undefined } : item
-    if (draft && draft.sendState !== 'uncertain') {
-      patchDrafts(draft.id, entry => ({ ...entry, sendState: 'uncertain', sendError: NO_EVIDENCE_REASON }))
-    }
+    if (draft && draft.sendState !== 'uncertain') noEvidence(draft.id)
     return { ...item, status: 'unconfirmed', pendingSendId: undefined, skipReason: draft?.sendState === 'uncertain' ? draft.sendError ?? NO_EVIDENCE_REASON : NO_EVIDENCE_REASON }
   }
   let runsChanged = false
-  const runs = (store.runs ?? []).map(run => {
+  const settledRuns = (store.runs ?? []).map(run => {
     const items = run.items.map(settleItem)
-    const settled = items.some((item, index) => item !== run.items[index]) ? { ...run, items, updatedAt: now } : run
-    const reconciled = reconcileRun(view(), settled)
-    if (reconciled !== run) runsChanged = true
+    return items.some((item, index) => item !== run.items[index]) ? { ...run, items, updatedAt: now } : run
+  })
+  let schedulesChanged = false
+  const scheduledSends = (store.scheduledSends ?? []).map(entry => {
+    if (!inScope(entry.draftId) || live.has(entry.draftId)) return entry
+    // A dispatch cut off mid-way is an interrupted send like any other.
+    if (entry.status === 'sending' && drafts.some(draft => draft.id === entry.draftId) && draftDelivery(view(), entry.draftId).state === 'none') {
+      noEvidence(entry.draftId)
+      interrupted.add(entry.draftId)
+    }
+    if (entry.status !== 'sending' && !(entry.status === 'scheduled' && interrupted.has(entry.draftId))) return entry
+    const delivery = draftDelivery(view(), entry.draftId)
+    schedulesChanged = true
+    if (delivery.state === 'submitted') return { ...entry, status: 'sent' as const }
+    if (delivery.state === 'not_submitted') return { ...entry, status: 'failed' as const, lastError: delivery.reason }
+    return { ...entry, status: 'unconfirmed' as const, lastError: delivery.reason ?? NO_EVIDENCE_REASON }
+  })
+  // Last, so each run reads what the schedules above may have added to the record.
+  const runs = settledRuns.map((run, index) => {
+    const reconciled = reconcileRun(view(), run)
+    if (reconciled !== store.runs![index]) runsChanged = true
     return reconciled
   })
-  if (drafts === store.drafts && !runsChanged) return store
-  return { ...store, drafts, ...(runsChanged ? { runs } : {}) }
+  if (drafts === store.drafts && !runsChanged && !schedulesChanged) return store
+  return { ...store, drafts, ...(runsChanged ? { runs } : {}), ...(schedulesChanged ? { scheduledSends } : {}) }
 }
 
 /** The person undid a hold: the draft and any run item on that attempt go back to not sent. */
 export function settleUndoneHold(store: MailStore, draftId: string, attemptId: string, now = new Date().toISOString()): MailStore {
-  const undone = undoDraftHold(store, draftId, attemptId, now)
+  // Undo is the person's decision about this draft: an old schedule must not send it anyway.
+  const undone = (store.scheduledSends ?? []).filter(entry => entry.draftId === draftId).reduce((next, entry) => cancelScheduledSend(next, entry.id), undoDraftHold(store, draftId, attemptId, now))
   if (!store.runs?.some(run => run.items.some(item => item.draftId === draftId && item.sendAttemptId === attemptId))) return undone
-  return { ...undone, runs: store.runs.map(run => markRunItemUnsent(run, draftId, undefined, now, attemptId)) }
+  return { ...undone, runs: (undone.runs ?? []).map(run => markRunItemUnsent(run, draftId, undefined, now, attemptId)) }
 }
 
 // ── Cursor / progress ──────────────────────────────────────────────────
@@ -1483,7 +1529,12 @@ export function markRunItemSubmitting(run: MailRun, draftId: string, attemptId: 
   return withItem(run, draftId, item => (item.sendAttemptId === attemptId && item.status === 'sending' ? { ...item, pendingSendId: undefined } : item), now)
 }
 
-/** The service confirmed this attempt: record its id, clear the hold. */
+/**
+ * This attempt's callback says the service took it. A callback with no standing
+ * on the item's current attempt (undone, newer, settled) changes nothing and
+ * cannot invent a send: a genuine receipt lives on the sent copy itself, which
+ * reconcileRun reads as the authoritative record.
+ */
 export function markRunItemCommitted(
   run: MailRun,
   draftId: string,
@@ -1494,7 +1545,7 @@ export function markRunItemCommitted(
   const next = withItem(
     run,
     draftId,
-    item => attemptId && item.sendAttemptId && item.sendAttemptId !== attemptId ? item : ({
+    item => attemptId && item.sendAttemptId !== attemptId ? item : ({
       ...item,
       status: 'sent',
       sentAt: item.sentAt ?? now,

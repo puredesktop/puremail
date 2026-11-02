@@ -1,11 +1,26 @@
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
-import { CHANGED_REASON, CONFLICT_REASON, UNCONFIRMED_REASON, settleDraftNotSent } from './mailDeliveryStatus'
+import { CHANGED_REASON, CONFLICT_REASON, UNCONFIRMED_REASON, settleDraftNotSent, stopDraftSchedules } from './mailDeliveryStatus'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
 import { finalizeRunDraftForSend } from './mailRuns'
 
 export class MailSendError extends Error {
   constructor(message: string, readonly outcome: 'not_sent' | 'uncertain') { super(message) }
+}
+
+/**
+ * A provider receipt is authoritative for the attempt it answers. If the draft
+ * has since moved on (a newer attempt, different words), that later work is not
+ * what went: the copy records what was approved, and the later work stays an
+ * unsent draft of its own for the person's own decision.
+ */
+export function settleReceipt(store: MailStore, sent: Draft, attemptId: string, approved: string, options: Parameters<typeof sendDraft>[3]): MailStore {
+  const current = store.drafts.find(item => item.id === sent.id)
+  const movedOn = current && ((current.sendAttempt && current.sendAttempt.id !== attemptId) || draftSendFingerprint(finalizeRunDraftForSend(current)) !== approved)
+  if (!current || !movedOn) return sendDraft(store, sent.id, undefined, options)
+  const later: Draft = { ...current, id: `draft_compose_${crypto.randomUUID()}`, sendAttempt: undefined, sendState: undefined, sendError: undefined, sendUndoneAt: undefined, sendSettledAttemptId: undefined, sendMessageId: undefined, providerDraftId: undefined, providerDraftMessageId: undefined, providerDraftMessageIdHeader: undefined, syncState: 'pending' }
+  const done = sendDraft({ ...store, drafts: store.drafts.map(item => (item.id === sent.id ? { ...sent, sendAttempt: undefined } : item)) }, sent.id, undefined, options)
+  return { ...done, drafts: [...done.drafts, later] }
 }
 
 /** One submission per draft. Persist uncertainty before contacting the server. */
@@ -60,9 +75,9 @@ export function createMailDeliveryController(input: {
       submitted = true
       const message = await provider.send({ draft: prepared, threadId: prepared.threadId })
       if (!message.id) throw new MailSendError('The server returned no send confirmation. Check Sent before retrying.', 'uncertain')
-      const accepted = { ...message, deliveryAccepted: true, sentDraftId: draft.id, ...(prepared.providerDraftId ? { sentDraftProviderId: prepared.providerDraftId } : {}), sentDraftProviderIds: [...new Set([prepared.providerDraftId, ...(prepared.staleProviderDraftIds ?? [])].filter((id): id is string => Boolean(id)))] }
+      const accepted = { ...message, deliveryAccepted: true, sentDraftId: draft.id, sentAttemptId: attemptId, ...(prepared.providerDraftId ? { sentDraftProviderId: prepared.providerDraftId } : {}), sentDraftProviderIds: [...new Set([prepared.providerDraftId, ...(prepared.staleProviderDraftIds ?? [])].filter((id): id is string => Boolean(id)))] }
       if (prepared.providerSaveWarning && !prepared.providerDraftId) accepted.deliveryWarnings = [...(accepted.deliveryWarnings ?? []), 'The message was accepted, but an earlier draft save was unconfirmed. Check the account Drafts folder for an old copy; do not resend it.']
-      input.update(store => sendDraft(store, draft.id, undefined, { sentMessage: accepted, sentMessageId: message.id, sentGmailMessageId: message.gmailMessageId }))
+      input.update(store => settleReceipt(store, draft, attemptId, approved, { sentMessage: accepted, sentMessageId: message.id, sentGmailMessageId: message.gmailMessageId }))
       // Once accepted, filing/persistence errors must never turn it back into
       // a failed send or cause the caller to submit it a second time.
       try { await input.persist(input.read()) } catch {
@@ -75,9 +90,13 @@ export function createMailDeliveryController(input: {
       const reason = error instanceof Error ? error.message : 'Send failed.'
       // Only this attempt's own record. A Sent copy a sync found in the
       // meantime has already removed the draft and stays the answer.
-      input.update(store => ({ ...store, drafts: store.drafts.map(item => item.id === draft.id && (!item.sendAttempt || item.sendAttempt.id === attemptId) ? {
-        ...item, sendAttempt: undefined, sendState: uncertain ? 'uncertain' : 'failed', sendError: reason,
-      } : item) }))
+      input.update(store => {
+        const settled = { ...store, drafts: store.drafts.map(item => item.id === draft.id && (!item.sendAttempt || item.sendAttempt.id === attemptId) ? {
+          ...item, sendAttempt: undefined, sendState: uncertain ? 'uncertain' as const : 'failed' as const, sendError: reason, sendSettledAttemptId: uncertain ? undefined : attemptId,
+        } : item) }
+        // A schedule's own dispatch names no attempt, and is settled by the scheduler.
+        return attempt && !uncertain ? stopDraftSchedules(settled, draft.id, reason) : settled
+      })
       await input.persist(input.read()).catch(() => {})
       throw error
     } finally {

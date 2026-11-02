@@ -1,6 +1,7 @@
 import { createMailDeliveryController } from '../lib/mailDelivery'
-import { createStoreDraftSender, sendFailure } from '../lib/mailSendRelease'
-import { draftDiscardBlock, draftEditBlock } from '../lib/mailDeliveryStatus'
+import { createStoreDraftSender } from '../lib/mailSendRelease'
+import { createScheduledSendDispatcher, useScheduledSendTimer } from '../hooks/useScheduledSends'
+import { draftDelivery, draftDiscardBlock, draftEditBlock } from '../lib/mailDeliveryStatus'
 import { beginThreadReadSync } from '../lib/mailThreadReadSync'
 import { reconcileComposeAttachments } from '../lib/composeAttachments'
 import { MailConnectionControl } from './MailDeliveryStatus'
@@ -68,7 +69,7 @@ import {
   existingExecutiveDraft,
 } from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
-import { useComposeDraftAutosave } from '../hooks/useComposeDraftAutosave'
+import { composeSaveTarget, useComposeDraftAutosave } from '../hooks/useComposeDraftAutosave'
 import { replacementMailThread } from '../lib/mailReaderSelection'
 import { usePendingSend } from '../hooks/usePendingSend'
 import {
@@ -110,7 +111,6 @@ import {
   selectInviteMirrorCandidates,
   withMirroredInviteKeys,
   unarchiveThread,
-  sendDraft,
   updateMailTask,
   deleteMailTask,
   updateTaskStatus,
@@ -154,8 +154,6 @@ import {
 } from '../lib/mailNotifications'
 import {
   cancelScheduledSend,
-  dueScheduledSends,
-  markScheduledSend,
 } from '../lib/mailScheduledSend'
 import { clearSnoozeReturnMarker, wakeDueSnoozes } from '../lib/mailSnooze'
 import {
@@ -325,6 +323,7 @@ import {
   settleUndoneHold,
   replaceRun,
   startRun,
+  recoverInterruptedSends,
 } from '../lib/mailRuns'
 
 type MailRailFilter = 'attachments'
@@ -1186,6 +1185,13 @@ export function PureMailShell({
     context: composeContext, quote: composeQuote,
     snapshot: { to: composeTo, cc: composeCc, bcc: composeBcc, subject: composeSubject, body: composeBody, bodyHtml: composeBodyHtml, attachments: composeAttachments },
     storeRef, setStore, setContext: setComposeContext,
+    editBlock: composeContext?.draftId ? draftEditBlock(store, composeContext.draftId) : null,
+    sentAway: composeContext?.draftId ? draftDelivery(store, composeContext.draftId).state === 'submitted' : false,
+    onLocked: reason => {
+      const hold = composeContext?.draftId ? holdForDraft(composeContext.draftId) : undefined
+      showToast(`${reason} What you typed stays in this window.`, hold ? { label: 'Undo send', run: () => { undoPendingSend(hold.id) } } : undefined)
+    },
+    onKeptSeparately: () => showToast('That message went as approved. What you typed after it is saved as a new draft.'),
   })
 
   // Auto-mirror: Bridge/IMAP-delivered calendar invites flow into
@@ -1855,7 +1861,10 @@ export function PureMailShell({
   const stashOpenCompose = (): void => {
     const now = new Date().toISOString()
     if (composeContext) {
-      const context = composeContext
+      const target = composeSaveTarget(storeRef.current, composeContext.draftId, { to: parseComposeRecipients(composeTo), cc: parseComposeRecipients(composeCc), bcc: parseComposeRecipients(composeBcc), subject: composeSubject, body: bodyWithQuote(composeBody, composeQuote), bodyHtml: composeBodyHtml ? bodyHtmlWithQuote(composeBodyHtml, composeQuote) : composeQuote ? bodyHtmlWithQuote('', composeQuote) : '', attachments: composeAttachments })
+      if (target === 'nothing') return
+      // A draft on its way, unconfirmed or gone is never rewritten; later words become their own draft.
+      const context = target === 'apart' ? { ...composeContext, draftId: null } : composeContext
       const newDraftId = context.draftId ?? `draft_reply_${crypto.randomUUID()}`
       setStore(
         current =>
@@ -3463,108 +3472,31 @@ export function PureMailShell({
     // Mount-only: the wake pass always reads through storeRef.
   }, [])
 
-  const dispatchScheduledSend = (scheduledSendId: string): void => {
-    const entry = storeRef.current.scheduledSends?.find(
-      item => item.id === scheduledSendId,
-    )
-    if (!entry || entry.status !== 'scheduled') return
-    const draft = storeRef.current.drafts.find(
-      item => item.id === entry.draftId,
-    )
-    if (!draft) {
-      setStore(current =>
-        markScheduledSend(current, entry.id, 'failed', 'Draft no longer exists.'),
-      )
-      setCommandNotice('A scheduled send failed: its draft no longer exists.')
-      return
-    }
-    // An approved send of this draft is under way: its outcome settles this
-    // entry. Starting here would take the send out from under its Undo.
-    if (draft.sendAttempt || holdForDraft(draft.id) || isDraftSending(draft.id)) return
-    setStore(current => markScheduledSend(current, entry.id, 'sending'))
-    const finishLocal = (): void => {
-      let sentMailboxId = ''
-      setStore(current => {
-        const sentStore = sendDraft(current, draft.id)
-        sentMailboxId =
-          sentStore.mailboxes.find(mailbox => mailbox.role === 'sent')?.id ?? ''
-        return markScheduledSend(
-          {
-            ...sentStore,
-            threads: sentStore.threads.map(thread =>
-              thread.id === entry.threadId && sentMailboxId
-                ? { ...thread, mailboxId: sentMailboxId }
-                : thread,
-            ),
-          },
-          entry.id,
-          'sent',
-        )
-      })
-      setCommandNotice(`Scheduled message "${draft.subject}" sent.`)
-      recordTriageOperation(
-        'mail.compose.send',
-        `Sent scheduled message "${draft.subject}".`,
-      )
-    }
-    if (providerBacked && navigator.onLine !== false) {
-      markDraftSending(draft.id, true)
-      void sendDraftThroughProvider(providerBacked, draft)
-        .then(() => finishLocal())
-        .catch(error => {
-          const failure = sendFailure(storeRef.current, draft.id, error, providerName(activeProvider), 'the draft is still in Drafts')
-          if (failure.outcome !== 'submitted') reportSendFailure(draft.id, error)
-          setStore(current =>
-            markScheduledSend(
-              current,
-              entry.id,
-              failure.outcome === 'not_sent' ? 'failed' : failure.outcome === 'uncertain' ? 'unconfirmed' : 'sent',
-              failure.reason,
-            ),
-          )
-          if (failure.outcome === 'not_sent') setCommandNotice('A scheduled send failed — the draft is still in Drafts.')
-          else if (failure.outcome === 'uncertain') setCommandNotice(`A scheduled send: ${failure.notice}`)
-        })
-        .finally(() => markDraftSending(draft.id, false))
-      return
-    }
-    if (activeProvider !== 'demo') {
-      reportSendFailure(draft.id, 'Mail is disconnected — scheduled message not sent.')
-      // A real account with no reachable provider must not pretend: the
-      // draft stays saved; a failed delivery requires review before retry.
-      setStore(current =>
-        markScheduledSend(
-          current,
-          entry.id,
-          'failed',
-          `${providerName(activeProvider)} is not connected; the message was not sent.`,
-        ),
-      )
-      setCommandNotice(
-        'A scheduled send could not reach the account — the draft is still in Drafts.',
-      )
-      return
-    }
-    finishLocal()
-  }
+  const dispatchScheduledSend = createScheduledSendDispatcher({
+    read: () => storeRef.current,
+    update: setStore,
+    provider: () => providerBacked,
+    online: () => navigator.onLine !== false,
+    localAccount: () => activeProvider === 'demo',
+    home: () => providerName(activeProvider),
+    holdForDraft,
+    isDraftSending,
+    markDraftSending,
+    deliver: sendDraftThroughProvider,
+    reportFailure: reportSendFailure,
+    notice: setCommandNotice,
+    record: recordTriageOperation,
+  })
 
   dispatchScheduledSendRef.current = dispatchScheduledSend
   notifyNewMailThreadsRef.current = notifyNewMailThreads
 
-  // Scheduled-send dispatcher: boot catch-up (sends due while the window
-  // was closed dispatch on launch — renderer-timer limitation, see plan)
-  // plus a 30s timer while open.
-  useEffect(() => {
-    const dispatch = (): void => {
-      for (const entry of dueScheduledSends(storeRef.current)) {
-        dispatchScheduledSendRef.current(entry.id)
-      }
-    }
-    dispatch()
-    const interval = window.setInterval(dispatch, 30_000)
-    return () => window.clearInterval(interval)
-    // Mount-only by design; dispatch reads through refs.
-  }, [])
+  // Boot catch-up, then a timer. Each pass first settles attempts no window can
+  // still be running, so a schedule never fires over an abandoned one.
+  useScheduledSendTimer(() => {
+    setStore(current => recoverInterruptedSends(current, undefined, { scope: draftId => !holdForDraft(draftId) && !isDraftSending(draftId) }))
+    return storeRef.current
+  }, id => dispatchScheduledSendRef.current(id))
 
   const cancelScheduledSendsForThreads = (threadIds: string[]): void => {
     const active = (storeRef.current.scheduledSends ?? []).filter(

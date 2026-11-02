@@ -77,6 +77,8 @@ function makeContext(overrides: Partial<MailAgentToolContext> = {}): TestContext
         now,
         { sentGmailMessageId: `gmail_${finalized.id}` },
       )
+      // As the real sender does: an attempt starts before it can answer.
+      options.onStart?.(`pending_${finalized.id}`, 0)
       options.onCommitted?.(sentMessageId, `pending_${finalized.id}`)
       return { ok: true, pendingId: `pending_${finalized.id}`, undoSeconds: 0 }
     },
@@ -376,6 +378,7 @@ describe('run tools: following a sent run', () => {
         SENT_AT,
         { sentMessage: receipt, sentMessageId: receipt.id },
       )
+      options.onStart?.(`pending_${finalized.id}`, 0)
       options.onCommitted?.(receipt.id, `pending_${finalized.id}`)
       return { ok: true, pendingId: `pending_${finalized.id}`, undoSeconds: 0 }
     }

@@ -8,12 +8,12 @@ import type { MailAgentToolContext } from '../agents/catalog'
 import { usePendingSend } from '../hooks/usePendingSend'
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
 import { retainHydratedAttachments } from './composeAttachments'
-import { createMailDeliveryController, MailSendError } from './mailDelivery'
-import { CHANGED_REASON, LOST_HOLD_REASON, deliveryNote, draftDelivery, holdDraftForSend } from './mailDeliveryStatus'
+import { createMailDeliveryController, MailSendError, settleReceipt } from './mailDelivery'
+import { CHANGED_REASON, LOST_HOLD_REASON, LOST_SUBMISSION_REASON, NO_EVIDENCE_REASON, deliveryNote, draftDelivery, holdDraftForSend } from './mailDeliveryStatus'
 import { draftEditVersion, draftSendFingerprint } from './mailDrawerDrafts'
 import { EXECUTIVE_TAKEN_DIR, executiveDraftIds, executiveDraftState, parseDraftState, reportExecutiveDraftStates, type ExecutiveShareFiles } from './executiveShare'
 import { createComposedMessageDraft, emptyMailStore, persistableMailStore } from './mailModel'
-import { createRunFromDrafts, markRunItemCommitted, markRunItemUnconfirmed, markRunItemUnsent, reconcileRun, recoverInterruptedSends, replaceRun, runItemDelivery, runProgress, runSummaryLine, settleUndoneHold, startRun } from './mailRuns'
+import { SEND_ATTEMPT_LIVE_GRACE_MS, createRunFromDrafts, markRunItemCommitted, markRunItemUnconfirmed, markRunItemUnsent, reconcileRun, recoverInterruptedSends, replaceRun, runItemDelivery, runProgress, runSummaryLine, settleUndoneHold, startRun } from './mailRuns'
 import { composeHoldBlock, composeHoldStillApproved, createStoreDraftSender, sendFailure } from './mailSendRelease'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -152,7 +152,9 @@ describe('one reading of a send, in every view', () => {
 })
 
 describe('reopening Mail', () => {
-  const reopen = (saved: MailStore) => recoverInterruptedSends(JSON.parse(JSON.stringify(persistableMailStore(saved))))
+  // Long enough afterwards that no other window can still be running the attempt.
+  const later = () => new Date(Date.now() + 600_000).toISOString()
+  const reopen = (saved: MailStore) => recoverInterruptedSends(JSON.parse(JSON.stringify(persistableMailStore(saved))), later())
 
   it('closed during the hold: known not sent, back on the list, and nothing is sent', async () => {
     const r = rig({ run: true })
@@ -307,7 +309,8 @@ describe('late callbacks', () => {
     await elapse(30000)
     expect(r.send).not.toHaveBeenCalled()
     const run = r.read().runs![0]!
-    expect(markRunItemCommitted(run, r.draftId, 'late', undefined, hold.id).items[0]!.status).not.toBe('pending')
+    expect(markRunItemCommitted(run, r.draftId, 'late', undefined, hold.id).items[0]).toMatchObject({ status: 'pending' })
+    expect(markRunItemCommitted(run, r.draftId, 'late', undefined, hold.id).items[0]!.sentMessageId).toBeUndefined()
     expect(markRunItemUnconfirmed(run, r.draftId, 'late', undefined, hold.id).items[0]!.status).toBe('pending')
     r.unmount()
   })
@@ -477,7 +480,7 @@ describe('between the hold and the marker', () => {
     expect(() => updateDraftHandler(r.context, { draftId: r.draftId, body: 'x', expectedVersion: draftEditVersion(draft) })).toThrow(/being sent/)
     expect(approve(r)).toMatchObject({ alreadyQueued: true, delivery: { state: 'submitting' } })
     expect(r.send).not.toHaveBeenCalled()
-    const opened = recoverInterruptedSends(JSON.parse(JSON.stringify(persistableMailStore(r.read()))))
+    const opened = recoverInterruptedSends(JSON.parse(JSON.stringify(persistableMailStore(r.read()))), new Date(Date.now() + 600_000).toISOString())
     expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'not_submitted', reason: LOST_HOLD_REASON })
     await act(async () => { ready({ ...draft }); await vi.advanceTimersByTimeAsync(0) })
     expect(r.send).toHaveBeenCalledTimes(1)
@@ -605,6 +608,206 @@ describe('the team status file', () => {
     const next = executiveDraftState(withPlaceholder, { id: 'account' }, 'cos-k-1', draft.id, previous, 'now')!
     expect(next.state).toBe('draft')
     expect(next.delivery?.state).toBe('unconfirmed')
+    r.unmount()
+  })
+})
+
+describe('a saved record that cannot show what happened', () => {
+  const later = '2026-11-02T12:00:00Z'
+  const saved = (draftPatch: Partial<Draft>, itemPatch: Partial<MailStore['runs'] extends Array<infer R> | undefined ? R extends { items: Array<infer I> } ? I : never : never>) => {
+    const r = rig({ run: true })
+    r.update(store => ({
+      ...store,
+      drafts: store.drafts.map(draft => ({ ...draft, ...draftPatch })),
+      runs: store.runs!.map(run => ({ ...run, items: run.items.map(item => ({ ...item, status: 'sending' as const, ...itemPatch })) })),
+    }))
+    return r
+  }
+  const attempt = (id: string, phase: 'held' | 'preparing' | 'submitting') => ({ id, phase, approved: 'x', at: '2026-11-02T09:59:00Z' })
+  const everyView = (r: Rig, opened: MailStore, state: string) => {
+    r.update(() => opened)
+    const item = opened.runs![0]!.items[0]!
+    expect(draftDelivery(opened, r.draftId).state).toBe(state)
+    expect(runItemDelivery(opened, item).state).toBe(state)
+    expect(parse(getRunHandler(r.context, { runId: r.runId })).items[0].delivery.state).toBe(state)
+    expect(parse(getDraftHandler(r.context, { draftId: r.draftId })).delivery.state).toBe(state)
+    expect(shared(r).delivery?.state).toBe(state)
+  }
+
+  it.each([
+    ['no attempt evidence at all', {}, { sendAttemptId: 'a1' }],
+    ['an attempt on the draft that is not the item\'s', { sendAttempt: attempt('other', 'held') }, { sendAttemptId: 'a1' }],
+    ['an item that never recorded its attempt', { sendAttempt: attempt('a1', 'held') }, { sendAttemptId: undefined }],
+    ['a not-sent record of a different attempt', { sendState: 'failed' as const, sendError: 'old', sendSettledAttemptId: 'older' }, { sendAttemptId: 'a1' }],
+    ['a not-sent record naming no attempt', { sendState: 'failed' as const, sendError: 'old' }, { sendAttemptId: 'a1' }],
+    ['an attempt with no identity', { sendAttempt: attempt('', 'held') }, { sendAttemptId: 'a1' }],
+  ])('%s stays unconfirmed in every view, and is not a resend', (_name, draftPatch, itemPatch) => {
+    const r = saved(draftPatch, itemPatch)
+    const opened = recoverInterruptedSends(r.read(), later)
+    expect(opened.runs![0]!.items[0]).toMatchObject({ status: 'unconfirmed' })
+    everyView(r, opened, 'unconfirmed')
+    expect(() => approveItem(r)).toThrow(/not confirmed/)
+    expect(r.send).not.toHaveBeenCalled()
+    expect(recoverInterruptedSends(opened, later)).toBe(opened)
+    r.unmount()
+  })
+
+  it.each([
+    ['its own hold', { sendAttempt: attempt('a1', 'held') }],
+    ['its own preparation', { sendAttempt: attempt('a1', 'preparing') }],
+    ['its own not-sent record', { sendState: 'failed' as const, sendError: 'Refused', sendSettledAttemptId: 'a1' }],
+    ['its own Undo', { sendUndoneAt: '2026-11-02T09:59:00Z', sendSettledAttemptId: 'a1' }],
+  ])('%s establishes that nothing left', (_name, draftPatch) => {
+    const r = saved(draftPatch, { sendAttemptId: 'a1', pendingSendId: 'a1' })
+    const opened = recoverInterruptedSends(r.read(), later)
+    expect(opened.runs![0]!.items[0]).toMatchObject({ status: 'pending' })
+    everyView(r, opened, 'not_submitted')
+    r.unmount()
+  })
+
+  it('a marked submission stays unconfirmed, and a confirmed copy stays confirmed', () => {
+    const r = saved({ sendAttempt: attempt('a1', 'submitting'), sendState: 'uncertain' }, { sendAttemptId: 'a1' })
+    const opened = recoverInterruptedSends(r.read(), later)
+    expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'unconfirmed', reason: LOST_SUBMISSION_REASON })
+    everyView(r, opened, 'unconfirmed')
+    const sent = saved({ sendAttempt: attempt('a1', 'held') }, { sendAttemptId: 'other' })
+    sent.update(store => ({ ...store, messages: [...store.messages, { ...accepted(store.drafts[0]!), id: `msg_sent_${sent.draftId}_1`, deliveryAccepted: true, sentDraftId: sent.draftId }] }))
+    const reopened = recoverInterruptedSends(sent.read(), later)
+    expect(draftDelivery(reopened, sent.draftId).state).toBe('submitted')
+    expect(reopened.runs![0]!.items[0]).toMatchObject({ status: 'sent' })
+    r.unmount(); sent.unmount()
+  })
+
+  it('an attempt young enough to be running in another Mail window is left alone until it cannot be', () => {
+    const r = saved({ sendAttempt: { ...attempt('a1', 'held'), at: '2026-11-02T10:00:00Z' } }, { sendAttemptId: 'a1' })
+    const soon = recoverInterruptedSends(r.read(), '2026-11-02T10:00:30Z')
+    expect(soon).toBe(r.read())
+    expect(draftDelivery(soon, r.draftId).state).toBe('held')
+    const past = new Date(Date.parse('2026-11-02T10:00:10Z') + SEND_ATTEMPT_LIVE_GRACE_MS + 1).toISOString()
+    expect(draftDelivery(recoverInterruptedSends(r.read(), past), r.draftId).state).toBe('not_submitted')
+    // This window's own send is never settled from under it, however long it takes.
+    expect(recoverInterruptedSends(r.read(), later, { scope: () => false })).toBe(r.read())
+    r.unmount()
+  })
+  it('has the reason a person can act on', () => {
+    const r = saved({}, { sendAttemptId: 'a1' })
+    expect(draftDelivery(recoverInterruptedSends(r.read(), later), r.draftId).reason).toBe(NO_EVIDENCE_REASON)
+    r.unmount()
+  })
+})
+
+describe('callbacks registered for an attempt that is no longer current', () => {
+  type Callbacks = Parameters<NonNullable<MailAgentToolContext['sendStoreDraft']>>[1]
+  const capturing = (r: Rig) => {
+    const seen: Array<{ options: Callbacks; attemptId?: string }> = []
+    const real = r.context.sendStoreDraft!
+    r.context.sendStoreDraft = (draft, options) => {
+      const entry: { options: Callbacks; attemptId?: string } = { options }
+      seen.push(entry)
+      return real(draft, { ...options, onStart: (id, seconds) => { entry.attemptId = id; options.onStart?.(id, seconds) } })
+    }
+    return seen
+  }
+  const item = (r: Rig) => r.read().runs![0]!.items[0]!
+  const lateSuccess = (entry: { options: Callbacks; attemptId?: string }) => act(() => entry.options.onCommitted?.('late-id', entry.attemptId!))
+  const lateFailure = (entry: { options: Callbacks; attemptId?: string }, outcome: 'not_sent' | 'uncertain') => act(() => entry.options.onFailed?.('late', outcome, entry.attemptId!))
+
+  it('after Undo neither success nor failure changes the undone item, and no send is invented', async () => {
+    const r = rig({ run: true })
+    const seen = capturing(r)
+    approveItem(r)
+    act(() => { r.hold().undoPendingSend(seen[0]!.attemptId!) })
+    lateSuccess(seen[0]!)
+    expect(item(r)).toMatchObject({ status: 'pending' })
+    expect(item(r).sentMessageId).toBeUndefined()
+    lateFailure(seen[0]!, 'uncertain')
+    lateFailure(seen[0]!, 'not_sent')
+    expect(item(r)).toMatchObject({ status: 'pending' })
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('not_submitted')
+    expect(runProgress(r.read().runs![0]!)).toMatchObject({ sent: 0 })
+    expect(parse(getRunHandler(r.context, { runId: r.runId })).items[0].delivery.state).toBe('not_submitted')
+    expect(shared(r).state).toBe('draft')
+    expect(r.send).not.toHaveBeenCalled()
+    r.unmount()
+  })
+
+  it('a newer hold keeps its own outcome, and only its own content goes', async () => {
+    const r = rig({ run: true })
+    const seen = capturing(r)
+    approveItem(r)
+    act(() => { r.hold().undoPendingSend(seen[0]!.attemptId!) })
+    r.update(store => ({ ...store, drafts: store.drafts.map(draft => (draft.id === r.draftId ? { ...draft, body: 'Newly approved' } : draft)) }))
+    approveItem(r)
+    lateSuccess(seen[0]!)
+    lateFailure(seen[0]!, 'uncertain')
+    lateFailure(seen[0]!, 'not_sent')
+    expect(item(r)).toMatchObject({ status: 'sending', sendAttemptId: seen[1]!.attemptId })
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('held')
+    await elapse()
+    expect(r.send).toHaveBeenCalledTimes(1)
+    expect(r.send.mock.calls[0]![0].body).toContain('Newly approved')
+    expect(item(r)).toMatchObject({ status: 'sent' })
+    expect(item(r).sentMessageId).not.toBe('late-id')
+    r.unmount()
+  })
+
+  it('a newer attempt that already settled is not overwritten either way', async () => {
+    const r = rig({ run: true })
+    const seen = capturing(r)
+    approveItem(r)
+    act(() => { r.hold().undoPendingSend(seen[0]!.attemptId!) })
+    r.send.mockRejectedValueOnce(new Error('Connection closed after submission'))
+    approveItem(r)
+    await elapse()
+    expect(item(r)).toMatchObject({ status: 'unconfirmed' })
+    lateSuccess(seen[0]!)
+    lateFailure(seen[0]!, 'not_sent')
+    expect(item(r)).toMatchObject({ status: 'unconfirmed' })
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('unconfirmed')
+    r.unmount()
+  })
+
+  it('a current attempt\'s own delayed answers still count', async () => {
+    const r = rig({ run: true })
+    let finish!: (message: MailMessage) => void
+    r.send.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    approveItem(r)
+    await elapse()
+    expect(item(r)).toMatchObject({ status: 'sending' })
+    await act(async () => { finish(accepted(r.read().drafts[0]!)); await vi.advanceTimersByTimeAsync(0) })
+    expect(item(r)).toMatchObject({ status: 'sent' })
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('submitted')
+    r.unmount()
+  })
+
+  it('a genuine receipt is kept under its own attempt, without taking later words with it', async () => {
+    const r = rig({ run: true })
+    let finish!: (message: MailMessage) => void
+    r.send.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    approveItem(r)
+    await elapse()
+    const first = item(r).sendAttemptId!
+    const approvedBody = r.read().drafts.find(draft => draft.id === r.draftId)!.body
+    // Another window moved the draft on while this submission was in the air.
+    r.update(store => ({ ...store, drafts: store.drafts.map(draft => (draft.id === r.draftId ? { ...draft, body: 'Later words', sendAttempt: { id: 'newer', phase: 'held' as const, approved: 'y', at: '2026-11-02T10:00:20Z' } } : draft)) }))
+    await act(async () => { finish({ ...accepted(r.read().drafts[0]!), body: approvedBody }); await vi.advanceTimersByTimeAsync(0) })
+    const copy = r.read().messages.find(message => message.sentDraftId === r.draftId)!
+    expect(copy).toMatchObject({ sentAttemptId: first, body: approvedBody, deliveryAccepted: true })
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('submitted')
+    const kept = r.read().drafts.find(draft => draft.body === 'Later words')!
+    expect(kept.id).not.toBe(r.draftId)
+    expect(kept.sendAttempt).toBeUndefined()
+    expect(draftDelivery(r.read(), kept.id).state).toBe('none')
+    expect(reconcileRun(r.read(), r.read().runs![0]!).items[0]).toMatchObject({ status: 'sent' })
+    r.unmount()
+  })
+
+  it('settling a receipt on the draft that went removes that draft as before', () => {
+    const r = rig()
+    const draft = r.read().drafts[0]!
+    const settled = settleReceipt(r.read(), draft, 'a1', draftSendFingerprint(draft), { sentMessage: { ...accepted(draft), deliveryAccepted: true, sentDraftId: draft.id }, sentMessageId: 'accepted-1' })
+    expect(settled.drafts.some(item => item.id === draft.id)).toBe(false)
+    expect(settled.drafts.filter(item => !r.ids.includes(item.id))).toEqual([])
     r.unmount()
   })
 })

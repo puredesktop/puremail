@@ -166,6 +166,8 @@ export interface MailCalendarInvite {
 }
 
 export interface MailMessage {
+  /** The approved attempt this provider receipt answers. */
+  sentAttemptId?: string
   /** SMTP/API acceptance, independently of filing the Sent copy. */
   deliveryAccepted?: boolean
   deliveryWarnings?: string[]
@@ -308,6 +310,8 @@ export interface Draft {
   sendAttempt?: DraftSendAttempt
   /** The person undid the last hold; a new approval is needed to send it. */
   sendUndoneAt?: string
+  /** The attempt the failed or undone record above belongs to: what ties it to a run item after a restart. */
+  sendSettledAttemptId?: string
   id: string
   threadId: string
   to: MailContact[]

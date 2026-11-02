@@ -394,7 +394,9 @@ Every view (run progress, `getDraft`, `listDrafts`, `getRun`, the team's status 
 - `conflict`: edited in another mail app; resolve it first.
 - `submitted`: the mail service confirmed it. Say "sent"; never say it was received or read.
 
-A held or unconfirmed draft or run item is not sent, and its content cannot be changed: Undo stops a hold, and the changed draft then needs a fresh approval. A second approval of the same draft reports the attempt under way. Reopening Mail settles interrupted sends from the record and never starts or retries one; only a send the person scheduled earlier goes at its time.
+A held or unconfirmed draft or run item is not sent, and its content cannot be changed: Undo stops a hold, and the changed draft then needs a fresh approval. A second approval of the same draft reports the attempt under way. Words typed in a window open on such a draft stay in that window and are not saved over it. They reach the draft if Undo or a known failure frees it, and become a new unsent draft if it went or if the window closes first.
+
+Reopening Mail settles interrupted sends from the record and never starts or retries one. Only a hold or preparation recorded under the run item's own attempt, or a not-sent record of that attempt, counts as known not sent; a record that cannot show that reads `unconfirmed` everywhere. An old schedule on an interrupted draft does not fire. Undo cancels the draft's schedule too, and an approved attempt known not to have left marks it failed: another attempt is the person's new decision. A schedule on a draft with no interrupted send still goes at its time. An attempt saved within the undo delay plus a minute may still be running in another Mail window (PureCloud tabs share one store), so it keeps its state until then, with no Undo offered in this window.
 
 ## The reading room
 

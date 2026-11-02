@@ -144,14 +144,21 @@ const patchDraft = (store: MailStore, draftId: string, patch: (draft: Draft) => 
 
 export function holdDraftForSend(store: MailStore, draftId: string, attempt: Omit<NonNullable<Draft['sendAttempt']>, 'phase'>): MailStore {
   // An unconfirmed marker is cleared only by someone checking Sent, never by a new hold.
-  return patchDraft(store, draftId, draft => (draft.sendState === 'uncertain' ? draft : { ...draft, sendAttempt: { ...attempt, phase: 'held' }, sendState: undefined, sendError: undefined, sendUndoneAt: undefined }))
+  return patchDraft(store, draftId, draft => (draft.sendState === 'uncertain' ? draft : { ...draft, sendAttempt: { ...attempt, phase: 'held' }, sendState: undefined, sendError: undefined, sendUndoneAt: undefined, sendSettledAttemptId: undefined }))
+}
+
+/** An approved attempt ended without leaving: an old schedule must not quietly try again. Another try is a new decision. */
+export function stopDraftSchedules(store: MailStore, draftId: string, reason: string): MailStore {
+  if (!store.scheduledSends?.some(entry => entry.draftId === draftId && entry.status === 'scheduled')) return store
+  return { ...store, scheduledSends: store.scheduledSends.map(entry => (entry.draftId === draftId && entry.status === 'scheduled' ? { ...entry, status: 'failed' as const, lastError: reason } : entry)) }
 }
 
 /** This attempt ended before anything left. A later or different attempt is left alone. */
 export function settleDraftNotSent(store: MailStore, draftId: string, attemptId: string, reason: string): MailStore {
-  return patchDraft(store, draftId, draft => (draft.sendAttempt?.id === attemptId ? { ...draft, sendAttempt: undefined, sendState: 'failed', sendError: reason } : draft))
+  if (!store.drafts.some(draft => draft.id === draftId && draft.sendAttempt?.id === attemptId)) return store
+  return stopDraftSchedules(patchDraft(store, draftId, draft => (draft.sendAttempt?.id === attemptId ? { ...draft, sendAttempt: undefined, sendState: 'failed', sendError: reason, sendSettledAttemptId: attemptId } : draft)), draftId, reason)
 }
 
 export function undoDraftHold(store: MailStore, draftId: string, attemptId: string, at: string): MailStore {
-  return patchDraft(store, draftId, draft => (draft.sendAttempt?.id === attemptId && draft.sendAttempt.phase === 'held' ? { ...draft, sendAttempt: undefined, sendUndoneAt: at } : draft))
+  return patchDraft(store, draftId, draft => (draft.sendAttempt?.id === attemptId && draft.sendAttempt.phase === 'held' ? { ...draft, sendAttempt: undefined, sendUndoneAt: at, sendSettledAttemptId: attemptId } : draft))
 }
