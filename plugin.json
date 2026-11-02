@@ -508,6 +508,27 @@
           "requiresApproval": true
         },
         {
+          "name": "sendDraft",
+          "risk": "release",
+          "releaseButton": "Send",
+          "description": "Send ONE prepared draft, exactly as it is now, through the normal send path. A release action: only a person can send, by pressing Send in PureMail, or by approving it in the Executive team (its Send it? card), which then carries out exactly that send once. An agent cannot call this at any trust level; leave the draft and tell the person it is ready.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "draftId": {
+                "type": "string",
+                "description": "The draft to send, as getDraft or the executive share's state file names it."
+              },
+              "version": {
+                "type": "string",
+                "description": "getDraft's version token for the text the person approved. When it no longer matches, nothing is sent."
+              }
+            },
+            "required": ["draftId"]
+          },
+          "requiresApproval": true
+        },
+        {
           "name": "addDraftAttachments",
           "description": "Attach local files to an unsent draft by ABSOLUTE path (e.g. /Users/developer/Pure/Reports/q3.pdf). Call listDrafts or getDraft first for the draftId \u2014 the draft must already exist (commitReplyDraft/composeMessage create one; a compose window the user has not saved is not a draft yet). Reads the bytes the same way the compose window's Attach button does and appends them; the attachments total must stay under the 25 MB sending limit or the whole call is refused and nothing is attached. A file already on the draft (same name and size) is skipped, not added twice. Attachments are sent only when the user sends the draft.",
           "inputSchema": {

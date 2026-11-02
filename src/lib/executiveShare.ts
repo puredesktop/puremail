@@ -11,6 +11,12 @@
  *                         per new message, once per message id (cursor.json).
  *   drafts/<key>.json     written by the Executive app; imported here as a
  *                         DRAFT, then moved to drafts/taken/ or drafts/refused/.
+ *   drafts/state/<key>.json written here: where each draft the team left
+ *                         stands now (a draft as the person edited it, sent,
+ *                         or discarded), so the Executive's "Send it?" card
+ *                         shows what would leave and when it has gone.
+ *   drafts/discard/<key>.json written by the Executive app when the person
+ *                         says No: the draft for that key is discarded here.
  *
  * Nothing here sends mail, calls a model or touches the network. The state
  * lives in these files, never in the mail store: mergeMailProviderSyncResult
@@ -22,6 +28,8 @@
  */
 import { attachmentByteSize, attachmentKindLabel } from './mailAttachments'
 import { createComposedMessageDraft, createReplyDraft } from './mailModel'
+import { draftEditVersion } from './mailDrawerDrafts'
+import { sentMessageForRunItem } from './mailRuns'
 import { cleanMailMessageText, compactMailText, stripHtmlToText } from './mailTextUtils'
 import type {
   Draft,
@@ -39,6 +47,12 @@ export const EXECUTIVE_DIGEST_DIR = `${EXECUTIVE_MAIL_DIR}/digest`
 export const EXECUTIVE_DRAFTS_DIR = `${EXECUTIVE_MAIL_DIR}/drafts`
 export const EXECUTIVE_TAKEN_DIR = `${EXECUTIVE_DRAFTS_DIR}/taken`
 export const EXECUTIVE_REFUSED_DIR = `${EXECUTIVE_DRAFTS_DIR}/refused`
+export const EXECUTIVE_STATE_DIR = `${EXECUTIVE_DRAFTS_DIR}/state`
+export const EXECUTIVE_DISCARD_DIR = `${EXECUTIVE_DRAFTS_DIR}/discard`
+/** The longest body a state file carries (the card folds it anyway). */
+export const DRAFT_STATE_BODY_LIMIT = 20_000
+/** Drafts taken longer ago than this are no longer reported. */
+export const DRAFT_STATE_MAX_AGE_MS = 30 * 24 * 3600_000
 
 /** The cursor remembers this many written ids (the newest). */
 export const DIGEST_CURSOR_LIMIT = 5000
@@ -856,4 +870,273 @@ export async function takeExecutiveDrafts(input: {
     result.taken.push({ key, draftId })
   }
   return result
+}
+
+// ---------------------------------------------------------------- where each draft stands
+
+/** `drafts/state/<key>.json`: where a draft the team left stands now. */
+export interface ExecutiveDraftState {
+  v: 1
+  key: string
+  draftId: string
+  state: 'draft' | 'sent' | 'discarded'
+  at: string
+  to: Array<{ name: string; address: string }>
+  cc: Array<{ name: string; address: string }>
+  subject: string
+  body: string
+  /** getDraft's version token while it is a draft: sendDraft refuses when it no longer matches. */
+  version: string
+  sentAt?: string
+  sentMessageId?: string
+}
+
+const people = (contacts: readonly MailContact[] | undefined): Array<{ name: string; address: string }> =>
+  (contacts ?? []).map(contact => ({ name: contact.name ?? '', address: contact.email }))
+
+export function parseDraftState(raw: string | null): ExecutiveDraftState | null {
+  if (!raw) return null
+  try {
+    const value = JSON.parse(raw) as ExecutiveDraftState
+    return value && value.v === 1 && typeof value.key === 'string' && ['draft', 'sent', 'discarded'].includes(value.state) ? value : null
+  } catch {
+    return null
+  }
+}
+
+const isFinal = (state: ExecutiveDraftState | null): boolean => state?.state === 'sent' || state?.state === 'discarded'
+
+/** The two ids a draft made for this key can have: never any other draft. */
+function isExecutiveDraftId(key: string, draftId: string): boolean {
+  const ids = executiveDraftIds(key)
+  return draftId === ids.draftId || draftId === ids.replyDraftId
+}
+
+/**
+ * Where the draft made for `key` stands in the store, or null when that
+ * cannot be told yet. Sent is found however the send happened (PureMail's
+ * own Send, a run, sendDraft): a kept draft with sentAt, else the sent copy
+ * (the receipt's sentDraftId survives the sync that replaces the local
+ * `msg_sent_<draftId>_` copy). Discarded only when the account is loaded
+ * (its threads are in the store): a booting store says nothing.
+ */
+export function executiveDraftState(
+  store: Pick<MailStore, 'drafts' | 'messages' | 'threads'>,
+  account: Pick<MailAccount, 'id'>,
+  key: string,
+  draftId: string,
+  previous: ExecutiveDraftState | null,
+  now: string,
+): ExecutiveDraftState | null {
+  const draft =
+    store.drafts.find(item => item.id === draftId && isExecutiveDraftId(key, item.id)) ??
+    existingExecutiveDraft(store, key)
+  const id = draft?.id ?? draftId
+  if (draft && !draft.sentAt) {
+    return {
+      v: 1, key, draftId: id, state: 'draft', at: now,
+      to: people(draft.to), cc: people(draft.cc), subject: draft.subject,
+      body: draft.body.slice(0, DRAFT_STATE_BODY_LIMIT), version: draftEditVersion(draft),
+    }
+  }
+  const sent = sentMessageForRunItem(store, { draftId: id })
+  if (draft?.sentAt || sent) {
+    return {
+      v: 1, key, draftId: id, state: 'sent', at: now,
+      to: people(draft?.sentTo ?? draft?.to ?? sent?.to), cc: people(draft?.sentCc ?? draft?.cc ?? sent?.cc),
+      subject: draft?.subject ?? sent?.subject ?? previous?.subject ?? '',
+      body: (draft?.body ?? sent?.body ?? previous?.body ?? '').slice(0, DRAFT_STATE_BODY_LIMIT),
+      version: previous?.version ?? '',
+      sentAt: draft?.sentAt ?? sent?.receivedAt ?? now,
+      ...(sent ? { sentMessageId: sent.gmailMessageId ?? sent.id } : {}),
+    }
+  }
+  if (!store.threads.some(thread => thread.accountId === account.id)) return null
+  return {
+    v: 1, key, draftId: id, state: 'discarded', at: now,
+    to: previous?.to ?? [], cc: previous?.cc ?? [], subject: previous?.subject ?? '',
+    body: previous?.body ?? '', version: previous?.version ?? '',
+  }
+}
+
+const sameState = (a: ExecutiveDraftState | null, b: ExecutiveDraftState): boolean =>
+  Boolean(a) && JSON.stringify({ ...a, at: '' }) === JSON.stringify({ ...b, at: '' })
+
+/**
+ * Write `drafts/state/<key>.json` for each draft taken (taken/<key>.json
+ * holds its draftId), only when it changed. Sent and discarded are final:
+ * never rewritten, and remembered in `finalKeys` so later looks skip them.
+ */
+export async function reportExecutiveDraftStates(input: {
+  files: ExecutiveShareFiles
+  root: string
+  store: Pick<MailStore, 'drafts' | 'messages' | 'threads'>
+  account: Pick<MailAccount, 'id'>
+  finalKeys?: Set<string>
+  now?: number
+}): Promise<{ written: string[] }> {
+  const { files, root, store, account } = input
+  const now = input.now ?? Date.now()
+  const stamp = new Date(now).toISOString()
+  const finalKeys = input.finalKeys ?? new Set<string>()
+  const takenDir = joinPath(root, EXECUTIVE_TAKEN_DIR)
+  const stateDir = joinPath(root, EXECUTIVE_STATE_DIR)
+  const written: string[] = []
+  for (const name of await files.list(takenDir)) {
+    const key = /^(.+)\.json$/.exec(name)?.[1]
+    if (!key || !DRAFT_KEY_PATTERN.test(key) || finalKeys.has(key)) continue
+    let taken: { draftId?: unknown; takenAt?: unknown } = {}
+    try {
+      taken = JSON.parse((await files.read(`${takenDir}/${name}`)) ?? '{}') as typeof taken
+    } catch {
+      continue
+    }
+    const draftId = typeof taken.draftId === 'string' ? taken.draftId : ''
+    if (!draftId) continue
+    const takenAt = typeof taken.takenAt === 'string' ? Date.parse(taken.takenAt) : NaN
+    if (Number.isFinite(takenAt) && now - takenAt > DRAFT_STATE_MAX_AGE_MS) {
+      finalKeys.add(key)
+      continue
+    }
+    const path = `${stateDir}/${key}.json`
+    const previous = parseDraftState(await files.read(path))
+    if (isFinal(previous)) {
+      finalKeys.add(key)
+      continue
+    }
+    const next = executiveDraftState(store, account, key, draftId, previous, stamp)
+    if (!next || sameState(previous, next)) continue
+    await files.write(path, `${JSON.stringify(next, null, 2)}\n`)
+    written.push(key)
+    if (isFinal(next)) finalKeys.add(key)
+  }
+  return { written }
+}
+
+export interface DiscardResult {
+  discarded: string[]
+  /** Already sent: left alone. */
+  sent: string[]
+  refused: Array<{ key: string; why: string }>
+}
+
+/**
+ * The person said No in the Executive app: `drafts/discard/<key>.json`.
+ * Claimed by renaming (one window wins), then the draft made for that key
+ * is discarded through `discard` (here and at the provider) when it is still
+ * unsent, and its state file says discarded. A draft already sent is left
+ * alone. A request naming any other draft is refused: only drafts the team
+ * made can be thrown away this way. A request whose draft was not made yet
+ * withdraws it (the drafts file goes to refused/ with why).
+ */
+export async function takeExecutiveDiscards(input: {
+  files: ExecutiveShareFiles
+  root: string
+  store: Pick<MailStore, 'drafts' | 'messages' | 'threads'>
+  instanceId: string
+  discard: (draftId: string) => { ok: true } | { ok: false; reason: string }
+  now?: number
+}): Promise<DiscardResult> {
+  const { files, root, store, instanceId, discard } = input
+  const now = input.now ?? Date.now()
+  const stamp = new Date(now).toISOString()
+  const dir = joinPath(root, EXECUTIVE_DISCARD_DIR)
+  const draftsDir = joinPath(root, EXECUTIVE_DRAFTS_DIR)
+  const stateDir = joinPath(root, EXECUTIVE_STATE_DIR)
+  const refusedDir = `${dir}/refused`
+  const result: DiscardResult = { discarded: [], sent: [], refused: [] }
+
+  for (const name of await files.list(dir)) {
+    const fresh = /^(.+)\.json$/.exec(name)
+    const claimed = /^(.+)\.json\.taking-/.exec(name)
+    const key = (fresh ?? claimed)?.[1]
+    if (!key || !DRAFT_KEY_PATTERN.test(key)) continue
+    if (claimed) {
+      const age = claimAge(name, '.json.taking-', now)
+      if (age === null || age <= DRAFT_CLAIM_STALE_MS) continue
+    }
+    const claimName = `${key}.json.taking-${instanceId}-${now}`
+    if (!(await tryRename(files, `${dir}/${name}`, claimName))) continue
+    const claimPath = `${dir}/${claimName}`
+    let request: { v?: unknown; key?: unknown; draftId?: unknown } = {}
+    try {
+      request = JSON.parse((await files.read(claimPath)) ?? '{}') as typeof request
+    } catch {
+      request = {}
+    }
+    const refuse = async (why: string) => {
+      await files.write(`${refusedDir}/${key}.json`, `${JSON.stringify({ ...request, key, why, refusedAt: stamp }, null, 2)}\n`)
+      await files.remove(claimPath)
+      result.refused.push({ key, why })
+    }
+    const named = typeof request.draftId === 'string' ? request.draftId : ''
+    if (request.v !== 1 || request.key !== key) {
+      await refuse('The file is not a version 1 discard request for this key.')
+      continue
+    }
+    if (named && !isExecutiveDraftId(key, named)) {
+      await refuse('That draft was not made by the executive team, so it was not discarded.')
+      continue
+    }
+    const statePath = `${stateDir}/${key}.json`
+    const previous = parseDraftState(await files.read(statePath))
+    const draft = existingExecutiveDraft(store, key)
+    const id = draft?.id ?? (named || executiveDraftIds(key).draftId)
+    if (draft?.sentAt || (!draft && sentMessageForRunItem(store, { draftId: id }))) {
+      await files.remove(claimPath)
+      result.sent.push(key)
+      continue
+    }
+    if (draft) {
+      const done = discard(draft.id)
+      if (!done.ok) {
+        await refuse(`PureMail could not discard it: ${done.reason}`)
+        continue
+      }
+    } else {
+      // Not made yet: withdraw the request so it never becomes a draft.
+      const pending = `${draftsDir}/${key}.json`
+      const raw = await files.read(pending)
+      if (raw !== null && (await tryRename(files, pending, `${key}.json.taking-${instanceId}-${now}`))) {
+        await files.write(joinPath(root, `${EXECUTIVE_REFUSED_DIR}/${key}.json`), `${JSON.stringify({ key, why: 'withdrawn: the person said no before it was made', refusedAt: stamp }, null, 2)}\n`)
+        await files.remove(`${draftsDir}/${key}.json.taking-${instanceId}-${now}`)
+      }
+    }
+    const gone: ExecutiveDraftState = {
+      v: 1, key, draftId: id, state: 'discarded', at: stamp,
+      to: previous?.to ?? people(draft?.to), cc: previous?.cc ?? people(draft?.cc),
+      subject: previous?.subject ?? draft?.subject ?? '', body: previous?.body ?? (draft?.body ?? '').slice(0, DRAFT_STATE_BODY_LIMIT),
+      version: previous?.version ?? (draft ? draftEditVersion(draft) : ''),
+    }
+    await files.write(statePath, `${JSON.stringify(gone, null, 2)}\n`)
+    await files.remove(claimPath)
+    result.discarded.push(key)
+  }
+  return result
+}
+
+// ---------------------------------------------------------------- opening one draft
+
+export const DRAFT_LINK_PREFIX = 'purescience://mail/draft/'
+
+/**
+ * What `purescience://mail/draft/<id>` opens (the Executive's Edit first:
+ * workspace.openApp({ appSlug: 'mail', resourceId: 'draft/<id>' })): the
+ * draft, or a plain sentence when it was sent or is gone. Null: not a draft link.
+ */
+export function draftLinkTarget(
+  store: Pick<MailStore, 'drafts' | 'messages'>,
+  path: string,
+): { draft: Draft; threadHasMessages: boolean } | { notice: string } | null {
+  if (!path.startsWith(DRAFT_LINK_PREFIX)) return null
+  let draftId = ''
+  try {
+    draftId = decodeURIComponent(path.slice(DRAFT_LINK_PREFIX.length))
+  } catch {
+    return { notice: 'This draft is not in PureMail any more.' }
+  }
+  const draft = store.drafts.find(item => item.id === draftId)
+  if (draft?.sentAt || (!draft && draftId && sentMessageForRunItem(store, { draftId }))) return { notice: 'This draft was sent already.' }
+  if (!draft) return { notice: 'This draft is not in PureMail any more.' }
+  return { draft, threadHasMessages: store.messages.some(message => message.threadId === draft.threadId && !message.isDraft) }
 }

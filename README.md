@@ -53,6 +53,7 @@ On an organisation's team desk, the Executive app's Chief of Staff can read the 
 
 - **What it reads.** After each fetch, PureMail writes the new messages (received and sent) to a daily file the Executive app reads, as plain text without quoted history or signatures. Drafts, spam and trash are never shared, and nothing from the senders, domains, folders or labels on the "never read" list is ever written.
 - **What it drafts.** When the team leaves a draft, PureMail saves it in Drafts on its next look (after a fetch, or when Mail opens), as a reply in its conversation when that conversation is here. A draft it cannot make is handed back with the reason.
+- **Send it?** The Executive app shows each draft it left with one question. Its Send sends exactly that draft through PureMail (the `sendDraft` release, your approval); Edit first opens it here; No discards it here and at your provider. PureMail tells the Executive app where each draft stands (still a draft, as you edited it; sent; discarded) in `drafts/state/`.
 - **Turning it off.** Remove the share in the Executive app. With no share, PureMail writes and takes nothing.
 
 The files live under `.appdata/executive/mail/` in the workspace (`share.json`, `digest/<day>.jsonl`, `cursor.json`, `drafts/`). The format is in ps-suite #1013; the rules are in `src/lib/executiveShare.ts`.
