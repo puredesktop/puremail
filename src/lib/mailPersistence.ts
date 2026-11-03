@@ -379,10 +379,17 @@ function mergedDraftsFile(
   const discardedRevisions = new Map((disk?.draftTombstones ?? []).filter(tombstone => tombstone.reason === 'discarded').map(tombstone => [tombstone.id, tombstone]))
   for (const [id, deletedAt] of thisCopy.discards) discardedRevisions.set(id, { id, deletedAt, reason: 'discarded' })
   const blockedRevisions: Tombstone[] = []
+  const rejectedReceiptDrafts: NonNullable<DraftsFileChanges['rejectedReceiptDrafts']> = []
   const memoryDrafts = store.drafts.filter(record => {
+    if (!record.id.startsWith(RECEIPT_DRAFT_ID_PREFIX) || record.sendAttempt || hasUnconfirmedSendEvidence(record)) return true
+    const baseline = thisCopy.draftBaseline.get(record.id)
+    const rebuilt = baseline === undefined || recordFingerprint(compactPersistedDraft(record)) === baseline
+    if (!rebuilt) return true
     const tombstone = discardedRevisions.get(record.id)
-    if (!tombstone || !record.id.startsWith(RECEIPT_DRAFT_ID_PREFIX) || record.sendAttempt || hasUnconfirmedSendEvidence(record)) return true
-    blockedRevisions.push(tombstone)
+    const confirmed = recordConfirmedSent(receiptsOnFile, record)
+    if (!tombstone && !confirmed) return true
+    blockedRevisions.push(tombstone ?? disk?.draftTombstones.find(item => item.id === record.id) ?? { id: record.id, deletedAt: now, reason: 'removed' })
+    rejectedReceiptDrafts.push({ id: record.id, fingerprint: recordFingerprint(record) })
     return false
   })
   const drafts = mergeRecords<Draft>({
@@ -449,6 +456,7 @@ function mergedDraftsFile(
     changes: {
       drafts: drafts.arrived,
       removedDrafts: drafts.removed,
+      ...(rejectedReceiptDrafts.length ? { rejectedReceiptDrafts } : {}),
       runs: runs.arrived,
       removedRuns: runs.removed,
       scheduledSends: schedules.arrived,

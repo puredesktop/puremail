@@ -1,16 +1,16 @@
-# Current attachment receipt review
+# Current provider-receipt review
 
-Current review targets **[Mail PR77](https://github.com/puredesktop/puremail/pull/77)** and **[Executive PR91](https://github.com/purescience-inc/pureexecutive/pull/91)** on `puredev/keep-replacement-attachments-when-late-r-f83756`. Inspected delivery snapshot: Mail `a9ea5c78092b409caf7ca7b5f634a1e898c43082`, Executive `8c03f856d3f3a243553aa8b99f77aa43e3ac4f86`. Full tested source identities and checks are in [the current handoff](send-attachment-handoff.md) and [manifest](send-attachment-verification.json). PureDev owns delivery and ordinary review.
+The current targets are Mail PR77 and Executive PR91 on `puredev/keep-replacement-attachments-when-late-r-f83756`. The inspected delivery snapshot is Mail `efd10530ebe04106b3cdf68779c38c5bf6fb13a5` and Executive `143fb6431e016d4a668b87c0cd178e9939eb5696`. PureDev owns delivery and ordinary review. The source/check manifest identifies the exact tested content. [Current handoff](send-attachment-handoff.md), [manifest](send-attachment-verification.json).
 
-Final checks: **Mail 1,674 passed / 118 files**, affected **295 passed / 5 files**, typecheck/build 0. **Executive 631 passed / 5 established baseline failures / 114 files**, typecheck/build 0. All 62 consumer, 9 CTO-run and 4 CTO-adoption cases pass. The final negative run against delivered Mail has **35 failed / 12 passed / 2 files / 121 skipped**.
+Final checks show **Mail 1,718 passed / 118 files**, affected **339 passed / 5 files**, typecheck/build 0. **Executive 631 passed / 5 established baseline failures / 114 files**, typecheck/build 0. All 62 consumer, nine CTO-run and four CTO-adoption cases pass. The final negative run against delivered Mail reports **10 failed / 35 passed / 3 files / 170 skipped**.
 
-All receipt paths now share the later draft's comparison/id, so a caught-up sender does not create two unsent copies. Saved and pending discards also reject a provider-sync reconstruction of that derived id, without changing general provider-id revival or live-send protections. The conservative provider-evidence limit and accepted host prerequisite remain documented.
+The comparison tolerates provider address/body formatting differences. Baseline fingerprints distinguish reconstructed derived copies from real edits, including an actual agent update. Pending discards before the first save and sent-derived reconstruction are covered. HTML or other missing comparison evidence can still leave a conservative unsent copy requiring a Sent check and fresh decision. Current manifest paths use relative labels.
 
-Mail PR73 and Executive PR77 are predecessors. Mail PR73 remains open in the supported read; its disposition is the owner's decision, and both copies of the work must not be merged. No PR was closed or merged here. Exact descriptions are saved in each repository; supported posting status is recorded in the current handoff.
+Mail PR73 is an open predecessor in the supported read. Its disposition belongs to the owner, and both copies of the work must not be merged. Exact prepared descriptions and supported posting results are retained for normal PureDev delivery. The accepted host close/save prerequisite remains documented.
 
-The following is retained **task5 historical evidence**, including exact replacement text, original identities, commands, failure stages and posting errors. Its commit-state statements describe that historical stage only.
+The final supported description update for Mail PR77 returned HTTP 403, “Resource not accessible by integration”. The supported Executive PR91 read returned HTTP 404, so its update was not attempted. The exact replacement bodies and their hashes are retained. The pending step is for normal PureDev delivery to apply `docs/send-evidence-pr-description.md` from each app to Mail PR77 and Executive PR91. No credential or permission changes were attempted.
 
-Current posting result: **Mail PR77 update 403 / Executive PR91 read 404**. The exact two replacements remain saved for normal PureDev delivery on that pair; no post is claimed.
+The following is retained task5 historical evidence, including its exact saved replacement, original delivery identities, commands, failed stages and posting errors.
 
 # Send evidence continuation — req-0039 task4
 

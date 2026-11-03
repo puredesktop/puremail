@@ -164,18 +164,27 @@ export function unsentDraftAfterReceipt(draft: Draft, id: string): Draft {
   }
 }
 
+const receiptText = (text: string): string => text.replace(/\r\n/g, '\n').trim()
+function receiptAddresses(contacts: Draft['to']): string[] | null {
+  if (!Array.isArray(contacts) || contacts.some(contact => !contact || typeof contact.email !== 'string' || !contact.email.trim())) return null
+  return contacts.map(contact => contact.email.trim().toLowerCase()).sort()
+}
+
 /** Keep later words and files apart when a receipt for a superseded submission arrives. */
 export function draftAfterEarlierReceipt(draft: Draft, receipt: Pick<MailMessage, 'id' | 'receivedAt' | 'sentAttemptId' | 'subject' | 'body' | 'bodyHtml' | 'receiptBodyHtmlHash' | 'to' | 'cc' | 'bcc' | 'attachments'>): { evidence: Draft; later?: Draft } {
   // Another confirmed attempt already owns this record. Its receipt remains authoritative.
   if (draft.sentAt) return { evidence: draft }
-  const sameHtml = receipt.bodyHtml !== undefined
-    ? (draft.bodyHtml ?? '') === receipt.bodyHtml
+  const html = draft.bodyHtml ?? ''
+  const sameHtml = typeof html === 'string' && (receipt.bodyHtml !== undefined
+    ? typeof receipt.bodyHtml === 'string' && receiptText(html) === receiptText(receipt.bodyHtml)
     : /^[a-f0-9]{64}$/.test(receipt.receiptBodyHtmlHash ?? '')
-      ? receiptTextHash(draft.bodyHtml ?? '') === receipt.receiptBodyHtmlHash
-      : !(draft.bodyHtml ?? '')
+      ? [html, receiptText(html)].some(value => receiptTextHash(value) === receipt.receiptBodyHtmlHash)
+      : !html)
   const complete = typeof receipt.subject === 'string' && typeof receipt.body === 'string' && Array.isArray(receipt.to) && Array.isArray(receipt.attachments)
-  const same = complete && draft.subject === receipt.subject && draft.body === receipt.body && sameHtml &&
-    JSON.stringify([draft.to, draft.cc ?? [], draft.bcc ?? []]) === JSON.stringify([receipt.to, receipt.cc ?? [], receipt.bcc ?? []]) &&
+  const draftAddresses = [draft.to, draft.cc ?? [], draft.bcc ?? []].map(receiptAddresses)
+  const sentAddresses = [receipt.to, receipt.cc ?? [], receipt.bcc ?? []].map(receiptAddresses)
+  const same = complete && typeof draft.body === 'string' && draft.subject === receipt.subject && receiptText(draft.body) === receiptText(receipt.body) && sameHtml &&
+    draftAddresses.every((emails, index) => emails !== null && sentAddresses[index] !== null && JSON.stringify(emails) === JSON.stringify(sentAddresses[index])) &&
     draft.attachments.length === receipt.attachments.length && draft.attachments.every((file, index) => sameReceiptAttachment(file, receipt.attachments[index]))
   // The id is stable over repeated reads and conditional-write retries.
   const later = !same ? unsentDraftAfterReceipt(draft, `${RECEIPT_DRAFT_ID_PREFIX}${draft.id}_${receipt.sentAttemptId ?? receipt.id}`) : undefined

@@ -1,4 +1,4 @@
-import { confirmedSentCopy, RECEIPT_DRAFT_ID_PREFIX } from './mailDeliveryStatus'
+import { confirmedSentCopy } from './mailDeliveryStatus'
 import type { Draft, MailMessage, MailRun, MailStore, ScheduledSend, ScheduledSendStatus } from '../types'
 
 /**
@@ -239,6 +239,11 @@ export function mergeRecords<T extends Stamped>(input: {
 
   for (const record of disk) {
     if (memoryIds.has(record.id) || baseline.has(record.id)) continue
+    const discardedAt = discards?.get(record.id)
+    if (discardedAt && !inTheAir(record)) {
+      tombstones.set(record.id, { id: record.id, deletedAt: discardedAt, reason: 'discarded' })
+      continue
+    }
     const tombstone = tombstones.get(record.id)
     if (tombstone && !outlives(record, tombstone, undefined, confirmed)) continue
     tombstones.delete(record.id)
@@ -293,6 +298,8 @@ export function mergeScheduledSends(input: {
 export interface DraftsFileChanges {
   drafts: Draft[]
   removedDrafts: Tombstone[]
+  /** Exact reconstructed snapshots rejected by the writer, valid only until this copy edits them. */
+  rejectedReceiptDrafts?: Array<{ id: string; fingerprint: string }>
   runs: MailRun[]
   removedRuns: Tombstone[]
   scheduledSends: ScheduledSend[]
@@ -324,27 +331,28 @@ const withoutRemoved = <T extends Stamped>(current: T[], removed: readonly Tombs
     if (!tombstone) return true
     // A send begun here since that merge's snapshot stands, unless it went.
     if (confirmed(record)) return false
-    if (tombstone.reason === 'discarded' && record.id.startsWith(RECEIPT_DRAFT_ID_PREFIX) && !inTheAir(record)) return false
     return inTheAir(record) || time(record.updatedAt) > time(tombstone.deletedAt)
   })
 }
 
 /** Take another copy's saves into this store. Same store when there are none. */
 export function applyDraftsFileChanges(store: MailStore, changes: DraftsFileChanges): MailStore {
-  if (!changes.drafts.length && !changes.removedDrafts.length && !changes.runs.length && !changes.removedRuns.length && !changes.scheduledSends.length && !changes.sentReceipts.length) return store
+  if (!changes.rejectedReceiptDrafts?.length && !changes.drafts.length && !changes.removedDrafts.length && !changes.runs.length && !changes.removedRuns.length && !changes.scheduledSends.length && !changes.sentReceipts.length) return store
   const recoverMissing = <T extends { id: string }>(held: T[], recovered: readonly T[] = []): T[] => {
     const ids = new Set(held.map(item => item.id))
     const missing = recovered.filter(item => !ids.has(item.id))
     return missing.length ? [...held, ...missing] : held
   }
   const heldMessages = new Set(store.messages.map(message => message.id))
+  const rejected = new Map(changes.rejectedReceiptDrafts?.map(record => [record.id, record.fingerprint]))
+  const currentDrafts = store.drafts.filter(record => rejected.get(record.id) !== recordFingerprint(record))
   const schedules = mergeScheduledSends({ baseline: new Set(), memory: store.scheduledSends ?? [], disk: changes.scheduledSends })
   return {
     ...store,
     accounts: recoverMissing(store.accounts, changes.recovery?.accounts),
     mailboxes: recoverMissing(store.mailboxes, changes.recovery?.mailboxes),
     threads: recoverMissing(store.threads, changes.recovery?.threads),
-    drafts: withoutRemoved(upsertNewer(store.drafts, changes.drafts), changes.removedDrafts, record => recordConfirmedSent([...store.messages, ...changes.sentReceipts], record)),
+    drafts: withoutRemoved(upsertNewer(currentDrafts, changes.drafts), changes.removedDrafts, record => recordConfirmedSent([...store.messages, ...changes.sentReceipts], record)),
     runs: withoutRemoved(upsertNewer(store.runs ?? [], changes.runs), changes.removedRuns),
     scheduledSends: schedules.merged,
     messages: [...store.messages, ...changes.sentReceipts.filter(message => !heldMessages.has(message.id))],

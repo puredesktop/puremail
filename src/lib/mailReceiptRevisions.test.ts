@@ -37,3 +37,17 @@ it.each(['sync/file', 'controller'] as const)('%s: a later draft carries content
   expect(kept.providerConflict).toEqual(later.providerConflict)
   for (const key of ['sentAt', 'sentMessageId', 'sentTo', 'sentCc', 'sentBcc', 'sendAttempt', 'sendSupersedes', 'sendUncertainties', 'sendState', 'sendError', 'sendUndoneAt', 'sendSettledAttemptId', 'sendMessageId', 'providerDraftId', 'providerDraftMessageId', 'providerDraftMessageIdHeader', 'staleProviderDraftIds', 'providerRevision', 'providerAbsentOnce', 'importedFromProvider', 'providerSaveUncertain', 'providerSaveWarning', 'providerSaveError', 'sentWithoutReview', 'sentByAutomation', 'sentReviewBypassReason'] as const) expect(kept[key], key).toBeUndefined()
 })
+
+it.each(['to', 'cc', 'bcc'] as const)('incomplete %s contact evidence preserves the unsent content', field => {
+  const { sent, receipt } = example()
+  for (const contact of [{}, { email: '' }]) {
+    const partial = { ...receipt, [field]: [contact] } as MailMessage
+    expect(draftAfterEarlierReceipt(sent, partial).later).toMatchObject({ subject: sent.subject, body: sent.body, to: sent.to })
+  }
+})
+
+it.each(['body', 'bodyHtml'] as const)('partial draft %s evidence remains unknown during receipt comparison', field => {
+  const { sent, receipt } = example()
+  const partial = { ...sent, [field]: field === 'body' ? undefined : {} } as Draft
+  expect(draftAfterEarlierReceipt(partial, receipt).later).toBeDefined()
+})

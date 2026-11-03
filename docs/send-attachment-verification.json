@@ -45,6 +45,10 @@
           "gitBlob": "3fb7f3cce153af8575f40261ab73b5bac1700699",
           "sha256": "681eca9fbf6ae781d50763548e98a8809148079f3d9363bb1add030bc9e71b5d"
         },
+        "src/test/parsedSentReceipt.ts": {
+          "gitBlob": "b108590f02b848a051fded6fa1ded8361eed0fdd",
+          "sha256": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        },
         "src/bridge/connectionPasswords.test.ts": {
           "gitBlob": "6f56c9c104c59aa71b3e29ca624f1dc053cde680",
           "sha256": "70fb5c66772fccff6116631dde4df46a22476cf145c036fbaf0fce6abf9594b8"
@@ -566,8 +570,8 @@
           "sha256": "699aba7d473f9e6328dbba9b4f17284174bc866de5464d3a5086f6bec08ba5bf"
         },
         "src/lib/mailReceiptRevisions.test.ts": {
-          "gitBlob": "291954384e4d5d069930539c0fc752e9c813b89d",
-          "sha256": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+          "gitBlob": "eeb88727eea7e802b602e2e2b17283707e73461a",
+          "sha256": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843"
         },
         "src/lib/mailPersistence.test.ts": {
           "gitBlob": "69d820fbcb7a395ea0dc2d193a1ed55aa3c27989",
@@ -662,8 +666,8 @@
           "sha256": "2acc7fbaf5a3105ed6e0b9e194f959954862b42ea6ff99475f451bf8223729f9"
         },
         "src/lib/mailDeliveryStatus.ts": {
-          "gitBlob": "ed4b03b3822788ae1fa21803a420a2b099121d46",
-          "sha256": "ed4c7f6f907a470dcddcebee88874c614f4081619b42d8fe9571c98d700c5c59"
+          "gitBlob": "290dac18f38a1049e8a83078f9542965939e2d29",
+          "sha256": "8a278bf74056d2c7ffc84d673980690771eb7c428b36c02c9d8c1d9d49f12984"
         },
         "src/lib/mailDelivery.ts": {
           "gitBlob": "3ee3c92afd3660e7710eb7d50d8b67a0c1ebbf12",
@@ -770,8 +774,8 @@
           "sha256": "8b5cbebe678858b9be079c11a2823eb89eb35aeac0b5d2f918603552a96b9407"
         },
         "src/lib/draftsFileMerge.test.ts": {
-          "gitBlob": "02c1be2679694f4af27345c555b6f85be752dba8",
-          "sha256": "72be7f815dc82cd116863714231eaffed9455096c74386dc0aa7e167503dca60"
+          "gitBlob": "ccd691532b799a8c4a235ce7f73efd0dfa446c2a",
+          "sha256": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54"
         },
         "src/lib/heldCopy.ts": {
           "gitBlob": "1d9eb9927b1c437d1ce06061f1d87f67663d8ecf",
@@ -974,8 +978,8 @@
           "sha256": "fe5cf54421dc99895e941f7bb0f6e696e1c9e3eabf07404e821dcbfa8390221e"
         },
         "src/lib/mailPersistence.ts": {
-          "gitBlob": "48c7035f9487127fcb328f4f203459ec6167a953",
-          "sha256": "280e85cfbae8f0a169b4e3a0a0140c21a3a4e7e3f452148432f49246aaeaa14e"
+          "gitBlob": "aa93ae14ae4fbd5f769b14796df0fbaaf707afee",
+          "sha256": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e"
         },
         "src/lib/composeWindowMode.ts": {
           "gitBlob": "4880ca34bd9f3d8ccb1a0e3a1bad067832ede163",
@@ -998,8 +1002,8 @@
           "sha256": "118eb69a69c0e5e19ffe60881efb01ce3eb8a81b7adf19148a71c3f66ed84c25"
         },
         "src/lib/draftsFileMerge.ts": {
-          "gitBlob": "66aebd12d6d3ee760cae66f028db336638854a10",
-          "sha256": "c0a3079dbbdfa40fc0c2c843257a6a847c3498fe95b2cef3c86b683a07242882"
+          "gitBlob": "29e2ff2ef2f1a5e94246376c6bf113758d437cde",
+          "sha256": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb"
         },
         "src/lib/archiveSweep.test.ts": {
           "gitBlob": "5d996fce963033e998a4fdd13768949526880634",
@@ -1054,8 +1058,8 @@
           "sha256": "65286667c23c3fc6cb5eaac0ebb19c1b257a517fbc6d56c13564d46864ae7abc"
         },
         "src/lib/twoCopies.test.ts": {
-          "gitBlob": "fde04e105506c101e8d2cc568647f54c0a07ff65",
-          "sha256": "9a31f83c26f2f3f96efe028f00180e071d77ff23577dd351ef21ed53472b344d"
+          "gitBlob": "6942ff9965d7ba07597fb8af4f3cc510aba1180e",
+          "sha256": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2"
         },
         "src/lib/remoteImagePolicy.test.ts": {
           "gitBlob": "44f706b5f3ec070b3c4794699a5e682c46a0c865",
@@ -1116,6 +1120,10 @@
           "gitBlob": "7c57b192db74317af6d3b972027eaebfdb5eca29",
           "sha256": "6c5af42ba98391d05419e99dd5fbe6078d354f50c0599a3cc1f22552ad9280e1"
         },
+        "src/test/parsedSentReceipt.ts": {
+          "gitBlob": "b108590f02b848a051fded6fa1ded8361eed0fdd",
+          "sha256": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        },
         "src/agents/archiveSweepHandlers.ts": {
           "gitBlob": "89321c7cae9ffc3128cd45138c841b4a883d8cce",
           "sha256": "f3094ee3060d9286a9f6deea617febf0ee5fd50bb3d0b8be0d9a461d0a2fcb55"
@@ -1149,8 +1157,8 @@
           "sha256": "592226e2a7e6364fdfdbca52fd19672fe7909b421354df7fa8ff52149842d634"
         },
         "src/lib/mailReceiptRevisions.test.ts": {
-          "gitBlob": "291954384e4d5d069930539c0fc752e9c813b89d",
-          "sha256": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+          "gitBlob": "eeb88727eea7e802b602e2e2b17283707e73461a",
+          "sha256": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843"
         },
         "src/lib/mailSendSettlement.test.tsx": {
           "gitBlob": "20f16cd6663fd34d4ebd48eb00a6671a930c2afd",
@@ -1165,8 +1173,8 @@
           "sha256": "943e05f95d3f58f6dfd0b65122d19bd1660d855a05c4dafe23c36e1e80ca316a"
         },
         "src/lib/mailDeliveryStatus.ts": {
-          "gitBlob": "ed4b03b3822788ae1fa21803a420a2b099121d46",
-          "sha256": "ed4c7f6f907a470dcddcebee88874c614f4081619b42d8fe9571c98d700c5c59"
+          "gitBlob": "290dac18f38a1049e8a83078f9542965939e2d29",
+          "sha256": "8a278bf74056d2c7ffc84d673980690771eb7c428b36c02c9d8c1d9d49f12984"
         },
         "src/lib/mailDelivery.ts": {
           "gitBlob": "3ee3c92afd3660e7710eb7d50d8b67a0c1ebbf12",
@@ -1181,8 +1189,8 @@
           "sha256": "1869c5b8e130ba04fed68b4be835ee7013a651c50eeb9074068fdd479653ee94"
         },
         "src/lib/draftsFileMerge.test.ts": {
-          "gitBlob": "02c1be2679694f4af27345c555b6f85be752dba8",
-          "sha256": "72be7f815dc82cd116863714231eaffed9455096c74386dc0aa7e167503dca60"
+          "gitBlob": "ccd691532b799a8c4a235ce7f73efd0dfa446c2a",
+          "sha256": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54"
         },
         "src/lib/imapMailWalk.test.ts": {
           "gitBlob": "b03547be2ec44dd19bad8053f44d205dd9fd5112",
@@ -1193,12 +1201,12 @@
           "sha256": "2d1c6e60e70417ce51f8fc23abbdacad6f2083cee3624204171bfc7f91106923"
         },
         "src/lib/mailPersistence.ts": {
-          "gitBlob": "48c7035f9487127fcb328f4f203459ec6167a953",
-          "sha256": "280e85cfbae8f0a169b4e3a0a0140c21a3a4e7e3f452148432f49246aaeaa14e"
+          "gitBlob": "aa93ae14ae4fbd5f769b14796df0fbaaf707afee",
+          "sha256": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e"
         },
         "src/lib/draftsFileMerge.ts": {
-          "gitBlob": "66aebd12d6d3ee760cae66f028db336638854a10",
-          "sha256": "c0a3079dbbdfa40fc0c2c843257a6a847c3498fe95b2cef3c86b683a07242882"
+          "gitBlob": "29e2ff2ef2f1a5e94246376c6bf113758d437cde",
+          "sha256": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb"
         },
         "src/lib/archiveSweep.test.ts": {
           "gitBlob": "5d996fce963033e998a4fdd13768949526880634",
@@ -1217,8 +1225,8 @@
           "sha256": "65286667c23c3fc6cb5eaac0ebb19c1b257a517fbc6d56c13564d46864ae7abc"
         },
         "src/lib/twoCopies.test.ts": {
-          "gitBlob": "fde04e105506c101e8d2cc568647f54c0a07ff65",
-          "sha256": "9a31f83c26f2f3f96efe028f00180e071d77ff23577dd351ef21ed53472b344d"
+          "gitBlob": "6942ff9965d7ba07597fb8af4f3cc510aba1180e",
+          "sha256": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2"
         },
         "src/lib/imapMailProvider.ts": {
           "gitBlob": "76db7cf289b40a980b4d7ee3400060a3f15cae60",
@@ -1232,6 +1240,7 @@
       "candidateChangesFromStartingHead": {
         "src/types.ts": "43f6424cd84b6bcd71ba94c1011ab3d383baf589",
         "src/test/lateReceiptAttachments.ts": "7c57b192db74317af6d3b972027eaebfdb5eca29",
+        "src/test/parsedSentReceipt.ts": "b108590f02b848a051fded6fa1ded8361eed0fdd",
         "src/agents/runHandlers.test.ts": "b0418b3c68439e187dabc00a35ff963ec5a95144",
         "src/agents/runHandlers.ts": "7ffd2a8efefae1c7b7f238b98c7efd1a4dc398bc",
         "src/agents/handlers.ts": "f5f147188bcab64488a08ac3e1903117626c8d84",
@@ -1259,32 +1268,32 @@
         "src/hooks/useExecutiveMailShare.ts": "9c2daf1411f62fb271979772cc1fb199376b784e",
         "src/hooks/usePureMailBoot.ts": "76347f6d80b365fabb232cc2e54726d10dad580f",
         "src/lib/mailDrawerDrafts.test.ts": "756319174888af7af504a0ffe988f20a477ae8ca",
-        "src/lib/mailReceiptRevisions.test.ts": "291954384e4d5d069930539c0fc752e9c813b89d",
+        "src/lib/mailReceiptRevisions.test.ts": "eeb88727eea7e802b602e2e2b17283707e73461a",
         "src/lib/mailPersistence.test.ts": "69d820fbcb7a395ea0dc2d193a1ed55aa3c27989",
         "src/lib/mailSendSettlement.test.tsx": "20f16cd6663fd34d4ebd48eb00a6671a930c2afd",
         "src/lib/mailSendOwners.ts": "235f383330c807cdf5e33d5f4a84fac08a19487f",
         "src/lib/executiveShare.ts": "64f9f5027a219c9d7c897a7c95c731dd74043eaf",
         "src/lib/mailModel.ts": "51d48aeefaa21db7649cb2f8de3c3fc2bbc5fbfa",
-        "src/lib/mailDeliveryStatus.ts": "ed4b03b3822788ae1fa21803a420a2b099121d46",
+        "src/lib/mailDeliveryStatus.ts": "290dac18f38a1049e8a83078f9542965939e2d29",
         "src/lib/mailDelivery.ts": "3ee3c92afd3660e7710eb7d50d8b67a0c1ebbf12",
         "src/lib/mailStoreData.ts": "e0736ece6314f712240c7594070a882a398ab228",
         "src/lib/mailSendOutcome.test.tsx": "e63ad759956683fe7c926406e893a41def9694e2",
         "src/lib/executiveShare.test.ts": "3a64a7d6a50e74d5f7ebf39cac00bff553d5947a",
         "src/lib/mailDrawerDrafts.ts": "c5267e6210a167b901283d2e9800c9909cf10348",
-        "src/lib/draftsFileMerge.test.ts": "02c1be2679694f4af27345c555b6f85be752dba8",
+        "src/lib/draftsFileMerge.test.ts": "ccd691532b799a8c4a235ce7f73efd0dfa446c2a",
         "src/lib/composeAttachments.test.ts": "507d84c5b73788167b8a67dc56b611e32adbb81a",
         "src/lib/mailRuns.ts": "47428895bdbf5176e97be72e40ae7d9e3945050f",
         "src/lib/mailRuns.test.ts": "ddc703985474ebed9545968dc8cb8570bf8942e0",
         "src/lib/composeAttachments.ts": "f6081cef84ea605000f8ac04b1d0bd344d1f573e",
         "src/lib/mailSendRelease.ts": "8b0d457661bfa61d20569ab5ad15e3f3490728c7",
         "src/lib/mailModel.test.ts": "26932b0cfaed52c030f6ef7eaf448b9240988fa0",
-        "src/lib/mailPersistence.ts": "48c7035f9487127fcb328f4f203459ec6167a953",
+        "src/lib/mailPersistence.ts": "aa93ae14ae4fbd5f769b14796df0fbaaf707afee",
         "src/lib/storeFileMerge.ts": "7c930785ca8a5995f99bb565ed510f9dad22b219",
-        "src/lib/draftsFileMerge.ts": "66aebd12d6d3ee760cae66f028db336638854a10",
+        "src/lib/draftsFileMerge.ts": "29e2ff2ef2f1a5e94246376c6bf113758d437cde",
         "src/lib/mailAttachmentIdentity.test.ts": "5409ea3a075a3ed03a9631d33cd7e01da797bfd5",
         "src/lib/mailAttachmentIdentity.ts": "40aa562f5c9ae86c88c46a8bf6b69c4d106973bc",
         "src/lib/draftIdentity.test.ts": "7eed2b1a44eaa08baa961acb189d2cd2712a13ff",
-        "src/lib/twoCopies.test.ts": "fde04e105506c101e8d2cc568647f54c0a07ff65",
+        "src/lib/twoCopies.test.ts": "6942ff9965d7ba07597fb8af4f3cc510aba1180e",
         "src/lib/imapMailProvider.ts": "76db7cf289b40a980b4d7ee3400060a3f15cae60",
         "plugin.json": "3e047e338726781ebc23de99273cf8759680897f"
       },
@@ -1341,7 +1350,40 @@
           "sha256": "9a31f83c26f2f3f96efe028f00180e071d77ff23577dd351ef21ed53472b344d"
         }
       },
-      "review2ProductionConfigMatchesDelivered": false
+      "review2ProductionConfigMatchesDelivered": false,
+      "review3StartingCommit": "efd10530ebe04106b3cdf68779c38c5bf6fb13a5",
+      "review3StartingTree": "fa890ad5a2e8e9b108433e117647e796c1fa68aa",
+      "review3ChangesFromDeliveredHead": {
+        "src/test/parsedSentReceipt.ts": {
+          "gitBlob": "b108590f02b848a051fded6fa1ded8361eed0fdd",
+          "sha256": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        },
+        "src/lib/mailReceiptRevisions.test.ts": {
+          "gitBlob": "eeb88727eea7e802b602e2e2b17283707e73461a",
+          "sha256": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843"
+        },
+        "src/lib/mailDeliveryStatus.ts": {
+          "gitBlob": "290dac18f38a1049e8a83078f9542965939e2d29",
+          "sha256": "8a278bf74056d2c7ffc84d673980690771eb7c428b36c02c9d8c1d9d49f12984"
+        },
+        "src/lib/draftsFileMerge.test.ts": {
+          "gitBlob": "ccd691532b799a8c4a235ce7f73efd0dfa446c2a",
+          "sha256": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54"
+        },
+        "src/lib/mailPersistence.ts": {
+          "gitBlob": "aa93ae14ae4fbd5f769b14796df0fbaaf707afee",
+          "sha256": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e"
+        },
+        "src/lib/draftsFileMerge.ts": {
+          "gitBlob": "29e2ff2ef2f1a5e94246376c6bf113758d437cde",
+          "sha256": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb"
+        },
+        "src/lib/twoCopies.test.ts": {
+          "gitBlob": "6942ff9965d7ba07597fb8af4f3cc510aba1180e",
+          "sha256": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2"
+        }
+      },
+      "review3ProductionConfigMatchesDelivered": false
     },
     "pureexecutive": {
       "startingCommit": "0303b1e7978a839ea36ab71fd1fc55f19b4380a2",
@@ -2654,7 +2696,11 @@
       "review2StartingCommit": "8c03f856d3f3a243553aa8b99f77aa43e3ac4f86",
       "review2StartingTree": "17375898a94b5d576c759ab9f110ac906a651142",
       "review2ChangesFromDeliveredHead": {},
-      "review2ProductionConfigMatchesDelivered": true
+      "review2ProductionConfigMatchesDelivered": true,
+      "review3StartingCommit": "143fb6431e016d4a668b87c0cd178e9939eb5696",
+      "review3StartingTree": "97d3807e296dd564bfd694dc8b79b22334bd0e4a",
+      "review3ChangesFromDeliveredHead": {},
+      "review3ProductionConfigMatchesDelivered": true
     }
   },
   "configs": {
@@ -2717,7 +2763,6 @@
   },
   "dependencies": {
     "suite": {
-      "installRealpath": "/private/tmp/claude-501/-Users-adamhyde--puredev-worktrees-puremail-f9d583-tnwrid/d954cbfb-e938-4c03-a390-963bd0a2da2d/scratchpad/suite/node_modules",
       "packages": {
         "react": {
           "version": "19.2.8",
@@ -2775,10 +2820,10 @@
           "gitBlob": "996aab3b689f21363f482e782ba8eec9410c47c5",
           "sha256": "516fdf64d51eee945fc0b5e15de4219489ec2ce8d3343f201782fe69044f5242"
         }
-      }
+      },
+      "installLabel": ".verification/suite/node_modules"
     },
     "mail": {
-      "installRealpath": "/private/tmp/claude-501/-Users-adamhyde--puredev-worktrees-puremail-f9d583-tnwrid/d954cbfb-e938-4c03-a390-963bd0a2da2d/scratchpad/suite/apps/puremail/node_modules",
       "packages": {
         "vite": {
           "version": "6.4.4",
@@ -2810,10 +2855,10 @@
           "sha256": "874007e551351c2b87177ab103edc605bf3cd9c086a48cb8c975492565801b32",
           "suiteLockVersion": "13.0.0"
         }
-      }
+      },
+      "installLabel": ".verification/suite/apps/puremail/node_modules"
     },
     "executive": {
-      "installRealpath": "/private/tmp/claude-501/-Users-adamhyde--puredev-worktrees-puremail-f9d583-tnwrid/d954cbfb-e938-4c03-a390-963bd0a2da2d/scratchpad/suite/apps/pureexecutive/node_modules",
       "packages": {
         "vite": {
           "version": "6.4.5",
@@ -2833,7 +2878,8 @@
           "sha256": "d00d40552a1addd2b181aea687fa1146326f723722671e1bae06cd7dd5e2ec63",
           "suiteLockVersion": "3.11.0"
         }
-      }
+      },
+      "installLabel": ".verification/suite/apps/pureexecutive/node_modules"
     },
     "installedVersionAudit": {
       "checked": 1911,
@@ -2914,7 +2960,7 @@
       "src/lib/draftsFileMerge.ts": {
         "task5TestedBlob": "8bcb091a4dfb26c15d29d25f1f41be76189d3b34",
         "retainedCommitBlob": "8bcb091a4dfb26c15d29d25f1f41be76189d3b34",
-        "currentBlob": "66aebd12d6d3ee760cae66f028db336638854a10",
+        "currentBlob": "29e2ff2ef2f1a5e94246376c6bf113758d437cde",
         "unchanged": false
       },
       "src/lib/mailDelivery.ts": {
@@ -2926,7 +2972,7 @@
       "src/lib/mailDeliveryStatus.ts": {
         "task5TestedBlob": "c9638c452003f918cc142917e9cb2678e473c198",
         "retainedCommitBlob": "c9638c452003f918cc142917e9cb2678e473c198",
-        "currentBlob": "ed4b03b3822788ae1fa21803a420a2b099121d46",
+        "currentBlob": "290dac18f38a1049e8a83078f9542965939e2d29",
         "unchanged": false
       },
       "src/lib/mailModel.test.ts": {
@@ -2950,7 +2996,7 @@
       "src/lib/mailPersistence.ts": {
         "task5TestedBlob": "2d1c3d98c336e73c337390e12e9ab814c1e4848d",
         "retainedCommitBlob": "2d1c3d98c336e73c337390e12e9ab814c1e4848d",
-        "currentBlob": "48c7035f9487127fcb328f4f203459ec6167a953",
+        "currentBlob": "aa93ae14ae4fbd5f769b14796df0fbaaf707afee",
         "unchanged": false
       },
       "src/lib/mailSendSettlement.test.tsx": {
@@ -2968,7 +3014,7 @@
       "src/lib/twoCopies.test.ts": {
         "task5TestedBlob": "4a082b7110c98fd7bbb109038adf777c932c6d0f",
         "retainedCommitBlob": "4a082b7110c98fd7bbb109038adf777c932c6d0f",
-        "currentBlob": "fde04e105506c101e8d2cc568647f54c0a07ff65",
+        "currentBlob": "6942ff9965d7ba07597fb8af4f3cc510aba1180e",
         "unchanged": false
       },
       "src/types.ts": {
@@ -3023,31 +3069,31 @@
     "id": "f8375650-4011-43d2-8dd2-d5f64d3fd3dd",
     "phase": "fixing",
     "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
-    "commit": "a9ea5c78092b409caf7ca7b5f634a1e898c43082",
+    "commit": "efd10530ebe04106b3cdf68779c38c5bf6fb13a5",
     "prUrl": "https://github.com/puredesktop/puremail/pull/77",
-    "pushedAt": "2026-11-03T18:33:11.689Z",
+    "pushedAt": "2026-11-03T18:53:50.034Z",
     "together": [
       {
         "label": "pureexecutive",
-        "repo": "/Users/adamhyde/.puredev/preview/workspace/Repos/pureexecutive",
+        "repo": "repos/pureexecutive",
         "app": "purescience-inc/pureexecutive",
         "baseCommit": "0303b1e7978a839ea36ab71fd1fc55f19b4380a2",
         "base": "main",
         "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
-        "worktree": "/Users/adamhyde/.puredev/worktrees/pureexecutive-f83756",
+        "worktree": "worktrees/pureexecutive-f83756",
         "baseline": [],
-        "commit": "8c03f856d3f3a243553aa8b99f77aa43e3ac4f86",
-        "pushedAt": "2026-11-03T18:33:11.689Z",
+        "commit": "143fb6431e016d4a668b87c0cd178e9939eb5696",
+        "pushedAt": "2026-11-03T18:53:50.034Z",
         "prUrl": "https://github.com/purescience-inc/pureexecutive/pull/91"
       },
       {
         "label": "ps-suite",
-        "repo": "/Users/adamhyde/ps-suite",
+        "repo": "repos/ps-suite",
         "project": "shell",
         "baseCommit": "e254ecef1c18fb6ce438df7b68d85b86f7157bf2",
         "base": "main",
         "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
-        "worktree": "/Users/adamhyde/.puredev/worktrees/ps-suite-f83756",
+        "worktree": "worktrees/ps-suite-f83756",
         "baseline": []
       }
     ],
@@ -3095,6 +3141,36 @@
       "path": ".verification/review2-dependency-correspondence.json",
       "gitBlob": "fb9cb5e1059fb16858bd41a6c76ef4c50a40c30f",
       "sha256": "99ae3daa6e558089d5bfa60a64915095b84804659af186d9cd20d72aae9e063b"
+    },
+    "review3-normal-delivery.json": {
+      "path": ".verification/review3-normal-delivery.json",
+      "gitBlob": "f63d139552b7169fb1870acef198f5427779d415",
+      "sha256": "3c67cbafdf28e23d6cd1b97454558a9c0a08f287b33c1ee1660b9c26dc04bb62"
+    },
+    "review3-delivery-reads.json": {
+      "path": ".verification/review3-delivery-reads.json",
+      "gitBlob": "8bbfc6e7d04f754df9aeb26f96b1cbf953a11efe",
+      "sha256": "1dafd2a16a8c76aaf83ad2cce7801debadb59cffd42cef1d8bcac36194af0ccf"
+    },
+    "review3-tested-source.json": {
+      "path": ".verification/review3-tested-source.json",
+      "gitBlob": "12c6110abe74b893ee47811b6c72de212091821b",
+      "sha256": "c9d0af0d459788df3a4bff8eb058ada6c4f59d1c3e8c58c224e2a752d1037fc6"
+    },
+    "review3-dependency-correspondence.json": {
+      "path": ".verification/review3-dependency-correspondence.json",
+      "gitBlob": "fb9cb5e1059fb16858bd41a6c76ef4c50a40c30f",
+      "sha256": "99ae3daa6e558089d5bfa60a64915095b84804659af186d9cd20d72aae9e063b"
+    },
+    "review3-final-tested-source.json": {
+      "path": ".verification/review3-final-tested-source.json",
+      "gitBlob": "f4bef2fd6880c21ac68dca9c7dccbdc2469e2378",
+      "sha256": "361549526e132522e2764cc38fea3d226b2c56f78cbd86817ae7e75510b70b34"
+    },
+    "review3-description-update.json": {
+      "path": ".verification/review3-description-update.json",
+      "gitBlob": "aa0094fa99ae1ca2033fef105c68f3cceea69f91",
+      "sha256": "bacf1c54bcdaeb386d9a9408ee1364d871684dbae3807693fcdcd8c65d162942"
     }
   },
   "executiveConsumerBlocks": {
@@ -3620,12 +3696,12 @@
   },
   "delivery": {
     "mailPR": "https://github.com/puredesktop/puremail/pull/77",
-    "mailObservedHead": "a9ea5c78092b409caf7ca7b5f634a1e898c43082",
+    "mailObservedHead": "efd10530ebe04106b3cdf68779c38c5bf6fb13a5",
     "executivePR": "https://github.com/purescience-inc/pureexecutive/pull/91",
-    "executiveLocalAndNormalDeliveryHead": "8c03f856d3f3a243553aa8b99f77aa43e3ac4f86",
+    "executiveLocalAndNormalDeliveryHead": "143fb6431e016d4a668b87c0cd178e9939eb5696",
     "executiveRead": "HTTP 404 for PR91; exact local source and normal PureDev record establish the companion identity, not a successful remote read.",
     "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
-    "snapshotScope": "Heads observed at review 2; current tested working content is identified by candidateBlobs. No claim about whether a later PureDev delivery has advanced those heads.",
+    "snapshotScope": "Heads observed at review 3; current tested working content is identified by candidateBlobs. No claim about whether a later PureDev delivery has advanced those heads.",
     "predecessorPRs": {
       "mail": 73,
       "executive": 77,
@@ -3652,7 +3728,7 @@
     "together": [
       {
         "label": "pureexecutive",
-        "repo": "/Users/adamhyde/.puredev/preview/workspace/Repos/pureexecutive",
+        "repo": "repos/pureexecutive",
         "app": "purescience-inc/pureexecutive",
         "branch": "puredev/keep-prepared-message-sending-status-con-a8e28e",
         "prUrl": "https://github.com/purescience-inc/pureexecutive/pull/77",
@@ -4044,12 +4120,12 @@
     "together": [
       {
         "label": "pureexecutive",
-        "repo": "/Users/adamhyde/.puredev/preview/workspace/Repos/pureexecutive",
+        "repo": "repos/pureexecutive",
         "app": "purescience-inc/pureexecutive",
         "baseCommit": "0303b1e7978a839ea36ab71fd1fc55f19b4380a2",
         "base": "main",
         "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
-        "worktree": "/Users/adamhyde/.puredev/worktrees/pureexecutive-f83756",
+        "worktree": "worktrees/pureexecutive-f83756",
         "baseline": [],
         "commit": "cee10343cd1088919325549efc8fae392b457e02",
         "pushedAt": "2026-11-03T18:12:44.878Z",
@@ -4057,12 +4133,12 @@
       },
       {
         "label": "ps-suite",
-        "repo": "/Users/adamhyde/ps-suite",
+        "repo": "repos/ps-suite",
         "project": "shell",
         "baseCommit": "e254ecef1c18fb6ce438df7b68d85b86f7157bf2",
         "base": "main",
         "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
-        "worktree": "/Users/adamhyde/.puredev/worktrees/ps-suite-f83756",
+        "worktree": "worktrees/ps-suite-f83756",
         "baseline": []
       }
     ],
@@ -4387,6 +4463,448 @@
         "bodySha256": "94e13813cce21f0bae2df0172590e34905e214ac94605d4e7f16ccbc38e97a2b"
       },
       "bodySha256": "c6b0ca53c26d7b999cb5e871993ef67a2636cf92bbe91de172561db5dca3e65b"
+    }
+  },
+  "review2NormalDelivery": {
+    "id": "f8375650-4011-43d2-8dd2-d5f64d3fd3dd",
+    "phase": "fixing",
+    "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+    "commit": "a9ea5c78092b409caf7ca7b5f634a1e898c43082",
+    "prUrl": "https://github.com/puredesktop/puremail/pull/77",
+    "pushedAt": "2026-11-03T18:33:11.689Z",
+    "together": [
+      {
+        "label": "pureexecutive",
+        "repo": "repos/pureexecutive",
+        "app": "purescience-inc/pureexecutive",
+        "baseCommit": "0303b1e7978a839ea36ab71fd1fc55f19b4380a2",
+        "base": "main",
+        "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+        "worktree": "worktrees/pureexecutive-f83756",
+        "baseline": [],
+        "commit": "8c03f856d3f3a243553aa8b99f77aa43e3ac4f86",
+        "pushedAt": "2026-11-03T18:33:11.689Z",
+        "prUrl": "https://github.com/purescience-inc/pureexecutive/pull/91"
+      },
+      {
+        "label": "ps-suite",
+        "repo": "repos/ps-suite",
+        "project": "shell",
+        "baseCommit": "e254ecef1c18fb6ce438df7b68d85b86f7157bf2",
+        "base": "main",
+        "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+        "worktree": "worktrees/ps-suite-f83756",
+        "baseline": []
+      }
+    ],
+    "taskId": "3d9672d2-1950-4b7d-baa3-8aee605ca0ae"
+  },
+  "review2Delivery": {
+    "mailPR": "https://github.com/puredesktop/puremail/pull/77",
+    "mailObservedHead": "a9ea5c78092b409caf7ca7b5f634a1e898c43082",
+    "executivePR": "https://github.com/purescience-inc/pureexecutive/pull/91",
+    "executiveLocalAndNormalDeliveryHead": "8c03f856d3f3a243553aa8b99f77aa43e3ac4f86",
+    "executiveRead": "HTTP 404 for PR91; exact local source and normal PureDev record establish the companion identity, not a successful remote read.",
+    "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+    "snapshotScope": "Heads observed at review 2; current tested working content is identified by candidateBlobs. No claim about whether a later PureDev delivery has advanced those heads.",
+    "predecessorPRs": {
+      "mail": 73,
+      "executive": 77,
+      "status": "Predecessor evidence, not current review targets. Supported Mail PR73 read remains open; owner decides disposition; do not merge both copies. No closing or merge performed."
+    },
+    "normalDeliveryOwner": "PureDev owns commits/pushes, exact prepared-description updates on Mail PR77/Executive PR91, and ordinary review. No evidence-only commit or future delivery receipt is a worker-check precondition."
+  },
+  "review3Followup": {
+    "findingsImplemented": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "receiptComparison": "Normalize email addresses separately in To/Cc/Bcc, CRLF and surrounding text/raw-HTML whitespace. Exact or canonical HTML digest witness retains compatibility. Missing or incompatible evidence stays unknown. Attachment identity evidence retained.",
+    "discardRule": "Only a missing/equal baseline classifies a reconstructed derived record. Exact rejected fingerprints are transient application data so a real edit follows normal merge rules. Honor pending discards before first agreement and confirmed sent evidence. Live/unconfirmed attempts retain protections.",
+    "manifestPaths": "Machine paths projected as relative labels. Source/package/check hashes preserved. Exact local setup/delivery records remain in ignored verification artifacts.",
+    "checks": [
+      {
+        "label": "review3-before",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts -t 'receipt parsed by|agent edit of a known|pending discard before|confirmed sent derived'",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-before.log",
+        "logSha256": "7e2da606d4059d8459ea2d410aea395687669d6c7a729e30581498f2bebb93eb",
+        "exit": 1,
+        "passed": 23,
+        "failed": 16,
+        "skipped": 142,
+        "todo": 0,
+        "files": 1,
+        "note": "Initial probe included eight missing-property fixture assertions, corrected before the final negative run. The final probe also exercises the missing-baseline sent reconstruction.",
+        "failures": [
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > plain body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > compacted html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > plain body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > compacted html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > plain body > actual receipt sync preserves body edit correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > plain body > actual receipt sync preserves recipient edit correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > plain body > actual receipt sync preserves To moved to Cc correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > plain body > actual receipt sync preserves Bcc added correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > plain body > actual receipt sync preserves body edit correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > plain body > actual receipt sync preserves recipient edit correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > plain body > actual receipt sync preserves To moved to Cc correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > plain body > actual receipt sync preserves Bcc added correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > an agent edit of a known derived draft after another copy discarded it follows normal edit merging",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a pending discard before the first save beats a derived record another copy already saved"
+        ]
+      },
+      {
+        "label": "review3-affected",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-affected.log",
+        "logSha256": "1c449aa79b2e861c8b4ff5956a889bc542572239ebefbad1e09924139a4fd3a9",
+        "exit": 0,
+        "passed": 334,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 5,
+        "failures": []
+      },
+      {
+        "label": "review3-final-before",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts -t 'receipt parsed by|agent edit of a known|pending discard before|confirmed sent derived|discarded receipt-derived copy|incomplete .* contact evidence'",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-final-before.log",
+        "logSha256": "c5325be22c5876bbd93e3b417fb65336f63a6ac20d8a95393b4ed0eb0549fd1c",
+        "exit": 1,
+        "passed": 33,
+        "failed": 10,
+        "skipped": 170,
+        "todo": 0,
+        "files": 3,
+        "failures": [
+          "src/lib/draftsFileMerge.test.ts > sends and schedules in the merged file > a discarded receipt-derived copy stays removed despite clock skew, while a live send and ordinary edits retain their protections",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > plain body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > compacted html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > plain body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > compacted html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > an agent edit of a known derived draft after another copy discarded it follows normal edit merging",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a pending discard before the first save beats a derived record another copy already saved",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a confirmed sent derived draft is not restored by a stale reconstruction"
+        ],
+        "productionCommit": "efd10530ebe04106b3cdf68779c38c5bf6fb13a5",
+        "regressionTestsSha256": {
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7a4fda3eaf1dbe2f7603db9cc2d0fcd13d825b08353df3a50af5aee3f5d4cfbd",
+          "src/test/parsedSentReceipt.ts": "00bf8af009bcac61f4eb859e444ae3baeddbc5e06778b7893f8b4a4be3799be9"
+        },
+        "productionSha256": {
+          "src/lib/mailDeliveryStatus.ts": "ed4c7f6f907a470dcddcebee88874c614f4081619b42d8fe9571c98d700c5c59",
+          "src/lib/mailPersistence.ts": "280e85cfbae8f0a169b4e3a0a0140c21a3a4e7e3f452148432f49246aaeaa14e",
+          "src/lib/draftsFileMerge.ts": "c0a3079dbbdfa40fc0c2c843257a6a847c3498fe95b2cef3c86b683a07242882"
+        }
+      },
+      {
+        "label": "review3-final-affected",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-final-affected.log",
+        "logSha256": "9c18c7b0b3a78485e188fcc26db3fbe353f05cd86546ab17421352e483f2bd27",
+        "exit": 0,
+        "passed": 337,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 5,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "39c5d488178504cf04062ffbd1c85ae4d51730afadd2cb2add0755915ce43b6f",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7a4fda3eaf1dbe2f7603db9cc2d0fcd13d825b08353df3a50af5aee3f5d4cfbd",
+          "src/test/parsedSentReceipt.ts": "00bf8af009bcac61f4eb859e444ae3baeddbc5e06778b7893f8b4a4be3799be9"
+        }
+      },
+      {
+        "label": "review3-mail-full",
+        "command": "../../node_modules/.bin/vitest run",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-mail-full.log",
+        "logSha256": "e0cafdfc77b0e5612772e07320a0f512f8f72a0791b001affdfa734eed1780fe",
+        "exit": 1,
+        "passed": 1715,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0,
+        "files": 118,
+        "note": "Intermediate full run caught a provider-parity guardrail violation in the new synthetic fixture. Its provider dispatch was corrected with a discriminated switch and final Mail checks rerun.",
+        "failures": [
+          "src/lib/providerParity.test.ts > provider parity guardrail > keeps `=== 'gmail'` out of shared code paths"
+        ],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "39c5d488178504cf04062ffbd1c85ae4d51730afadd2cb2add0755915ce43b6f",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7a4fda3eaf1dbe2f7603db9cc2d0fcd13d825b08353df3a50af5aee3f5d4cfbd",
+          "src/test/parsedSentReceipt.ts": "00bf8af009bcac61f4eb859e444ae3baeddbc5e06778b7893f8b4a4be3799be9"
+        }
+      },
+      {
+        "label": "review3-mail-tsc",
+        "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-mail-tsc.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exit": 0,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "39c5d488178504cf04062ffbd1c85ae4d51730afadd2cb2add0755915ce43b6f",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7a4fda3eaf1dbe2f7603db9cc2d0fcd13d825b08353df3a50af5aee3f5d4cfbd",
+          "src/test/parsedSentReceipt.ts": "00bf8af009bcac61f4eb859e444ae3baeddbc5e06778b7893f8b4a4be3799be9"
+        }
+      },
+      {
+        "label": "review3-mail-build",
+        "command": "./node_modules/.bin/vite build",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-mail-build.log",
+        "logSha256": "0bf391302dad4c2d4adfcf6375d32bb20e7197039c914aaace566a467bc76341",
+        "exit": 0,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "39c5d488178504cf04062ffbd1c85ae4d51730afadd2cb2add0755915ce43b6f",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7a4fda3eaf1dbe2f7603db9cc2d0fcd13d825b08353df3a50af5aee3f5d4cfbd",
+          "src/test/parsedSentReceipt.ts": "00bf8af009bcac61f4eb859e444ae3baeddbc5e06778b7893f8b4a4be3799be9"
+        }
+      },
+      {
+        "label": "review3-exec-full",
+        "command": "../../node_modules/.bin/vitest run",
+        "cwd": ".verification/suite/apps/pureexecutive",
+        "log": ".verification/review3-exec-full.log",
+        "logSha256": "97406dc4d53989352c8c57784a85a3444e746ff07dfd794987134dc5a8fedeb2",
+        "exit": 1,
+        "passed": 631,
+        "failed": 5,
+        "skipped": 0,
+        "todo": 0,
+        "files": 114,
+        "failures": [
+          "src/screens/DecisionAssignmentLinks.test.tsx > shows named actions before collapsed history, opens the saved mission and handles a failed open",
+          "src/screens/LeadWorkspace.test.tsx > uses one workspace layout, opens existing work with top/bottom close and sends feedback to its lead",
+          "src/screens/LeadWorkspace.test.tsx > renders Markdown responsibilities in overview and team without changing the stored instructions",
+          "src/screens/DecisionAssignmentLinks.test.tsx > uses the same actionable note and decline feedback in Waiting for you",
+          "src/runner/boundary.test.ts > the runner > reaches no React and no bridge, through any of its imports"
+        ]
+      },
+      {
+        "label": "review3-exec-tsc",
+        "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+        "cwd": ".verification/suite/apps/pureexecutive",
+        "log": ".verification/review3-exec-tsc.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exit": 0,
+        "failures": []
+      },
+      {
+        "label": "review3-exec-build",
+        "command": "./node_modules/.bin/vite build",
+        "cwd": ".verification/suite/apps/pureexecutive",
+        "log": ".verification/review3-exec-build.log",
+        "logSha256": "161a24369745567573cb95b3b0e3a1be5d79e03d2f78fa71c9f348919757555b",
+        "exit": 0,
+        "failures": []
+      },
+      {
+        "label": "review3-final-before-v2",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts -t 'receipt parsed by|agent edit of a known|pending discard before|confirmed sent derived|discarded receipt-derived copy|incomplete .* contact evidence|partial draft .* evidence'",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-final-before-v2.log",
+        "logSha256": "b655d62ab85e00efb7f29fad3ccf299b81ffe26c087c9ce278c7bfabb4fca4da",
+        "exit": 1,
+        "passed": 35,
+        "failed": 10,
+        "skipped": 170,
+        "todo": 0,
+        "files": 3,
+        "failures": [
+          "src/lib/draftsFileMerge.test.ts > sends and schedules in the merged file > a discarded receipt-derived copy stays removed despite clock skew, while a live send and ordinary edits retain their protections",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > plain body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by gmail > compacted html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > plain body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt parsed by imap > compacted html body > actual receipt sync preserves unchanged correctly",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > an agent edit of a known derived draft after another copy discarded it follows normal edit merging",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a pending discard before the first save beats a derived record another copy already saved",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a confirmed sent derived draft is not restored by a stale reconstruction"
+        ],
+        "productionCommit": "efd10530ebe04106b3cdf68779c38c5bf6fb13a5",
+        "regressionTestsSha256": {
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843",
+          "src/test/parsedSentReceipt.ts": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        },
+        "productionSha256": {
+          "src/lib/mailDeliveryStatus.ts": "ed4c7f6f907a470dcddcebee88874c614f4081619b42d8fe9571c98d700c5c59",
+          "src/lib/mailPersistence.ts": "280e85cfbae8f0a169b4e3a0a0140c21a3a4e7e3f452148432f49246aaeaa14e",
+          "src/lib/draftsFileMerge.ts": "c0a3079dbbdfa40fc0c2c843257a6a847c3498fe95b2cef3c86b683a07242882"
+        }
+      },
+      {
+        "label": "review3-final-affected-v2",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-final-affected-v2.log",
+        "logSha256": "1aa54d04be7436b9794f8aabb94dd1d04deb03098a184d4b517d13f1806c7766",
+        "exit": 0,
+        "passed": 339,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 5,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "8a278bf74056d2c7ffc84d673980690771eb7c428b36c02c9d8c1d9d49f12984",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843",
+          "src/test/parsedSentReceipt.ts": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        }
+      },
+      {
+        "label": "review3-final-mail-full",
+        "command": "../../node_modules/.bin/vitest run",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-final-mail-full.log",
+        "logSha256": "08ca1333d0c2e6a3e6ac31728807a8a818956493468de66ba98c485b0a0de5b8",
+        "exit": 0,
+        "passed": 1718,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 118,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "8a278bf74056d2c7ffc84d673980690771eb7c428b36c02c9d8c1d9d49f12984",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843",
+          "src/test/parsedSentReceipt.ts": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        }
+      },
+      {
+        "label": "review3-final-mail-tsc",
+        "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-final-mail-tsc.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exit": 0,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "8a278bf74056d2c7ffc84d673980690771eb7c428b36c02c9d8c1d9d49f12984",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843",
+          "src/test/parsedSentReceipt.ts": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        }
+      },
+      {
+        "label": "review3-final-mail-build",
+        "command": "./node_modules/.bin/vite build",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review3-final-mail-build.log",
+        "logSha256": "7753958f32951983a076be3ce157dabb157c44a75435f86b897d22606e9f6a98",
+        "exit": 0,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "8a278bf74056d2c7ffc84d673980690771eb7c428b36c02c9d8c1d9d49f12984",
+          "src/lib/mailPersistence.ts": "9557db4726a14d952fc63146c54be840073b203cc7adbb39fec77546beff461e",
+          "src/lib/draftsFileMerge.ts": "b5cdc2980755d9d4d2b273acd006573cd94c0844cad98f26f595565ce039f7cb",
+          "src/lib/twoCopies.test.ts": "3e7d2564d7845afb848e434dba379d4fb285e2a4731177b1d69d9db9088645e2",
+          "src/lib/draftsFileMerge.test.ts": "def3d3c8b7e3a8367bd72614a551f4ab770f5fe3b727901909bae2c5cf1cfc54",
+          "src/lib/mailReceiptRevisions.test.ts": "7eeedffe77523b9d036ab99ba74da8f407a0479051934d806a5455109b191843",
+          "src/test/parsedSentReceipt.ts": "8ba9f6e293557ae7da54ed3c3cb6adb0c55a7e05fece36e42c176d679172ed93"
+        }
+      }
+    ],
+    "dependencyCorrespondence": {
+      "suite": {
+        "packageMismatches": [],
+        "installedLockUnchanged": true
+      },
+      "mail": {
+        "packageMismatches": [],
+        "installedLockUnchanged": null
+      },
+      "executive": {
+        "packageMismatches": [],
+        "installedLockUnchanged": null
+      },
+      "actualResolvedSharedSources": {
+        "files": 4561,
+        "mismatches": []
+      },
+      "actualResolvedKnowledgeSources": {
+        "files": 102,
+        "mismatches": []
+      }
+    },
+    "executiveCorrespondence": "All 281 source/config blobs match delivered 143fb64 and the previous tested candidate; runtime/tests/config/dependencies unchanged. Full suite, typecheck and build rerun in review 3. Retained complete pinned baseline remains justified by identical source/config/dependency setup.",
+    "preservedEarlierResults": "reviewFollowup retains the earlier 1627-case Mail and 631/5 Executive stages, the 26 negative regression cases and intermediate typecheck failure. They are historical stages, not the new tested-source result.",
+    "posting": {
+      "target": "https://github.com/puredesktop/puremail/pull/77",
+      "bodyFile": "docs/send-evidence-pr-description.md",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "GitHub API error 403: {\"message\":\"Resource not accessible by integration\",\"documentation_url\":\"https://docs.github.com/rest/pulls/pulls#update-a-pull-request\",\"status\":\"403\"}"
+          }
+        ],
+        "structuredContent": {
+          "error": "GitHub API error 403: {\"message\":\"Resource not accessible by integration\",\"documentation_url\":\"https://docs.github.com/rest/pulls/pulls#update-a-pull-request\",\"status\":\"403\"}",
+          "error_code": "FORBIDDEN",
+          "error_data": {
+            "message": "Resource not accessible by integration",
+            "documentation_url": "https://docs.github.com/rest/pulls/pulls#update-a-pull-request",
+            "status": "403"
+          }
+        },
+        "isError": true
+      },
+      "executive": {
+        "target": "https://github.com/purescience-inc/pureexecutive/pull/91",
+        "readStatus": 404,
+        "updateAttempted": false,
+        "pending": "PureDev applies the Executive saved description alongside the Mail replacement.",
+        "bodyFile": "docs/send-evidence-pr-description.md",
+        "bodySha256": "7b448308f372451f9b280b64316565d0b77df105fbbab43d659c9488b0cbd969"
+      },
+      "bodySha256": "37c1978a1822f273fc16e997dc9701796e5ba40913f9268bb6e3b2a61a04d0da"
     }
   }
 }

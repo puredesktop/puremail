@@ -1,5 +1,10 @@
 // @vitest-environment happy-dom
 import { attachmentReceiptHash } from './mailAttachmentIdentity'
+import { parsedSentReceipt } from '../test/parsedSentReceipt'
+import { compactPersistedMessage } from './mailStoreData'
+import { draftEditVersion } from './mailDrawerDrafts'
+import { updateDraftHandler } from '../agents/handlers'
+import type { MailAgentToolContext } from '../agents/catalog'
 import { lateReceiptAttachmentCases } from '../test/lateReceiptAttachments'
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -632,6 +637,82 @@ describe('two copies sending over the real files', () => {
         })
       })
     })
+  })
+
+  describe.each(['gmail', 'imap'] as const)('receipt parsed by %s', provider => {
+    describe.each(['plain', 'html', 'compacted html'] as const)('%s body', format => {
+      it.each(['unchanged', 'body edit', 'recipient edit', 'To moved to Cc', 'Bcc added', 'HTML edit'] as const)('actual receipt sync preserves %s correctly', async change => {
+        const html = format !== 'plain'
+        const draft = letter({ to: [{ name: '', email: ' ANA@EXAMPLE.TEST ' }], body: ' \r\nHello\r\nNext\r\n ', bodyHtml: html ? ' \r\n<p>Hello</p>\r\n<p>Next</p>\r\n ' : undefined,
+          sendState: 'failed', sendSettledAttemptId: 'B', sendSupersedes: ['A'], sendUncertainties: [{ attemptId: 'A', messageId: '<submitted-A>', reason: 'Unknown older send' }] })
+        if (change === 'body edit') draft.body += 'Later words'
+        if (change === 'recipient edit') draft.to = [{ name: '', email: 'other@example.test' }]
+        if (change === 'To moved to Cc') { draft.cc = draft.to; draft.to = [] }
+        if (change === 'Bcc added') draft.bcc = [{ name: '', email: 'private@example.test' }]
+        if (change === 'HTML edit') draft.bodyHtml = '<p>Changed formatting and words</p>'
+        const { a } = await twoCopies({ drafts: [draft] })
+        let receipt = await parsedSentReceipt(provider, html)
+        expect(receipt.to[0]).toEqual({ name: 'ana@example.test', email: 'ana@example.test' })
+        if (format === 'compacted html') receipt = compactPersistedMessage({ ...receipt, deliveryAccepted: true })
+        const sync = (store: MailStore) => mergeMailProviderSyncResult(store, { ...store, drafts: [], messages: [receipt] })
+        a.edit(sync)
+        expect(a.memory.drafts.filter(item => item.id !== 'letter')).toHaveLength(change === 'unchanged' ? 0 : 1)
+        await a.save()
+        for (let pass = 0; pass < 3; pass += 1) {
+          const reopened = await openCopy()
+          const later = reopened.memory.drafts.filter(item => item.id !== 'letter')
+          expect(later).toHaveLength(change === 'unchanged' ? 0 : 1)
+          if (later[0]) {
+            expect(later[0]).toMatchObject({ body: draft.body, to: draft.to, cc: draft.cc, bcc: draft.bcc })
+            expect(later[0].bodyHtml).toBe(draft.bodyHtml)
+          }
+          expect(reopened.memory.messages.some(message => message.deliveryAccepted && message.sentAttemptId === 'A')).toBe(true)
+          reopened.edit(sync); await reopened.save()
+        }
+      })
+    })
+  })
+
+  it('an agent edit of a known derived draft after another copy discarded it follows normal edit merging', async () => {
+    const later = letter({ id: 'draft_compose_after_letter_A', body: 'Before', updatedAt: '2026-01-01T00:00:00Z' })
+    const { a, b } = await twoCopies({ drafts: [later] })
+    await a.discard(later.id)
+    const context = { get store() { return b.memory }, editDraft: (id: string, patch: { body?: string }) => {
+      b.edit(store => ({ ...store, drafts: store.drafts.map(draft => draft.id === id ? { ...draft, ...patch, updatedAt: '2099-01-01T00:00:00Z' } : draft) }))
+      return { ok: true as const }
+    } } as MailAgentToolContext
+    updateDraftHandler(context, { draftId: later.id, expectedVersion: draftEditVersion(b.memory.drafts[0]), body: 'Real later agent edit' })
+    await b.save()
+    expect((await openCopy()).memory.drafts[0].body).toBe('Real later agent edit')
+  })
+
+  it('a pending discard before the first save beats a derived record another copy already saved', async () => {
+    const later = letter({ id: 'draft_compose_after_letter_A' })
+    const { a, b } = await twoCopies()
+    a.edit(store => ({ ...store, drafts: [...store.drafts, later] }))
+    b.edit(store => ({ ...store, drafts: [...store.drafts, later] })); await b.save()
+    await a.discard(later.id)
+    const reopened = await openCopy()
+    expect(reopened.memory.drafts.some(draft => draft.id === later.id)).toBe(false)
+    expect(JSON.parse(files.get('mail-drafts.json')!).draftTombstones).toContainEqual(expect.objectContaining({ id: later.id, reason: 'discarded' }))
+  })
+
+  it('a confirmed sent derived draft is not restored by a stale reconstruction', async () => {
+    const earlier = letter({ body: 'Later words', sendSettledAttemptId: 'B', sendSupersedes: ['A'], sendUncertainties: [{ attemptId: 'A', messageId: '<submitted-A>', reason: 'Older unknown send' }] })
+    const { a, b } = await twoCopies({ drafts: [earlier] })
+    const receipt = { ...accepted(), messageIdHeader: '<submitted-A>' }
+    const sync = (store: MailStore) => mergeMailProviderSyncResult(store, { ...store, drafts: [], messages: [receipt] })
+    a.edit(sync); await a.save()
+    const later = a.memory.drafts.find(draft => draft.id !== 'letter')!
+    const mail = service()
+    await controller(a)(mail.provider, later)
+    b.edit(sync) // This copy has never agreed with the derived id on disk.
+    for (let pass = 0; pass < 3; pass += 1) {
+      await b.save()
+      expect(b.memory.drafts.some(draft => draft.id === later.id)).toBe(false)
+      expect((await openCopy()).memory.drafts.some(draft => draft.id === later.id)).toBe(false)
+    }
+    expect(mail.send).toHaveBeenCalledTimes(1)
   })
 
   describe.each([false, true])('a provider-sync result arrives after a discard (pending locally: %s)', pending => {

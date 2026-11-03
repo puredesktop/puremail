@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyDraftsFileChanges, baselineOf, mergeRecords, mergeScheduledSends, withoutTombstoned, type Tombstone } from './draftsFileMerge'
+import { applyDraftsFileChanges, baselineOf, mergeRecords, mergeScheduledSends, recordFingerprint, withoutTombstoned, type Tombstone } from './draftsFileMerge'
 import { emptyMailStore } from './mailStoreData'
 import type { Draft, ScheduledSend } from '../types'
 
@@ -202,7 +202,9 @@ describe('sends and schedules in the merged file', () => {
   it('a discarded receipt-derived copy stays removed despite clock skew, while a live send and ordinary edits retain their protections', () => {
     const id = 'draft_compose_after_original_A'
     const removal: Tombstone = { id, reason: 'discarded', deletedAt: NOW }
-    const take = (record: Draft) => applyDraftsFileChanges({ ...emptyMailStore(), drafts: [record] }, { ...empty, removedDrafts: [removal] }).drafts
+    const rebuilt = draft(id, { updatedAt: '2099-01-01T00:00:00Z' })
+    const take = (record: Draft) => applyDraftsFileChanges({ ...emptyMailStore(), drafts: [record] }, { ...empty, removedDrafts: [removal], rejectedReceiptDrafts: [{ id, fingerprint: recordFingerprint(rebuilt) }] }).drafts
+    expect(take({ ...rebuilt, body: 'Edited after the writer snapshot' })).toEqual([{ ...rebuilt, body: 'Edited after the writer snapshot' }])
     expect(take(draft(id, { updatedAt: '2099-01-01T00:00:00Z' }))).toEqual([])
     for (const phase of ['held', 'preparing', 'submitting'] as const) {
       const live = draft(id, { sendAttempt: { ...attempt, phase } })

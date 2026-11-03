@@ -2,7 +2,58 @@
 
 An older genuine receipt now keeps its own submission authoritative while an attachment-only replacement survives as a separate unsent draft. It has no hold, submission identity or schedule and needs a fresh explicit send decision. Names and MIME types alone no longer count as file identity. No composition flow, warning or sending authority was added.
 
-## Current review — one revision across every receipt route
+## Current review — provider-normalized receipts and draft revisions
+
+The receipt comparison now uses normalized email addresses within each separate To, Cc and Bcc list. It normalizes CRLF and surrounding whitespace in plain text and raw HTML. This follows the provider round trip exercised by the new synthetic Gmail payload and IMAP envelope fixtures. Meaningful body, address-list and HTML edits remain in their own unsent draft. Attachment equality continues to require byte/hash or complete source evidence.
+
+A discarded derived record is classified as reconstructed only when this copy lacks a baseline for that id or its persisted fingerprint still equals that baseline. A known draft that was edited follows the normal record merge. The writer returns the rejected snapshot fingerprint to its running copy, so an edit made while the save is completing can survive application of the result. The writer carries the fingerprint in its transient change result. This replaces the broad derived-id discard rule that could erase an agent's real edit.
+
+Pending explicit discards are now honored in the disk-arrival loop for records this copy has never agreed with. Confirmed sent copies also reject reconstruction of their derived id. Existing live-send and uncertainty evidence protects an attempt during these decisions. Tests exercise the actual `updateDraft` handler, the before-first-save discard, sent-derived reconstruction, and repeated reopening over the real conditional writer.
+
+### Evidence limits
+
+Parsed names, address casing, line endings and surrounding whitespace are handled by the comparison. Other HTML serialization changes may still lack sufficient evidence. A compacted receipt keeps only a digest of its original HTML, and that digest cannot itself be normalized. The comparator accepts a matching exact or canonical candidate digest. When neither matches, or when text/contact/attachment comparison data is incomplete, Mail conservatively keeps a separate unsent copy. That copy requires a Sent check and a fresh explicit decision before sending. The earlier limitation concerning different Drafts/Sent attachment references without bytes or a digest still applies. This limitation now covers unavailable text/recipient/HTML evidence as well.
+
+### Delivery snapshot and manifest labels
+
+This review inspected Mail PR77 at `efd10530ebe04106b3cdf68779c38c5bf6fb13a5`, paired with Executive PR91 at `143fb6431e016d4a668b87c0cd178e9939eb5696`, on `puredev/keep-replacement-attachments-when-late-r-f83756`. Normal PureDev delivery and local heads agree. The integration confirms Mail's head and reports Executive PR91 as inaccessible with 404. The full blob manifest identifies tested content beyond that inspected snapshot. PureDev owns commits, pushes and ordinary review.
+
+Mail PR73 and Executive PR77 remain predecessor evidence. The supported Mail PR73 read reports it open. Its disposition remains the owner's decision, and both copies of the work must not be merged. No PR was closed or merged here.
+
+Machine-specific paths in the current manifest are replaced with relative installation, repository and worktree labels. Source/package hashes and retained check identities are preserved. Exact local delivery records and verification logs remain in ignored verification artifacts. The manifest records their hashes.
+
+### Current check results
+
+The checked-in app configs and retained installation were used serially. All **273 Mail / 281 Executive source/config files** match the tested copies. Fresh package checks have zero mismatches, the suite installed lock matches, and **4,561 shared-source / 102 Knowledge files** match the resolved installation. App-specific installed-lock evidence remains unavailable. Current manifest paths are relative labels.
+
+| Check | Full command from the app in `.verification/suite/apps/` | Exit | Cases / files / skips |
+|---|---|---:|---|
+| Mail affected | `../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx` | 0 | **339 passed / 5 files / 0 skipped** |
+| Mail full | `../../node_modules/.bin/vitest run` | 0 | **1,718 passed / 118 files / 0 skipped** |
+| Mail typecheck | `../../node_modules/.bin/tsc -p tsconfig.json --noEmit` | 0 | final source |
+| Mail build | `./node_modules/.bin/vite build` | 0 | checked-in build config |
+| Executive full rerun | `../../node_modules/.bin/vitest run` | 1 | **631 passed / 5 failed / 114 files / 0 skipped** |
+| Executive typecheck | `../../node_modules/.bin/tsc -p tsconfig.json --noEmit` | 0 | matched source/config |
+| Executive build | `./node_modules/.bin/vite build` | 0 | checked-in build config |
+| Retained complete Executive main `3f0641e…` | `../../node_modules/.bin/vitest run` | 1 | **556 passed / 6 failed / 107 files / 0 skipped** |
+
+The final regression command against delivered Mail `efd1053…` reports **10 failed / 35 passed / 3 files / 170 skipped**, exit 1. The three changed production files were replaced with their exact delivered blobs for that negative run, then restored. Final source passes those cases. Exact command and all per-stage source/log hashes are in `review3Followup` of the manifest.
+
+```sh
+../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts -t 'receipt parsed by|agent edit of a known|pending discard before|confirmed sent derived|discarded receipt-derived copy|incomplete .* contact evidence|partial draft .* evidence'
+```
+
+The 44 added cases cover 36 parser-backed receipt rows, three actual persistence races and five incomplete contact/compose comparisons. The Gmail rows run the real payload parser through a fake HTTP adapter. IMAP rows run the real envelope-to-message mapping through a fake transport. Plain, raw HTML and compacted HTML cases include multiline bodies and nameless contacts. Meaningful body/To/Cc/Bcc/HTML edits remain preserved. Existing attachment identity, controller/sender, Close/stash/autosave, exit, boot/load, no-age-inference, dispatch, schedule/Undo, persistence-failure and duplicate-approval tests remain covered by the full suite.
+
+The initial probe had **16 failed / 23 passed / 1 file / 142 skipped**, including eight fixture assertions requiring an absent optional property. Those assertions were corrected before the final negative run. The first full Mail stage had **1,715 passed / 1 failed / 118 files**, exit 1, because the new test fixture used a literal provider comparison caught by the parity guard. The fixture now uses a discriminated switch, and final affected/full/typecheck/build checks pass. The guard remains enforced. These intermediate stages are retained separately.
+
+Executive again passes all 62 consumer, nine CTO-run and four CTO-adoption cases. Its question-card case passes in **9,790 ms**, and the historical first-run CTO-adoption case passes in **30,063 ms**. The five failures match the import-boundary/DecisionAssignmentLinks/LeadWorkspace failures named in retained baseline evidence below. The pinned baseline's additional signed-out timeout passes here. The historical two-card cause remains unproven. No flaky or unrelated classification is made. The accepted host close/save prerequisite, atomic `ifMatch` dependency and all-copies requirement remain recorded. No live desktop validation is claimed.
+
+### Current description delivery
+
+The final supported description update for Mail PR77 returned HTTP 403, “Resource not accessible by integration”. The supported Executive PR91 read returned HTTP 404, so its update was not attempted. The exact replacement bodies and their hashes are retained. The pending step is for normal PureDev delivery to apply `docs/send-evidence-pr-description.md` from each app to Mail PR77 and Executive PR91. No credential or permission changes were attempted.
+
+## Review 2 — retained receipt-route correction
 
 A sender that had taken in the later edit used to create a random-id unsent draft in `settleReceipt`, while the receipt-aware file writer created a second stable-id draft. The controller now delegates to `draftAfterEarlierReceipt` using the complete approved snapshot, so controller, provider sync and persistence agree on comparison and the same `draft_compose_after_<draft>_<attempt>` identity. An existing derived draft is retained instead of appended again. This also prevents a spurious copy when attachment bytes/source prove sameness despite provider part-id bookkeeping.
 
