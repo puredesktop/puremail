@@ -113,9 +113,9 @@ is acknowledged links to the draft by the Message-ID PureMail gave it. A store
 that never held the draft imports it under the id that Message-ID names and marks
 it `importedFromProvider`; the store that made it speaks for it.
 
-The mailbox cache (`mail-store.json`) is still written whole from memory. Its
-messages can be re-fetched; its settings and local workflow state follow the
-last copy to save.
+The mailbox cache (`mail-store.json`) is merged too (`lib/storeFileMerge.ts`),
+three ways against what this copy last agreed with the file on: records by id,
+strings by value, objects by key. See `agents.md`, "Several running copies".
 
 Nothing goes in `localStorage`. A normal Gmail window serialises to about 6.4MB
 against a ~5MB origin quota, and past it every write throws silently — which is

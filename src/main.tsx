@@ -1,3 +1,4 @@
+import './heldInRoom'
 import { createRoot } from 'react-dom/client'
 import { bridge } from '@purescience/platform-ui/bridge/client'
 import { App } from './App'

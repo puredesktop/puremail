@@ -762,6 +762,8 @@ export interface MailStore {
   runs?: MailRun[]
   /** Notification preferences for incoming mail. */
   notificationPreferences?: MailNotificationPreferences
+  /** When any copy of Mail last synced the account, so a held copy can tell whether a tab is keeping it fresh. */
+  lastSyncedAt?: string
   /**
    * Set by providers on fetch results only: describes what the fetch actually
    * covered so the merge never treats uncovered threads as remotely deleted.

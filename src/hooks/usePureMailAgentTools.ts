@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { isHeldCopy } from '../lib/heldCopy'
 import { usePlatformAgentTools } from '@purescience/platform-ui/bridge/react/usePlatformAgentTools'
 import {
   AgentMailToolError,
@@ -99,6 +100,20 @@ export function answeringWithoutAccount<T extends Record<string, (...args: never
   return Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, name === 'getMailContext' ? handler : refuse])) as T
 }
 
+const HELD_COPY_MESSAGE =
+  'This is a copy of PureMail held in a page, which does not send mail or run send runs. Those happen in Mail\'s own tab. Say so in your answer rather than trying again; nothing was sent.'
+/** The tools that send, or start something that sends. Reading, drafting and looking at runs stay available. */
+const SENDING_TOOLS = new Set(['sendDraft', 'createRun', 'createRunFromDrafts', 'renderRun', 'resumeRun', 'sendRunItem'])
+
+/** A held copy never sends for an agent. A person's own click on Send is theirs, and goes through the one send path. */
+export function refusingSendsWhenHeld<T extends Record<string, (...args: never[]) => unknown>>(held: boolean, handlers: T): T {
+  if (!held) return handlers
+  const refuse = async () => {
+    throw new AgentMailToolError(HELD_COPY_MESSAGE)
+  }
+  return Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, SENDING_TOOLS.has(name) ? refuse : handler])) as T
+}
+
 export function usePureMailAgentTools(
   hasAccount: boolean,
   context: MailAgentToolContext,
@@ -114,7 +129,7 @@ export function usePureMailAgentTools(
     tools: PUREMAIL_AGENT_TOOL_NAMES,
     logLabel: PUREMAIL_AGENT_LOG_LABEL,
     errorType: AgentMailToolError,
-    handlers: answeringWithoutAccount(hasAccount, {
+    handlers: refusingSendsWhenHeld(isHeldCopy(), answeringWithoutAccount(hasAccount, {
       getMailContext: async () => getMailContextHandler(contextRef.current),
       getMessageNotes: async invoke => getMessageNotesHandler(contextRef.current, invoke.arguments ?? {}),
       addMessageNote: async invoke => addMessageNoteHandler(contextRef.current, invoke.arguments ?? {}),
@@ -222,6 +237,6 @@ export function usePureMailAgentTools(
         addDraftsToRunHandler(contextRef.current, invoke.arguments),
       archiveRun: async invoke =>
         archiveRunHandler(contextRef.current, invoke.arguments),
-    }),
+    })),
   })
 }

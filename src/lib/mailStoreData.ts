@@ -34,7 +34,7 @@ function strippedPersistedAttachment(attachment: Attachment): Attachment {
   return rest
 }
 
-function compactPersistedMessage(message: MailMessage): MailMessage {
+export function compactPersistedMessage(message: MailMessage): MailMessage {
   const attachments = message.attachments.some(
     attachment => attachment.content && attachment.remote,
   )

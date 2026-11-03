@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DraftsFileChanges } from '../lib/draftsFileMerge'
-import { syncDraftsFile, writeDraftsFileBeforeUnload, writePersistedMailStore } from '../lib/mailPersistence'
+import { syncDraftsFile, syncStoreFile, writeDraftsFileBeforeUnload, writePersistedMailStore } from '../lib/mailPersistence'
+import type { StoreFileChanges } from '../lib/storeFileMerge'
 import type { MailStore } from '../types'
 
 /** How long the store must sit still before it is written. */
@@ -8,6 +9,9 @@ const WRITE_DEBOUNCE_MS = 600
 
 /** How often a copy of Mail takes what other copies saved to the drafts file. */
 const DRAFTS_SYNC_MS = 15_000
+
+/** The mailbox file is far larger, so a copy looks at it on every fourth look (a minute), and on focus. */
+const STORE_FILE_EVERY = 4
 
 export interface MailPersistFailure {
   /** True when even the small drafts file could not be written. */
@@ -29,15 +33,18 @@ export interface MailPersistFailure {
  * Writes are coalesced, run off the render path, and never overlap: a change
  * arriving mid-write schedules exactly one more write when it finishes.
  *
- * Several copies of Mail can run over one file (a window and a split), so the
- * drafts file is merged on every write (lib/draftsFileMerge.ts) and what the
- * others saved comes back through `onDraftChanges`.
+ * Several copies of Mail can run over one file (a window, a split, a mini app),
+ * so both files are merged on every write (lib/draftsFileMerge.ts,
+ * lib/storeFileMerge.ts) and what the others saved comes back through
+ * `onDraftChanges` and `onStoreChanges`.
  */
 export function useMailStorePersistence(store: MailStore, input: {
   /** The latest store at write time: a render can lag what was already saved. */
   readStore?: () => MailStore
   /** Take drafts other copies saved into this copy's store. */
   onDraftChanges?: (changes: DraftsFileChanges) => void
+  /** Take what other copies saved to the mailbox file into this copy's store. */
+  onStoreChanges?: (changes: StoreFileChanges) => void
 } = {}): {
   persistFailure: MailPersistFailure | null
   /** Force an immediate write — used before the window goes away. */
@@ -60,6 +67,7 @@ export function useMailStorePersistence(store: MailStore, input: {
       try {
         const result = await writePersistedMailStore(snapshot ?? latestStore())
         inputRef.current.onDraftChanges?.(result.draftChanges)
+        inputRef.current.onStoreChanges?.(result.cacheChanges)
         if (result.draftsWritten && result.cacheWritten) setPersistFailure(null)
         else setPersistFailure({ draftsLost: !result.draftsWritten, message: result.error ?? 'The mail store could not be saved.' })
         if (requireDrafts && !result.draftsWritten) throw new Error('Draft delivery state could not be saved. Nothing was sent.')
@@ -71,14 +79,15 @@ export function useMailStorePersistence(store: MailStore, input: {
     writeTail.current = next
     return next
   })
-  const syncNow = useRef((): Promise<void> => {
+  const syncNow = useRef((withStoreFile = false): Promise<void> => {
     const next = writeTail.current.catch(() => {}).then(async () => {
       try {
         const changes = await syncDraftsFile(latestStore())
         inputRef.current.onDraftChanges?.(changes)
+        if (withStoreFile) inputRef.current.onStoreChanges?.(await syncStoreFile(latestStore()))
       } catch (error) {
         // The next write reports a real failure; a missed look changes nothing on disk.
-        console.warn('[puremail] drafts file could not be read:', error)
+        console.warn('[puremail] mail files could not be read:', error)
       }
     })
     writeTail.current = next
@@ -118,8 +127,9 @@ export function useMailStorePersistence(store: MailStore, input: {
     const onVisibility = (): void => {
       if (document.visibilityState === 'hidden' && takeDirty()) void writeNow.current()
     }
-    const onFocus = (): void => { void syncNow.current() }
-    const poll = window.setInterval(() => { void syncNow.current() }, DRAFTS_SYNC_MS)
+    const onFocus = (): void => { void syncNow.current(true) }
+    let looks = 0
+    const poll = window.setInterval(() => { looks += 1; void syncNow.current(looks % STORE_FILE_EVERY === 0) }, DRAFTS_SYNC_MS)
     window.addEventListener('beforeunload', onUnload)
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)

@@ -17,7 +17,10 @@ import {
 const storage = { appSlug: 'mail', fileName: 'mail-annotations.json' }
 
 export async function readAnnotationsFile(): Promise<AnnotationsFile> {
-  const { value } = await readPlatformStorageJson(storage)
+  return parseAnnotationsValue((await readPlatformStorageJson(storage)).value)
+}
+
+function parseAnnotationsValue(value: unknown): AnnotationsFile {
   if (value == null) return emptyAnnotationsFile()
   if ((value as { version?: unknown }).version !== 1) throw new Error('The reading room notes file is not one PureMail can read.')
   return parseAnnotationsFile(value)
@@ -25,13 +28,19 @@ export async function readAnnotationsFile(): Promise<AnnotationsFile> {
 
 /**
  * Changes the file under one lock across Mail windows, reading disk inside
- * the lock, so a stale window never replaces notes written in another.
+ * the lock, so a stale window never replaces notes written in another. A frame
+ * nested in another app's may not share that lock, so the write is also
+ * conditional: a copy saving in between makes the change run again on what it saved.
  */
 export async function updateAnnotationsFile(change: (file: AnnotationsFile) => AnnotationsFile): Promise<AnnotationsFile> {
   const run = async () => {
-    const next = change(await readAnnotationsFile())
-    await writePlatformStorageJson({ ...storage, value: next })
-    return next
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const read = await readPlatformStorageJson(storage)
+      const next = change(parseAnnotationsValue(read.value))
+      const written = await writePlatformStorageJson({ ...storage, value: next, ...(read.version !== undefined ? { ifMatch: read.version } : {}) })
+      if (!written.conflict) return next
+    }
+    throw new Error('Other copies of Mail kept saving notes at the same moment.')
   }
   return typeof navigator !== 'undefined' && navigator.locks ? navigator.locks.request('puremail:annotations-file', run) : run()
 }
