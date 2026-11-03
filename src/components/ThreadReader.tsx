@@ -1552,11 +1552,11 @@ export function ThreadReader({
             <ReaderToolbarPrimary type="button" onClick={focusReply}>
               {replyPrimaryLabel}
             </ReaderToolbarPrimary>
-            <ReaderToolbarButton type="button" onClick={focusReplyAll}>
+            <ReaderToolbarButton type="button" data-goes-next onClick={focusReplyAll}>
               <ReplyAll aria-hidden="true" />
               <ReaderToolbarLabel>all</ReaderToolbarLabel>
             </ReaderToolbarButton>
-            <ReaderToolbarButton type="button" onClick={forwardSelectedThread}>
+            <ReaderToolbarButton type="button" data-goes-next onClick={forwardSelectedThread}>
               <Forward aria-hidden="true" />
               <ReaderToolbarLabel>fwd</ReaderToolbarLabel>
             </ReaderToolbarButton>
@@ -1571,6 +1571,7 @@ export function ThreadReader({
             {onReadMessage ? (
               <ReaderToolbarButton
                 type="button"
+                data-goes-next
                 onClick={onReadMessage}
                 title="Read this message like an article, and note it for your reply or for yourself"
               >
@@ -1791,11 +1792,12 @@ export function ThreadReader({
             </ThreadActionsMenu>
           )}
         </BulkMenuWrap>
-        <ReaderPosition aria-label={`Thread ${threadPosition} of ${threadTotal}`}>
+        <ReaderPosition data-goes-first aria-label={`Thread ${threadPosition} of ${threadTotal}`}>
           {threadPosition} of {threadTotal}
         </ReaderPosition>
         <ReaderToolbarButton
           type="button"
+          data-goes-first
           aria-label="Newer thread (k)"
           disabled={threadPosition <= 1}
           onClick={() => selectAdjacentThread(-1)}
@@ -1804,6 +1806,7 @@ export function ThreadReader({
         </ReaderToolbarButton>
         <ReaderToolbarButton
           type="button"
+          data-goes-first
           aria-label="Older thread (j)"
           disabled={threadPosition >= threadTotal}
           onClick={() => selectAdjacentThread(1)}
