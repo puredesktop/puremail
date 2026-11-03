@@ -145,8 +145,26 @@ function sameReceiptAttachment(left: Attachment, right: Attachment): boolean {
   return Boolean(a && b && JSON.stringify(a) === JSON.stringify(b))
 }
 
+/** A separate unsent draft never owns the original's submission or provider copy. */
+export function unsentDraftAfterReceipt(draft: Draft, id: string): Draft {
+  return {
+    ...draft, id, syncState: 'pending',
+    sendAttempt: undefined, sendSupersedes: undefined, sendUncertainties: undefined,
+    sendState: undefined, sendError: undefined, sendUndoneAt: undefined,
+    sendSettledAttemptId: undefined, sendMessageId: undefined,
+    sentAt: undefined, sentMessageId: undefined, sentTo: undefined, sentCc: undefined, sentBcc: undefined,
+    sentWithoutReview: undefined, sentByAutomation: undefined, sentReviewBypassReason: undefined,
+    providerDraftId: undefined, providerDraftMessageId: undefined, providerDraftMessageIdHeader: undefined,
+    staleProviderDraftIds: undefined, providerRevision: undefined, providerAbsentOnce: undefined,
+    importedFromProvider: undefined, providerSaveUncertain: undefined, providerSaveWarning: undefined,
+    providerSaveError: undefined,
+  }
+}
+
 /** Keep later words and files apart when a receipt for a superseded submission arrives. */
 export function draftAfterEarlierReceipt(draft: Draft, receipt: MailMessage): { evidence: Draft; later?: Draft } {
+  // Another confirmed attempt already owns this record. Its receipt remains authoritative.
+  if (draft.sentAt) return { evidence: draft }
   const sameHtml = receipt.bodyHtml !== undefined
     ? (draft.bodyHtml ?? '') === receipt.bodyHtml
     : /^[a-f0-9]{64}$/.test(receipt.receiptBodyHtmlHash ?? '')
@@ -157,7 +175,7 @@ export function draftAfterEarlierReceipt(draft: Draft, receipt: MailMessage): { 
     JSON.stringify([draft.to, draft.cc ?? [], draft.bcc ?? []]) === JSON.stringify([receipt.to, receipt.cc ?? [], receipt.bcc ?? []]) &&
     draft.attachments.length === receipt.attachments.length && draft.attachments.every((file, index) => sameReceiptAttachment(file, receipt.attachments[index]))
   // The id is stable over repeated reads and conditional-write retries.
-  const later: Draft | undefined = !draft.sentAt && !same ? { ...draft, id: `draft_compose_after_${draft.id}_${receipt.sentAttemptId ?? receipt.id}`, sendAttempt: undefined, sendSupersedes: undefined, sendUncertainties: undefined, sendState: undefined, sendError: undefined, sendUndoneAt: undefined, sendSettledAttemptId: undefined, sendMessageId: undefined, sentAt: undefined, sentMessageId: undefined, providerDraftId: undefined, providerDraftMessageId: undefined, providerDraftMessageIdHeader: undefined, syncState: 'pending' } : undefined
+  const later = !same ? unsentDraftAfterReceipt(draft, `draft_compose_after_${draft.id}_${receipt.sentAttemptId ?? receipt.id}`) : undefined
   const evidence: Draft = { ...draft, attachments: Array.isArray(receipt.attachments) ? receipt.attachments : [], ...(complete ? { subject: receipt.subject, body: receipt.body, bodyHtml: receipt.bodyHtml, to: receipt.to, cc: receipt.cc ?? [], bcc: receipt.bcc ?? [], attachments: receipt.attachments } : {}), sentAt: receipt.receivedAt, sentMessageId: receipt.id }
   return { evidence, ...(later ? { later } : {}) }
 }

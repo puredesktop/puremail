@@ -352,7 +352,10 @@ function mergedDraftsFile(
   // Both cache and receipt compaction retain content identities. Older missing
   // evidence stays unknown; labels never stand in for attachment content.
   const receiptsOnFile = [...persistable.messages, ...(disk?.sentReceipts ?? [])]
-  const earlierReceipt = (record: { id: string; sendSupersedes?: string[] }) => receiptsOnFile.find(message => message.deliveryAccepted && message.sentDraftId === record.id && message.sentAttemptId && record.sendSupersedes?.includes(message.sentAttemptId))
+  // Allow retry frees editing; a second approval need not exist when the first receipt arrives.
+  const earlierReceipt = (record: Pick<Draft, 'id' | 'sendSupersedes' | 'sendSettledAttemptId'>) => receiptsOnFile.find(message =>
+    message.deliveryAccepted && message.sentDraftId === record.id && message.sentAttemptId &&
+    (record.sendSettledAttemptId === message.sentAttemptId || record.sendSupersedes?.includes(message.sentAttemptId)))
   const laterWords = new Map<string, Draft>()
   const fullDrafts = new Map(store.drafts.map(draft => [draft.id, draft]))
   const withEarlierReceipt = (record: Draft): Draft => {
@@ -363,7 +366,11 @@ function mergedDraftsFile(
     const full = fullDrafts.get(record.id)
     const comparison = full && (record === full || JSON.stringify(compactPersistedDraft(full)) === JSON.stringify(record)) ? full : record
     const { evidence, later } = draftAfterEarlierReceipt(comparison, receipt)
-    if (later && !persistable.drafts.some(draft => draft.id === later.id) && !disk?.drafts.some(draft => draft.id === later.id)) { const previous = laterWords.get(later.id); if (!previous || Date.parse(later.updatedAt) > Date.parse(previous.updatedAt)) laterWords.set(later.id, compactPersistedDraft(later)) }
+    const discarded = later && (thisCopy.discards.has(later.id) || disk?.draftTombstones.some(tombstone => tombstone.id === later.id))
+    if (later && !discarded && !persistable.drafts.some(draft => draft.id === later.id) && !disk?.drafts.some(draft => draft.id === later.id)) {
+      const previous = laterWords.get(later.id)
+      if (!previous || Date.parse(later.updatedAt) > Date.parse(previous.updatedAt)) laterWords.set(later.id, compactPersistedDraft(later))
+    }
     return evidence
   }
   const drafts = mergeRecords<Draft>({

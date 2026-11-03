@@ -1,8 +1,12 @@
-# Current attachment continuation
+# Current attachment review follow-up
 
-Final worker checks: Mail **1,601 passed/117 files**, typecheck/build 0. Executive **631 passed/5 baseline failures/114 files**, typecheck/build 0; all 62 consumer cases pass. The completed pinned full baseline is **556 passed/6 failed/107 files**, including an additional signed-out timeout. The CTO question case passes in both full suites; the earlier two-card cause is not declared flaky or unrelated. Nothing is committed by this worker.
+Current reviewed delivery: **[Mail PR77](https://github.com/puredesktop/puremail/pull/77)** at `6047fc4735fbc8485e48b862eb1d9f4212cc4ee6`, paired with **[Executive PR91](https://github.com/purescience-inc/pureexecutive/pull/91)** at `cee10343cd1088919325549efc8fae392b457e02`, branch `puredev/keep-replacement-attachments-when-late-r-f83756`. PureDev committed and pushed the prior worker result. These review fixes are uncommitted; PureDev owns their next delivery. The earlier Mail PR73/Executive PR77 are predecessor evidence, not the current pair; no closing or merge was performed.
 
-See [replacement attachments and late receipts](send-attachment-handoff.md) and [the current source/check manifest](send-attachment-verification.json) for the current candidate, results and delivery status. The text below is retained **task5 historical evidence**, including its precise limitations and earlier failed stages; it is not a claim that those are the current heads or current checks.
+Final review checks: **Mail 1,627 passed / 118 files**, typecheck/build 0; **Executive 631 passed / 5 established baseline failures / 114 files**, typecheck/build 0. All 62 consumer cases and the CTO question/adoption cases pass. The 26 new regression assertions fail against the delivered Mail production before the correction.
+
+See [the current handoff](send-attachment-handoff.md) and [source/check manifest](send-attachment-verification.json) for the retry-without-reapproval correction, discard and confirmation guards, new checks and current posting status. The text below is retained **task5 historical evidence**, including its original prepared description and failed stages. Its branch/PR identities, posting failures and no-commit statements describe that historical stage only.
+
+Current posting: the Mail PR77 description update returned **403**; Executive PR91's supported read returned **404**. Exact replacements are saved for PureDev to apply to that current pair; no post is claimed.
 
 # Send evidence continuation — req-0039 task4
 

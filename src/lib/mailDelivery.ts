@@ -1,5 +1,5 @@
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
-import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, draftReleaseBlock, settleDraftNotSent, stopDraftSchedules } from './mailDeliveryStatus'
+import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, draftReleaseBlock, settleDraftNotSent, stopDraftSchedules, unsentDraftAfterReceipt } from './mailDeliveryStatus'
 import { recordConfirmedSent } from './draftsFileMerge'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
@@ -18,9 +18,14 @@ export class MailSendError extends Error {
  */
 export function settleReceipt(store: MailStore, sent: Draft, attemptId: string, approved: string, options: Parameters<typeof sendDraft>[3]): MailStore {
   const current = store.drafts.find(item => item.id === sent.id)
+  if (current?.sentAt) {
+    // File the older receipt, without replacing a different confirmed record.
+    const done = sendDraft({ ...store, drafts: store.drafts.map(item => item.id === sent.id ? sent : item) }, sent.id, undefined, options)
+    return { ...done, drafts: store.drafts }
+  }
   const movedOn = current && (Boolean(current.sendUncertainties?.length) || (current.sendAttempt && current.sendAttempt.id !== attemptId) || (current.sendSettledAttemptId && current.sendSettledAttemptId !== attemptId) || draftSendFingerprint(finalizeRunDraftForSend(current)) !== approved)
   if (!current || !movedOn) return sendDraft(store, sent.id, undefined, options)
-  const later: Draft = { ...current, id: `draft_compose_${crypto.randomUUID()}`, sendAttempt: undefined, sendSupersedes: undefined, sendUncertainties: undefined, sendState: undefined, sendError: undefined, sendUndoneAt: undefined, sendSettledAttemptId: undefined, sendMessageId: undefined, sentAt: undefined, sentMessageId: undefined, sentTo: undefined, sentCc: undefined, sentBcc: undefined, providerDraftId: undefined, providerDraftMessageId: undefined, providerDraftMessageIdHeader: undefined, syncState: 'pending' }
+  const later = unsentDraftAfterReceipt(current, `draft_compose_${crypto.randomUUID()}`)
   const done = sendDraft({ ...store, drafts: store.drafts.map(item => (item.id === sent.id ? { ...sent, sendAttempt: undefined } : item)) }, sent.id, undefined, options)
   return { ...done, drafts: [...done.drafts, ...(draftSendFingerprint(finalizeRunDraftForSend(current)) !== approved ? [later] : []), { ...current, to: sent.to, cc: sent.cc, bcc: sent.bcc, subject: sent.subject, body: sent.body, bodyHtml: sent.bodyHtml, attachments: sent.attachments, sentAt: options?.sentMessage?.receivedAt ?? new Date().toISOString(), sentMessageId: options?.sentMessageId }] }
 }

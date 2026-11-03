@@ -565,6 +565,10 @@
           "gitBlob": "cb84b8345e9a82037f6e1e0bee327cd8b3393588",
           "sha256": "699aba7d473f9e6328dbba9b4f17284174bc866de5464d3a5086f6bec08ba5bf"
         },
+        "src/lib/mailReceiptRevisions.test.ts": {
+          "gitBlob": "291954384e4d5d069930539c0fc752e9c813b89d",
+          "sha256": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+        },
         "src/lib/mailPersistence.test.ts": {
           "gitBlob": "69d820fbcb7a395ea0dc2d193a1ed55aa3c27989",
           "sha256": "1bd2264b4f77516dc9967b55cf13bb84b3323f3a9c611ac25c8733a342327018"
@@ -658,12 +662,12 @@
           "sha256": "2acc7fbaf5a3105ed6e0b9e194f959954862b42ea6ff99475f451bf8223729f9"
         },
         "src/lib/mailDeliveryStatus.ts": {
-          "gitBlob": "b8878500ef10a9c5f98878cd16c79a82f0d02f72",
-          "sha256": "5bbc965d690aef01d7c622140435b7a7d7d6b65e565487dd443b5687471d1fef"
+          "gitBlob": "7a6f71841a86070893538bf020c0d5969c4f8f51",
+          "sha256": "9841030852d374f6ab81e8111b3589c31c6d16115cc23d6944fc0bedc58122e4"
         },
         "src/lib/mailDelivery.ts": {
-          "gitBlob": "5ea1036ce49f8141eb1ccad9c418faf83ec6c586",
-          "sha256": "04b6df90c3c7d62a077d674bb0b20f683ad820c357739f9b33ecbbb78393173e"
+          "gitBlob": "a943bfaf1c4cc8eb81b43bc103c5761ad4b5403d",
+          "sha256": "ac60d9b0bf3ab7a4fbdbd99217d83a8a6821eb59b3295cfcc101ec783972c1f7"
         },
         "src/lib/mailListFilters.ts": {
           "gitBlob": "54ef4080aa56e790128795e05cfb910c383330c8",
@@ -970,8 +974,8 @@
           "sha256": "fe5cf54421dc99895e941f7bb0f6e696e1c9e3eabf07404e821dcbfa8390221e"
         },
         "src/lib/mailPersistence.ts": {
-          "gitBlob": "a8879d4de0ae80fcc2c9bd9f89b5a8784376e309",
-          "sha256": "ca3ca4e03e491c3801c2ae5fc4adf87e530f376f3c148ed2be8172be9b3e8a6a"
+          "gitBlob": "7ccb55baa9b6e7d1cb03b55be999887770aa8d54",
+          "sha256": "25ef48cc2d1d7cda2dd7a3da923c0c6382b452322d56f2f2f59ed20120b530a5"
         },
         "src/lib/composeWindowMode.ts": {
           "gitBlob": "4880ca34bd9f3d8ccb1a0e3a1bad067832ede163",
@@ -1050,8 +1054,8 @@
           "sha256": "65286667c23c3fc6cb5eaac0ebb19c1b257a517fbc6d56c13564d46864ae7abc"
         },
         "src/lib/twoCopies.test.ts": {
-          "gitBlob": "bf4b456bd84375f0f8f659b6d8319bc5c6f28870",
-          "sha256": "9de778bb3b4057e2a53df6d3425a56b9a0afc177347f633aec5e9e2377cfc320"
+          "gitBlob": "3a8b88d1bf3296d9f6ce4cce4a1b1a3d7c4ef13a",
+          "sha256": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b"
         },
         "src/lib/remoteImagePolicy.test.ts": {
           "gitBlob": "44f706b5f3ec070b3c4794699a5e682c46a0c865",
@@ -1136,9 +1140,17 @@
           "gitBlob": "9ccf7f3ac6c09c3355c110087ec4f1ca102e39e0",
           "sha256": "76e24b8ed7823b33707a9752146a43f0c1d35c011b6e22e54689ab89c3d91b2b"
         },
+        "src/components/composeStash.test.tsx": {
+          "gitBlob": "af7462aa7c487dc6ea2b9b73a2da3a0365cd6cfd",
+          "sha256": "3f4b7a6759bfe7a094abb30f9c02aa5dfd5385778d814c5a09e1d95cba1bc84c"
+        },
         "src/hooks/usePureMailAgentTools.ts": {
           "gitBlob": "208bff18873eea139689f8733ec6aa1732ae8c70",
           "sha256": "592226e2a7e6364fdfdbca52fd19672fe7909b421354df7fa8ff52149842d634"
+        },
+        "src/lib/mailReceiptRevisions.test.ts": {
+          "gitBlob": "291954384e4d5d069930539c0fc752e9c813b89d",
+          "sha256": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
         },
         "src/lib/mailSendSettlement.test.tsx": {
           "gitBlob": "20f16cd6663fd34d4ebd48eb00a6671a930c2afd",
@@ -1153,8 +1165,16 @@
           "sha256": "943e05f95d3f58f6dfd0b65122d19bd1660d855a05c4dafe23c36e1e80ca316a"
         },
         "src/lib/mailDeliveryStatus.ts": {
-          "gitBlob": "b8878500ef10a9c5f98878cd16c79a82f0d02f72",
-          "sha256": "5bbc965d690aef01d7c622140435b7a7d7d6b65e565487dd443b5687471d1fef"
+          "gitBlob": "7a6f71841a86070893538bf020c0d5969c4f8f51",
+          "sha256": "9841030852d374f6ab81e8111b3589c31c6d16115cc23d6944fc0bedc58122e4"
+        },
+        "src/lib/mailDelivery.ts": {
+          "gitBlob": "a943bfaf1c4cc8eb81b43bc103c5761ad4b5403d",
+          "sha256": "ac60d9b0bf3ab7a4fbdbd99217d83a8a6821eb59b3295cfcc101ec783972c1f7"
+        },
+        "src/lib/mailStoreData.ts": {
+          "gitBlob": "e0736ece6314f712240c7594070a882a398ab228",
+          "sha256": "5c1334a6d1c92bd815bf5a4c64e786e6302a7e1f74ca25b3aa1c08235fd93d4a"
         },
         "src/lib/archiveSweepPersistence.ts": {
           "gitBlob": "0a52418b42e322dc0495019b1a5663d9b792639f",
@@ -1169,8 +1189,8 @@
           "sha256": "2d1c6e60e70417ce51f8fc23abbdacad6f2083cee3624204171bfc7f91106923"
         },
         "src/lib/mailPersistence.ts": {
-          "gitBlob": "a8879d4de0ae80fcc2c9bd9f89b5a8784376e309",
-          "sha256": "ca3ca4e03e491c3801c2ae5fc4adf87e530f376f3c148ed2be8172be9b3e8a6a"
+          "gitBlob": "7ccb55baa9b6e7d1cb03b55be999887770aa8d54",
+          "sha256": "25ef48cc2d1d7cda2dd7a3da923c0c6382b452322d56f2f2f59ed20120b530a5"
         },
         "src/lib/archiveSweep.test.ts": {
           "gitBlob": "5d996fce963033e998a4fdd13768949526880634",
@@ -1189,8 +1209,8 @@
           "sha256": "65286667c23c3fc6cb5eaac0ebb19c1b257a517fbc6d56c13564d46864ae7abc"
         },
         "src/lib/twoCopies.test.ts": {
-          "gitBlob": "bf4b456bd84375f0f8f659b6d8319bc5c6f28870",
-          "sha256": "9de778bb3b4057e2a53df6d3425a56b9a0afc177347f633aec5e9e2377cfc320"
+          "gitBlob": "3a8b88d1bf3296d9f6ce4cce4a1b1a3d7c4ef13a",
+          "sha256": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b"
         },
         "src/lib/imapMailProvider.ts": {
           "gitBlob": "76db7cf289b40a980b4d7ee3400060a3f15cae60",
@@ -1199,74 +1219,92 @@
         "plugin.json": {
           "gitBlob": "3e047e338726781ebc23de99273cf8759680897f",
           "sha256": "d3622b87b34c3c2d5fa1674ccc1c15b55b81f2412c5e43bb26d78cf5843abeee"
-        },
-        "src/components/composeStash.test.tsx": {
-          "gitBlob": "af7462aa7c487dc6ea2b9b73a2da3a0365cd6cfd",
-          "sha256": "3f4b7a6759bfe7a094abb30f9c02aa5dfd5385778d814c5a09e1d95cba1bc84c"
-        },
-        "src/lib/mailStoreData.ts": {
-          "gitBlob": "e0736ece6314f712240c7594070a882a398ab228",
-          "sha256": "5c1334a6d1c92bd815bf5a4c64e786e6302a7e1f74ca25b3aa1c08235fd93d4a"
         }
       },
       "candidateChangesFromStartingHead": {
-        "plugin.json": "3e047e338726781ebc23de99273cf8759680897f",
-        "src/agents/catalog.ts": "ee478dfea9170c9d09948146fa0f7071cadd5d78",
-        "src/agents/handlers.ts": "f5f147188bcab64488a08ac3e1903117626c8d84",
+        "src/types.ts": "43f6424cd84b6bcd71ba94c1011ab3d383baf589",
+        "src/test/lateReceiptAttachments.ts": "7c57b192db74317af6d3b972027eaebfdb5eca29",
         "src/agents/runHandlers.test.ts": "b0418b3c68439e187dabc00a35ff963ec5a95144",
         "src/agents/runHandlers.ts": "7ffd2a8efefae1c7b7f238b98c7efd1a4dc398bc",
+        "src/agents/handlers.ts": "f5f147188bcab64488a08ac3e1903117626c8d84",
         "src/agents/sendDraft.test.ts": "92e9fb0fccb2639a29bb45c1a35a878fb9b7e197",
+        "src/agents/catalog.ts": "ee478dfea9170c9d09948146fa0f7071cadd5d78",
+        "src/components/runCardState.ts": "c865e5b36873c6a90d8e1969bb9fc4887bb7be19",
         "src/components/ComposeEditor.laterWords.test.tsx": "5d4c2a50ba6535ad32c246d77e91258adf5f8ca6",
-        "src/components/ComposeEditor.sendGuard.test.tsx": "a0c7ee4d9939fe7a8520705e27335611c0adfe2c",
         "src/components/ComposeEditor.tsx": "5fa7d17821e69bb831f5c9f18b3c9e2c62b64e92",
         "src/components/PureMailShell.tsx": "9738f0b5e11224ebfe93f199e115a372fbbae21d",
-        "src/components/RunScreen.tsx": "3af2a86f96740e72313fc74bd69a2d5b1ecc925e",
-        "src/components/ThreadReader.tsx": "6d60c7d43b70f1fa0cd426da742b8cd8086cc1cb",
         "src/components/composeStash.test.tsx": "af7462aa7c487dc6ea2b9b73a2da3a0365cd6cfd",
+        "src/components/RunScreen.tsx": "3af2a86f96740e72313fc74bd69a2d5b1ecc925e",
+        "src/components/ComposeEditor.sendGuard.test.tsx": "a0c7ee4d9939fe7a8520705e27335611c0adfe2c",
         "src/components/mailShellHelpers.ts": "b8f3c5d9b998cbe2ea290697342376fa357abd19",
-        "src/components/runCardState.ts": "c865e5b36873c6a90d8e1969bb9fc4887bb7be19",
-        "src/hooks/useComposeDraftAutosave.sending.test.tsx": "7b227cb1e9c0213e5fa983d754140d5aeb46ba06",
-        "src/hooks/useComposeDraftAutosave.ts": "317ffb138800f4f366fa055c9a00d37b1904e7eb",
-        "src/hooks/useDraftProviderSync.test.tsx": "471fb5589e66942bdce52e99183cc4f7f58b54a1",
+        "src/components/ThreadReader.tsx": "6d60c7d43b70f1fa0cd426da742b8cd8086cc1cb",
         "src/hooks/useDraftProviderSync.ts": "fe3ff22ceee3548bbad64eba9edd44abbafa6be0",
-        "src/hooks/useExecutiveMailShare.ts": "9c2daf1411f62fb271979772cc1fb199376b784e",
+        "src/hooks/useScheduledSends.persistence.test.tsx": "4711ac465d4883529ab245ef9fe4ec212366939d",
         "src/hooks/useMailStorePersistence.test.tsx": "e2ce3f92dad79846020b132ead8250f4a956572b",
         "src/hooks/usePendingSend.ts": "6dc2112b86258f6e90d01968409fb08956a8f7bb",
-        "src/hooks/usePureMailBoot.ts": "76347f6d80b365fabb232cc2e54726d10dad580f",
-        "src/hooks/usePureMailBootRecovery.test.tsx": "545fe81b8ecbd388559f8f6f008c97771b36485d",
-        "src/hooks/useScheduledSends.persistence.test.tsx": "4711ac465d4883529ab245ef9fe4ec212366939d",
-        "src/hooks/useScheduledSends.test.tsx": "d78537cffe8b873b21b331da7221be81d1bda52d",
+        "src/hooks/useComposeDraftAutosave.ts": "317ffb138800f4f366fa055c9a00d37b1904e7eb",
         "src/hooks/useScheduledSends.ts": "9d42f1e9567ba5cf475c2e52465a9789e79cc810",
-        "src/lib/composeAttachments.test.ts": "507d84c5b73788167b8a67dc56b611e32adbb81a",
-        "src/lib/composeAttachments.ts": "f6081cef84ea605000f8ac04b1d0bd344d1f573e",
-        "src/lib/draftIdentity.test.ts": "7eed2b1a44eaa08baa961acb189d2cd2712a13ff",
-        "src/lib/draftsFileMerge.test.ts": "8711544dac40c5b09a2bad8f6a088da8fccf8c5c",
-        "src/lib/draftsFileMerge.ts": "8bcb091a4dfb26c15d29d25f1f41be76189d3b34",
-        "src/lib/executiveShare.test.ts": "3a64a7d6a50e74d5f7ebf39cac00bff553d5947a",
+        "src/hooks/useScheduledSends.test.tsx": "d78537cffe8b873b21b331da7221be81d1bda52d",
+        "src/hooks/usePureMailBootRecovery.test.tsx": "545fe81b8ecbd388559f8f6f008c97771b36485d",
+        "src/hooks/useDraftProviderSync.test.tsx": "471fb5589e66942bdce52e99183cc4f7f58b54a1",
+        "src/hooks/useComposeDraftAutosave.sending.test.tsx": "7b227cb1e9c0213e5fa983d754140d5aeb46ba06",
+        "src/hooks/useExecutiveMailShare.ts": "9c2daf1411f62fb271979772cc1fb199376b784e",
+        "src/hooks/usePureMailBoot.ts": "76347f6d80b365fabb232cc2e54726d10dad580f",
+        "src/lib/mailDrawerDrafts.test.ts": "756319174888af7af504a0ffe988f20a477ae8ca",
+        "src/lib/mailReceiptRevisions.test.ts": "291954384e4d5d069930539c0fc752e9c813b89d",
+        "src/lib/mailPersistence.test.ts": "69d820fbcb7a395ea0dc2d193a1ed55aa3c27989",
+        "src/lib/mailSendSettlement.test.tsx": "20f16cd6663fd34d4ebd48eb00a6671a930c2afd",
+        "src/lib/mailSendOwners.ts": "235f383330c807cdf5e33d5f4a84fac08a19487f",
         "src/lib/executiveShare.ts": "64f9f5027a219c9d7c897a7c95c731dd74043eaf",
-        "src/lib/imapMailProvider.ts": "76db7cf289b40a980b4d7ee3400060a3f15cae60",
+        "src/lib/mailModel.ts": "51d48aeefaa21db7649cb2f8de3c3fc2bbc5fbfa",
+        "src/lib/mailDeliveryStatus.ts": "7a6f71841a86070893538bf020c0d5969c4f8f51",
+        "src/lib/mailDelivery.ts": "a943bfaf1c4cc8eb81b43bc103c5761ad4b5403d",
+        "src/lib/mailStoreData.ts": "e0736ece6314f712240c7594070a882a398ab228",
+        "src/lib/mailSendOutcome.test.tsx": "e63ad759956683fe7c926406e893a41def9694e2",
+        "src/lib/executiveShare.test.ts": "3a64a7d6a50e74d5f7ebf39cac00bff553d5947a",
+        "src/lib/mailDrawerDrafts.ts": "c5267e6210a167b901283d2e9800c9909cf10348",
+        "src/lib/draftsFileMerge.test.ts": "8711544dac40c5b09a2bad8f6a088da8fccf8c5c",
+        "src/lib/composeAttachments.test.ts": "507d84c5b73788167b8a67dc56b611e32adbb81a",
+        "src/lib/mailRuns.ts": "47428895bdbf5176e97be72e40ae7d9e3945050f",
+        "src/lib/mailRuns.test.ts": "ddc703985474ebed9545968dc8cb8570bf8942e0",
+        "src/lib/composeAttachments.ts": "f6081cef84ea605000f8ac04b1d0bd344d1f573e",
+        "src/lib/mailSendRelease.ts": "8b0d457661bfa61d20569ab5ad15e3f3490728c7",
+        "src/lib/mailModel.test.ts": "26932b0cfaed52c030f6ef7eaf448b9240988fa0",
+        "src/lib/mailPersistence.ts": "7ccb55baa9b6e7d1cb03b55be999887770aa8d54",
+        "src/lib/storeFileMerge.ts": "7c930785ca8a5995f99bb565ed510f9dad22b219",
+        "src/lib/draftsFileMerge.ts": "8bcb091a4dfb26c15d29d25f1f41be76189d3b34",
         "src/lib/mailAttachmentIdentity.test.ts": "5409ea3a075a3ed03a9631d33cd7e01da797bfd5",
         "src/lib/mailAttachmentIdentity.ts": "40aa562f5c9ae86c88c46a8bf6b69c4d106973bc",
-        "src/lib/mailDelivery.ts": "5ea1036ce49f8141eb1ccad9c418faf83ec6c586",
-        "src/lib/mailDeliveryStatus.ts": "b8878500ef10a9c5f98878cd16c79a82f0d02f72",
-        "src/lib/mailDrawerDrafts.test.ts": "756319174888af7af504a0ffe988f20a477ae8ca",
-        "src/lib/mailDrawerDrafts.ts": "c5267e6210a167b901283d2e9800c9909cf10348",
-        "src/lib/mailModel.test.ts": "26932b0cfaed52c030f6ef7eaf448b9240988fa0",
-        "src/lib/mailModel.ts": "51d48aeefaa21db7649cb2f8de3c3fc2bbc5fbfa",
-        "src/lib/mailPersistence.test.ts": "69d820fbcb7a395ea0dc2d193a1ed55aa3c27989",
-        "src/lib/mailPersistence.ts": "a8879d4de0ae80fcc2c9bd9f89b5a8784376e309",
-        "src/lib/mailRuns.test.ts": "ddc703985474ebed9545968dc8cb8570bf8942e0",
-        "src/lib/mailRuns.ts": "47428895bdbf5176e97be72e40ae7d9e3945050f",
-        "src/lib/mailSendOutcome.test.tsx": "e63ad759956683fe7c926406e893a41def9694e2",
-        "src/lib/mailSendOwners.ts": "235f383330c807cdf5e33d5f4a84fac08a19487f",
-        "src/lib/mailSendRelease.ts": "8b0d457661bfa61d20569ab5ad15e3f3490728c7",
-        "src/lib/mailSendSettlement.test.tsx": "20f16cd6663fd34d4ebd48eb00a6671a930c2afd",
-        "src/lib/mailStoreData.ts": "e0736ece6314f712240c7594070a882a398ab228",
-        "src/lib/storeFileMerge.ts": "7c930785ca8a5995f99bb565ed510f9dad22b219",
-        "src/lib/twoCopies.test.ts": "bf4b456bd84375f0f8f659b6d8319bc5c6f28870",
-        "src/test/lateReceiptAttachments.ts": "7c57b192db74317af6d3b972027eaebfdb5eca29",
-        "src/types.ts": "43f6424cd84b6bcd71ba94c1011ab3d383baf589"
-      }
+        "src/lib/draftIdentity.test.ts": "7eed2b1a44eaa08baa961acb189d2cd2712a13ff",
+        "src/lib/twoCopies.test.ts": "3a8b88d1bf3296d9f6ce4cce4a1b1a3d7c4ef13a",
+        "src/lib/imapMailProvider.ts": "76db7cf289b40a980b4d7ee3400060a3f15cae60",
+        "plugin.json": "3e047e338726781ebc23de99273cf8759680897f"
+      },
+      "reviewStartingCommit": "6047fc4735fbc8485e48b862eb1d9f4212cc4ee6",
+      "reviewStartingTree": "9e888ee34cdd61e4af9253c72997653e3452b639",
+      "reviewChangesFromDeliveredHead": {
+        "src/lib/mailReceiptRevisions.test.ts": {
+          "gitBlob": "291954384e4d5d069930539c0fc752e9c813b89d",
+          "sha256": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+        },
+        "src/lib/mailDeliveryStatus.ts": {
+          "gitBlob": "7a6f71841a86070893538bf020c0d5969c4f8f51",
+          "sha256": "9841030852d374f6ab81e8111b3589c31c6d16115cc23d6944fc0bedc58122e4"
+        },
+        "src/lib/mailDelivery.ts": {
+          "gitBlob": "a943bfaf1c4cc8eb81b43bc103c5761ad4b5403d",
+          "sha256": "ac60d9b0bf3ab7a4fbdbd99217d83a8a6821eb59b3295cfcc101ec783972c1f7"
+        },
+        "src/lib/mailPersistence.ts": {
+          "gitBlob": "7ccb55baa9b6e7d1cb03b55be999887770aa8d54",
+          "sha256": "25ef48cc2d1d7cda2dd7a3da923c0c6382b452322d56f2f2f59ed20120b530a5"
+        },
+        "src/lib/twoCopies.test.ts": {
+          "gitBlob": "3a8b88d1bf3296d9f6ce4cce4a1b1a3d7c4ef13a",
+          "sha256": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b"
+        }
+      },
+      "reviewProductionConfigMatchesDelivered": false
     },
     "pureexecutive": {
       "startingCommit": "0303b1e7978a839ea36ab71fd1fc55f19b4380a2",
@@ -2564,14 +2602,18 @@
         }
       },
       "candidateChangesFromStartingHead": {
+        "src/runner/host.replies.test.ts": "e4776e2b1fea00aa38cf6b6ad31e46f387be57c2",
+        "src/runner/dispatcher.ts": "0a1f50a8d98d04d0ea969bb4dba9dc074b5b2a57",
+        "src/screens/ReplyCard.tsx": "864a5b07362e086142548d86c0d589432b62f5d1",
+        "src/screens/ReplyCard.test.tsx": "7b2db257bd3361d8234eb1f3ce87d9149be3b33c",
         "src/lib/releases.ts": "bf4f631e4da0ce86b5e17a411f0587933076203a",
         "src/lib/replies.test.ts": "6c203000cf09df689aae5fe8f8d30c92f721ea6f",
-        "src/lib/replies.ts": "5b444497b78ed14b17964dfd29124b24eb4286ec",
-        "src/runner/dispatcher.ts": "0a1f50a8d98d04d0ea969bb4dba9dc074b5b2a57",
-        "src/runner/host.replies.test.ts": "e4776e2b1fea00aa38cf6b6ad31e46f387be57c2",
-        "src/screens/ReplyCard.test.tsx": "7b2db257bd3361d8234eb1f3ce87d9149be3b33c",
-        "src/screens/ReplyCard.tsx": "864a5b07362e086142548d86c0d589432b62f5d1"
-      }
+        "src/lib/replies.ts": "5b444497b78ed14b17964dfd29124b24eb4286ec"
+      },
+      "reviewStartingCommit": "cee10343cd1088919325549efc8fae392b457e02",
+      "reviewStartingTree": "b2f2558ab3f962f11b6c7942ed9e12f246810720",
+      "reviewChangesFromDeliveredHead": {},
+      "reviewProductionConfigMatchesDelivered": true
     }
   },
   "configs": {
@@ -2837,13 +2879,13 @@
       "src/lib/mailDelivery.ts": {
         "task5TestedBlob": "5ea1036ce49f8141eb1ccad9c418faf83ec6c586",
         "retainedCommitBlob": "5ea1036ce49f8141eb1ccad9c418faf83ec6c586",
-        "currentBlob": "5ea1036ce49f8141eb1ccad9c418faf83ec6c586",
-        "unchanged": true
+        "currentBlob": "a943bfaf1c4cc8eb81b43bc103c5761ad4b5403d",
+        "unchanged": false
       },
       "src/lib/mailDeliveryStatus.ts": {
         "task5TestedBlob": "c9638c452003f918cc142917e9cb2678e473c198",
         "retainedCommitBlob": "c9638c452003f918cc142917e9cb2678e473c198",
-        "currentBlob": "b8878500ef10a9c5f98878cd16c79a82f0d02f72",
+        "currentBlob": "7a6f71841a86070893538bf020c0d5969c4f8f51",
         "unchanged": false
       },
       "src/lib/mailModel.test.ts": {
@@ -2867,7 +2909,7 @@
       "src/lib/mailPersistence.ts": {
         "task5TestedBlob": "2d1c3d98c336e73c337390e12e9ab814c1e4848d",
         "retainedCommitBlob": "2d1c3d98c336e73c337390e12e9ab814c1e4848d",
-        "currentBlob": "a8879d4de0ae80fcc2c9bd9f89b5a8784376e309",
+        "currentBlob": "7ccb55baa9b6e7d1cb03b55be999887770aa8d54",
         "unchanged": false
       },
       "src/lib/mailSendSettlement.test.tsx": {
@@ -2885,7 +2927,7 @@
       "src/lib/twoCopies.test.ts": {
         "task5TestedBlob": "4a082b7110c98fd7bbb109038adf777c932c6d0f",
         "retainedCommitBlob": "4a082b7110c98fd7bbb109038adf777c932c6d0f",
-        "currentBlob": "bf4b456bd84375f0f8f659b6d8319bc5c6f28870",
+        "currentBlob": "3a8b88d1bf3296d9f6ce4cce4a1b1a3d7c4ef13a",
         "unchanged": false
       },
       "src/types.ts": {
@@ -2937,27 +2979,38 @@
     }
   },
   "normalDelivery": {
-    "id": "0f31748e-9acb-4752-9849-8f358b30f3cf",
-    "taskId": "09d28175-8cad-4d15-8635-2041a7f2980b",
-    "commit": "2bdde1f8512128b2fa7aa7b532f5b34ce0a29837",
-    "pushedAt": "2026-11-03T05:46:51.420Z",
-    "prUrl": "https://github.com/puredesktop/puremail/pull/73",
-    "branch": "puredev/keep-prepared-message-sending-status-con-a8e28e",
+    "id": "f8375650-4011-43d2-8dd2-d5f64d3fd3dd",
+    "phase": "fixing",
+    "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+    "commit": "6047fc4735fbc8485e48b862eb1d9f4212cc4ee6",
+    "prUrl": "https://github.com/puredesktop/puremail/pull/77",
+    "pushedAt": "2026-11-03T18:12:44.878Z",
     "together": [
       {
         "label": "pureexecutive",
         "repo": "/Users/adamhyde/.puredev/preview/workspace/Repos/pureexecutive",
         "app": "purescience-inc/pureexecutive",
-        "branch": "puredev/keep-prepared-message-sending-status-con-a8e28e",
-        "prUrl": "https://github.com/purescience-inc/pureexecutive/pull/77",
+        "baseCommit": "0303b1e7978a839ea36ab71fd1fc55f19b4380a2",
         "base": "main",
-        "baseCommit": "4527334abca249cfaf61125ca49553fd44365c51",
+        "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+        "worktree": "/Users/adamhyde/.puredev/worktrees/pureexecutive-f83756",
         "baseline": [],
-        "commit": "c7696c29e6bda097dbb29cec638bac27ad5e6cf3"
+        "commit": "cee10343cd1088919325549efc8fae392b457e02",
+        "pushedAt": "2026-11-03T18:12:44.878Z",
+        "prUrl": "https://github.com/purescience-inc/pureexecutive/pull/91"
+      },
+      {
+        "label": "ps-suite",
+        "repo": "/Users/adamhyde/ps-suite",
+        "project": "shell",
+        "baseCommit": "e254ecef1c18fb6ce438df7b68d85b86f7157bf2",
+        "base": "main",
+        "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+        "worktree": "/Users/adamhyde/.puredev/worktrees/ps-suite-f83756",
+        "baseline": []
       }
     ],
-    "phase": "needs-you",
-    "reviews": []
+    "taskId": "3d9672d2-1950-4b7d-baa3-8aee605ca0ae"
   },
   "evidenceFiles": {
     "task5-normal-delivery.json": {
@@ -2971,6 +3024,16 @@
     "description-update.json": {
       "sha256": "ff560372d61a73213d0a6163404c8ddc77a15804dae9518943f5c2c39071314c",
       "bytes": 476
+    },
+    "reviewNormalDelivery": {
+      "path": ".verification/review-normal-delivery.json",
+      "gitBlob": "f28572fa2672aaed59f1f790f8174ec29364d0a7",
+      "sha256": "7f7c2dd7b09a9fae3d42186e42299b8ba71de6b3ac4039df6e8279fdc0bfcf28"
+    },
+    "reviewSupportedPRReads": {
+      "path": ".verification/review-delivery-reads.json",
+      "gitBlob": "14e6036bdfd569a25c91736e02843ddf9a4a0356",
+      "sha256": "3e7ed59cfb3728351e103210ae1d60305bbe21a0a21f677d4550a33503e44910"
     }
   },
   "executiveConsumerBlocks": {
@@ -3495,13 +3558,20 @@
     "final": "All 11 stash cases and all 1601 Mail cases pass. Earlier real-clock failures are not dismissed as flakes."
   },
   "delivery": {
-    "mailPR": "https://github.com/puredesktop/puremail/pull/73",
-    "mailObservedHead": "2bdde1f8512128b2fa7aa7b532f5b34ce0a29837",
-    "executivePR": "https://github.com/purescience-inc/pureexecutive/pull/77",
-    "executiveRead": "HTTP 404 for PR77 and c7696c29e6bda097dbb29cec638bac27ad5e6cf3; actual source retrieved locally and paired by normal PureDev record.",
-    "normalDeliveryOwner": "PureDev must reuse the existing branch/PR73/PR77 pair, commit/push the working source, update prepared descriptions and run ordinary review.",
+    "mailPR": "https://github.com/puredesktop/puremail/pull/77",
+    "mailObservedHead": "6047fc4735fbc8485e48b862eb1d9f4212cc4ee6",
+    "executivePR": "https://github.com/purescience-inc/pureexecutive/pull/91",
+    "executiveLocalAndNormalDeliveryHead": "cee10343cd1088919325549efc8fae392b457e02",
+    "executiveRead": "HTTP 404 for current PR91; local full source and normal PureDev pairing establish the companion, not a successful remote read.",
+    "branch": "puredev/keep-replacement-attachments-when-late-r-f83756",
+    "predecessorPRs": {
+      "mail": 73,
+      "executive": 77,
+      "status": "Retained earlier evidence; Mail PR73 supported read still open. No predecessor closing or merge performed; these are not the targets for this follow-up."
+    },
+    "normalDeliveryOwner": "PureDev has committed/pushed the preceding worker result and created Mail PR77/Executive PR91. It owns the next commits/pushes of this uncommitted follow-up, prepared-description updates on that pair, and ordinary review.",
     "workerCommitPushMerge": false,
-    "descriptionUpdate": "Attempted exact saved Mail replacement: HTTP 403 Resource not accessible by integration. Executive supported reads return HTTP 404; no post claimed. Normal PureDev existing-pair delivery remains pending."
+    "descriptionUpdate": "Supported current Mail PR77 update returned HTTP 403 Resource not accessible by integration; current Executive PR91 read returned HTTP 404 and no update was attempted. Exact replacements saved in both repositories for normal PureDev posting on PR77/PR91."
   },
   "limitations": [
     "Guaranteeing every last unsaved word during forced frame destruction still requires the accepted host-owned durable close/save acknowledgement; no host production change was made.",
@@ -3511,5 +3581,397 @@
     "Configured retained dependencies were reused with source/config/package/installed-lock correspondence; no fresh installation is claimed.",
     "No live desktop, mailbox/provider/send, release or deployment validation was performed.",
     "No puredesktop:check script exists in either app."
-  ]
+  ],
+  "task5NormalDelivery": {
+    "id": "0f31748e-9acb-4752-9849-8f358b30f3cf",
+    "taskId": "09d28175-8cad-4d15-8635-2041a7f2980b",
+    "commit": "2bdde1f8512128b2fa7aa7b532f5b34ce0a29837",
+    "pushedAt": "2026-11-03T05:46:51.420Z",
+    "prUrl": "https://github.com/puredesktop/puremail/pull/73",
+    "branch": "puredev/keep-prepared-message-sending-status-con-a8e28e",
+    "together": [
+      {
+        "label": "pureexecutive",
+        "repo": "/Users/adamhyde/.puredev/preview/workspace/Repos/pureexecutive",
+        "app": "purescience-inc/pureexecutive",
+        "branch": "puredev/keep-prepared-message-sending-status-con-a8e28e",
+        "prUrl": "https://github.com/purescience-inc/pureexecutive/pull/77",
+        "base": "main",
+        "baseCommit": "4527334abca249cfaf61125ca49553fd44365c51",
+        "baseline": [],
+        "commit": "c7696c29e6bda097dbb29cec638bac27ad5e6cf3"
+      }
+    ],
+    "phase": "needs-you",
+    "reviews": []
+  },
+  "preReviewDelivery": {
+    "mailPR": "https://github.com/puredesktop/puremail/pull/73",
+    "mailObservedHead": "2bdde1f8512128b2fa7aa7b532f5b34ce0a29837",
+    "executivePR": "https://github.com/purescience-inc/pureexecutive/pull/77",
+    "executiveRead": "HTTP 404 for PR77 and c7696c29e6bda097dbb29cec638bac27ad5e6cf3; actual source retrieved locally and paired by normal PureDev record.",
+    "normalDeliveryOwner": "PureDev must reuse the existing branch/PR73/PR77 pair, commit/push the working source, update prepared descriptions and run ordinary review.",
+    "workerCommitPushMerge": false,
+    "descriptionUpdate": "Attempted exact saved Mail replacement: HTTP 403 Resource not accessible by integration. Executive supported reads return HTTP 404; no post claimed. Normal PureDev existing-pair delivery remains pending."
+  },
+  "reviewFollowup": {
+    "implementedFindings": [
+      1,
+      2,
+      3,
+      5,
+      6
+    ],
+    "documentedConservativeLimit": 4,
+    "earlierVerdictCorrection": "Earlier worker PASS missed the no-reapproval loss and stale derived-draft resurrection. Both now reproduced by failing tests against delivered production, then fixed.",
+    "checks": [
+      {
+        "label": "review-before",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts -t 'new approval after allowing retry: false|stale third copy'",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-before.log",
+        "logSha256": "c4ce5f57726172305d4b4f4b62fb5f624cb0b3805a8a5990d5723cfda0a57f47",
+        "exit": 1,
+        "passed": 0,
+        "failed": 21,
+        "skipped": 73,
+        "todo": 0,
+        "files": 1,
+        "failures": [
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed local bytes with the same labels and id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed identity without content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed remote reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: missing receipt attachment list",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: receipt labels and id without bytes or reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: neither side has content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: incomplete receipt reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: complete equal bytes with provider bookkeeping",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: complete equal remote evidence despite a remapped local id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: hydration of the same remote file",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed local bytes with the same labels and id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed identity without content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed remote reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: missing receipt attachment list",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: receipt labels and id without bytes or reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: neither side has content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: incomplete receipt reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: complete equal bytes with provider bookkeeping",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: complete equal remote evidence despite a remapped local id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: hydration of the same remote file",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a stale third copy cannot resurrect a discarded replacement after the older receipt"
+        ]
+      },
+      {
+        "label": "review-records-before",
+        "command": "../../node_modules/.bin/vitest run src/lib/mailReceiptRevisions.test.ts",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-records-before.log",
+        "logSha256": "45d963008e77feebcbac0e089d5b731c8b0b4167279b956e90005ab7c05e963b",
+        "exit": 1,
+        "passed": 0,
+        "failed": 3,
+        "skipped": 0,
+        "todo": 0,
+        "files": 1,
+        "failures": [
+          "src/lib/mailReceiptRevisions.test.ts > an older receipt leaves an already confirmed record and its newer content unchanged",
+          "src/lib/mailReceiptRevisions.test.ts > sync/file: a later draft carries content but no receipt or provider-copy state",
+          "src/lib/mailReceiptRevisions.test.ts > controller: a later draft carries content but no receipt or provider-copy state"
+        ]
+      },
+      {
+        "label": "review-final-old-production",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/mailReceiptRevisions.test.ts -t 'new approval after allowing retry: false|stale third copy|allowing retry and editing words|persistence does not let|already confirmed record|later draft carries content'",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-final-old-production.log",
+        "logSha256": "4308b894f663657e249df43f9fac220e25f12c7ed0c03eb29cea497480da502d",
+        "exit": 1,
+        "passed": 0,
+        "failed": 26,
+        "skipped": 73,
+        "todo": 0,
+        "files": 2,
+        "failures": [
+          "src/lib/mailReceiptRevisions.test.ts > an older receipt leaves an already confirmed record and its newer content unchanged",
+          "src/lib/mailReceiptRevisions.test.ts > sync/file: a later draft carries content but no receipt or provider-copy state",
+          "src/lib/mailReceiptRevisions.test.ts > controller: a later draft carries content but no receipt or provider-copy state",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed local bytes with the same labels and id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed identity without content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed remote reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: missing receipt attachment list",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: receipt labels and id without bytes or reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: neither side has content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: incomplete receipt reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: complete equal bytes with provider bookkeeping",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: complete equal remote evidence despite a remapped local id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: hydration of the same remote file",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed local bytes with the same labels and id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed identity without content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed remote reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: missing receipt attachment list",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: receipt labels and id without bytes or reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: neither side has content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: incomplete receipt reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: complete equal bytes with provider bookkeeping",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: complete equal remote evidence despite a remapped local id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: hydration of the same remote file",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > allowing retry and editing words without another press also preserves an unsent draft",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > persistence does not let an older receipt rewrite an already confirmed newer record",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a stale third copy cannot resurrect a discarded replacement after the older receipt"
+        ],
+        "productionCommit": "6047fc4735fbc8485e48b862eb1d9f4212cc4ee6",
+        "note": "Final regression tests against the three unchanged delivered production files, restored in tested copy after the run. Checked-in configs/dependencies unchanged."
+      },
+      {
+        "label": "review-affected",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-affected.log",
+        "logSha256": "10e6caccb4951d6575c3ec44757fe4996031d0f8686b1b9b34fddb66ec36ec8e",
+        "exit": 0,
+        "passed": 221,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 4,
+        "failures": []
+      },
+      {
+        "label": "review-affected-final",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-affected-final.log",
+        "logSha256": "71973d72a35d2b8a1059b60dfb1356fb7cff495b7dae3df319456cdceaa5b8d3",
+        "exit": 0,
+        "passed": 223,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 4,
+        "failures": []
+      },
+      {
+        "label": "review-mail-affected",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-mail-affected.log",
+        "logSha256": "b9135863335d516df749316acf63b8433960315b30f55978ed9ffa32e64a77ca",
+        "exit": 0,
+        "passed": 223,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 4,
+        "failures": []
+      },
+      {
+        "label": "review-mail-full",
+        "command": "../../node_modules/.bin/vitest run",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-mail-full.log",
+        "logSha256": "3a42fc62ec1c1ef9ccbb1e0b316c17bb2e60e31a6ddc7955d708dfd5e16dce66",
+        "exit": 0,
+        "passed": 1627,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 118,
+        "failures": []
+      },
+      {
+        "label": "review-mail-tsc",
+        "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-mail-tsc.log",
+        "logSha256": "81845f0ba658519ce033b61117ac154a08ecb58fdf467f06b6cb82e9f0b5addc",
+        "exit": 2,
+        "failures": [],
+        "note": "Intermediate typecheck caught one optional attachment-list value in the new test fixture; fixed with a non-null assertion for the known first matrix case. Runtime behavior unchanged; final checks supersede this stage."
+      },
+      {
+        "label": "review-mail-build",
+        "command": "./node_modules/.bin/vite build",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-mail-build.log",
+        "logSha256": "58594a086374ce900342f5cc633ad08c74f0ceea5ee81571cffc9adfee0ab03d",
+        "exit": 0,
+        "failures": []
+      },
+      {
+        "label": "review-exec-full",
+        "command": "../../node_modules/.bin/vitest run",
+        "cwd": ".verification/suite/apps/pureexecutive",
+        "log": ".verification/review-exec-full.log",
+        "logSha256": "c372c9751d553ebea05ac532330e445cd00c7531fd4ccf1c5f0940527f0450a6",
+        "exit": 1,
+        "passed": 631,
+        "failed": 5,
+        "skipped": 0,
+        "todo": 0,
+        "files": 114,
+        "failures": [
+          "src/screens/DecisionAssignmentLinks.test.tsx > shows named actions before collapsed history, opens the saved mission and handles a failed open",
+          "src/screens/LeadWorkspace.test.tsx > uses one workspace layout, opens existing work with top/bottom close and sends feedback to its lead",
+          "src/screens/LeadWorkspace.test.tsx > renders Markdown responsibilities in overview and team without changing the stored instructions",
+          "src/screens/DecisionAssignmentLinks.test.tsx > uses the same actionable note and decline feedback in Waiting for you",
+          "src/runner/boundary.test.ts > the runner > reaches no React and no bridge, through any of its imports"
+        ]
+      },
+      {
+        "label": "review-exec-tsc",
+        "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+        "cwd": ".verification/suite/apps/pureexecutive",
+        "log": ".verification/review-exec-tsc.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exit": 0,
+        "failures": []
+      },
+      {
+        "label": "review-exec-build",
+        "command": "./node_modules/.bin/vite build",
+        "cwd": ".verification/suite/apps/pureexecutive",
+        "log": ".verification/review-exec-build.log",
+        "logSha256": "4aa686a378a400ddcfcf580fe507fa9bcc33843d3131abcdc6249453fa6a6413",
+        "exit": 0,
+        "failures": []
+      },
+      {
+        "label": "review-final-old-production-v2",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/mailReceiptRevisions.test.ts -t 'new approval after allowing retry: false|stale third copy|allowing retry and editing words|persistence does not let|already confirmed record|later draft carries content'",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-final-old-production-v2.log",
+        "logSha256": "2dd5b8ed329ff5b7a12903fd3294e0648200c633f580a85061be39c1e598c6a9",
+        "exit": 1,
+        "passed": 0,
+        "failed": 26,
+        "skipped": 73,
+        "todo": 0,
+        "files": 2,
+        "failures": [
+          "src/lib/mailReceiptRevisions.test.ts > an older receipt leaves an already confirmed record and its newer content unchanged",
+          "src/lib/mailReceiptRevisions.test.ts > sync/file: a later draft carries content but no receipt or provider-copy state",
+          "src/lib/mailReceiptRevisions.test.ts > controller: a later draft carries content but no receipt or provider-copy state",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed local bytes with the same labels and id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed identity without content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: changed remote reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: missing receipt attachment list",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: receipt labels and id without bytes or reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: neither side has content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: incomplete receipt reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: complete equal bytes with provider bookkeeping",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: complete equal remote evidence despite a remapped local id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML undefined > new approval after allowing retry: false > two-copy receipt application: hydration of the same remote file",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed local bytes with the same labels and id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed identity without content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: changed remote reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: missing receipt attachment list",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: receipt labels and id without bytes or reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: neither side has content evidence",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: incomplete receipt reference",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: complete equal bytes with provider bookkeeping",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: complete equal remote evidence despite a remapped local id",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > receipt application with HTML <p>Approved</p> > new approval after allowing retry: false > two-copy receipt application: hydration of the same remote file",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > allowing retry and editing words without another press also preserves an unsent draft",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > persistence does not let an older receipt rewrite an already confirmed newer record",
+          "src/lib/twoCopies.test.ts > two copies sending over the real files > a stale third copy cannot resurrect a discarded replacement after the older receipt"
+        ],
+        "productionCommit": "6047fc4735fbc8485e48b862eb1d9f4212cc4ee6",
+        "note": "Final regression tests against the three unchanged delivered production files, restored in tested copy after the run. Checked-in configs/dependencies unchanged.",
+        "regressionTestsSha256": {
+          "src/lib/twoCopies.test.ts": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b",
+          "src/lib/mailReceiptRevisions.test.ts": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+        },
+        "productionSha256": {
+          "src/lib/mailDeliveryStatus.ts": "5bbc965d690aef01d7c622140435b7a7d7d6b65e565487dd443b5687471d1fef",
+          "src/lib/mailDelivery.ts": "04b6df90c3c7d62a077d674bb0b20f683ad820c357739f9b33ecbbb78393173e",
+          "src/lib/mailPersistence.ts": "ca3ca4e03e491c3801c2ae5fc4adf87e530f376f3c148ed2be8172be9b3e8a6a"
+        }
+      },
+      {
+        "label": "review-final-mail-affected",
+        "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-final-mail-affected.log",
+        "logSha256": "7df3e638123aa6dc815ea5cab7e32b555c5109b3fc2716f98ebc8d94635f5cac",
+        "exit": 0,
+        "passed": 223,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 4,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "9841030852d374f6ab81e8111b3589c31c6d16115cc23d6944fc0bedc58122e4",
+          "src/lib/mailDelivery.ts": "ac60d9b0bf3ab7a4fbdbd99217d83a8a6821eb59b3295cfcc101ec783972c1f7",
+          "src/lib/mailPersistence.ts": "25ef48cc2d1d7cda2dd7a3da923c0c6382b452322d56f2f2f59ed20120b530a5",
+          "src/lib/twoCopies.test.ts": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b",
+          "src/lib/mailReceiptRevisions.test.ts": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+        }
+      },
+      {
+        "label": "review-final-mail-full",
+        "command": "../../node_modules/.bin/vitest run",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-final-mail-full.log",
+        "logSha256": "77303e0d6f9f50bbb14952efedc16803023c183f35dea5acccaa08e50420ce9f",
+        "exit": 0,
+        "passed": 1627,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0,
+        "files": 118,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "9841030852d374f6ab81e8111b3589c31c6d16115cc23d6944fc0bedc58122e4",
+          "src/lib/mailDelivery.ts": "ac60d9b0bf3ab7a4fbdbd99217d83a8a6821eb59b3295cfcc101ec783972c1f7",
+          "src/lib/mailPersistence.ts": "25ef48cc2d1d7cda2dd7a3da923c0c6382b452322d56f2f2f59ed20120b530a5",
+          "src/lib/twoCopies.test.ts": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b",
+          "src/lib/mailReceiptRevisions.test.ts": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+        }
+      },
+      {
+        "label": "review-final-mail-tsc",
+        "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-final-mail-tsc.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exit": 0,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "9841030852d374f6ab81e8111b3589c31c6d16115cc23d6944fc0bedc58122e4",
+          "src/lib/mailDelivery.ts": "ac60d9b0bf3ab7a4fbdbd99217d83a8a6821eb59b3295cfcc101ec783972c1f7",
+          "src/lib/mailPersistence.ts": "25ef48cc2d1d7cda2dd7a3da923c0c6382b452322d56f2f2f59ed20120b530a5",
+          "src/lib/twoCopies.test.ts": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b",
+          "src/lib/mailReceiptRevisions.test.ts": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+        }
+      },
+      {
+        "label": "review-final-mail-build",
+        "command": "./node_modules/.bin/vite build",
+        "cwd": ".verification/suite/apps/puremail",
+        "log": ".verification/review-final-mail-build.log",
+        "logSha256": "1857cf8713152b2f62daefbd3ae9911c81c8fbb5835587b7c2276acc3f8da320",
+        "exit": 0,
+        "failures": [],
+        "changedTestedSourceSha256": {
+          "src/lib/mailDeliveryStatus.ts": "9841030852d374f6ab81e8111b3589c31c6d16115cc23d6944fc0bedc58122e4",
+          "src/lib/mailDelivery.ts": "ac60d9b0bf3ab7a4fbdbd99217d83a8a6821eb59b3295cfcc101ec783972c1f7",
+          "src/lib/mailPersistence.ts": "25ef48cc2d1d7cda2dd7a3da923c0c6382b452322d56f2f2f59ed20120b530a5",
+          "src/lib/twoCopies.test.ts": "1f1d93beef7e0e6cf2967eeb776d96dcbd5d148d04ef34a7cc9e5f2562d9021b",
+          "src/lib/mailReceiptRevisions.test.ts": "a2bf179411a6928976922fba0aeee18ba6d232c8e0258a0ea60063cafb9a2e5a"
+        }
+      }
+    ],
+    "executiveReuse": "All 281 Executive source/config blobs and shared dependencies match the previous tested candidate and delivered cee1034. No Executive runtime/test/config edit. Full suite, tsc/build rerun at this review; pinned full baseline evidence remains applicable under identical checked-in config/dependencies.",
+    "postingEvidence": {
+      "path": ".verification/review-description-update.json",
+      "gitBlob": "b46e7c340e7a3ff8d2b3156c224353dac82f97c2",
+      "sha256": "7b31d0e84ed13f363cbbe2a953101e2290e8181cf97abda05aa6e1003fe819b3",
+      "mailUpdateStatus": 403,
+      "executiveReadStatus": 404,
+      "mailBodySha256": "2bbc6b7c6c8699a2e530b85577061c914311d508eef885501e55087c97672ae7",
+      "executiveBodySha256": "937a3603f6a782de805a861c906cfe43d4f85ea8e191e3a19f666d723dbf88db"
+    },
+    "noHostOrExecutiveRuntimeChange": true
+  }
 }
