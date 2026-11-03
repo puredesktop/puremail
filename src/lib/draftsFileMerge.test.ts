@@ -199,6 +199,13 @@ describe('sends and schedules in the merged file', () => {
     expect(applyDraftsFileChanges(store, { ...empty, drafts: [settled] }).drafts[0]).toEqual(settled)
   })
 
+  it('a pending discard without a baseline retains a confirmed sent record arriving from disk', () => {
+    const sent = draft('sent', { sentAt: NOW })
+    const result = mergeRecords({ baseline: new Map(), memory: [] as Draft[], disk: [sent], tombstones: [], discards: new Map([[sent.id, NOW]]), now: NOW })
+    expect(result.merged).toEqual([sent])
+    expect(result.tombstones).toEqual([])
+  })
+
   it('a discarded receipt-derived copy stays removed despite clock skew, while a live send and ordinary edits retain their protections', () => {
     const id = 'draft_compose_after_original_A'
     const removal: Tombstone = { id, reason: 'discarded', deletedAt: NOW }

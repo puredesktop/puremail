@@ -639,6 +639,97 @@ describe('two copies sending over the real files', () => {
     })
   })
 
+  describe.each(['file', 'sync'] as const)('a second edit after receipt via %s', route => {
+    describe.each(['words', 'attachment'] as const)('later %s only', edit => {
+      it.each(lateReceiptAttachmentCases.slice(0, 3))('keeps the latest attachment through the real update handler: %s', async (_name, oldFiles, replacement) => {
+        const { a, b } = await twoCopies({ drafts: [letter({ attachments: oldFiles! })] })
+        const mail = service()
+        let finish!: (message: MailMessage) => void
+        mail.send.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+        const first = controller(a)(mail.provider, record(a)!)
+        await settle()
+        await b.save()
+        b.edit(store => recoverInterruptedSends(store)); await b.save()
+        b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, sendState: 'failed' as const, sendError: 'You checked Sent and allowed another attempt. Open this draft to send it.', attachments: replacement, updatedAt: '2090-01-01T00:00:00Z' })) }))
+        await b.save()
+        finish({ ...accepted(), attachments: oldFiles! }); await first
+        const v1 = (await openCopy()).memory.drafts.find(draft => draft.id !== 'letter')!
+        expect(v1.attachments).toEqual(replacement)
+        if (route === 'sync') b.edit(store => ({ ...store, drafts: [...store.drafts, v1] }))
+        const file = replacement[0]
+        const v2 = [{ ...file, ...(file.content ? { content: 'data:application/pdf;base64,Qw==' } : file.remote ? { remote: { ...file.remote, uid: 9 } } : { id: 'second-replacement' }) }]
+        const context = { get store() { return b.memory }, editDraft: (id: string, patch: Partial<Draft>) => {
+          b.edit(store => ({ ...store, drafts: store.drafts.map(draft => draft.id === id ? { ...draft, ...patch, updatedAt: '2091-01-01T00:00:00Z' } : draft) }))
+          return { ok: true as const }
+        } } as MailAgentToolContext
+        const latestBody = edit === 'words' ? 'Second later words' : record(b)!.body
+        const latestFiles = edit === 'attachment' ? v2 : replacement
+        updateDraftHandler(context, { draftId: 'letter', expectedVersion: draftEditVersion(record(b)!), body: latestBody })
+        b.edit(store => ({ ...store, drafts: store.drafts.map(draft => draft.id === 'letter' ? { ...draft, attachments: latestFiles } : draft) }))
+        if (route === 'sync') {
+          const receipt = a.memory.messages.find(message => message.sentDraftId === 'letter')!
+          b.edit(store => mergeMailProviderSyncResult(store, { ...store, drafts: [], messages: [receipt] }))
+        }
+        await b.save()
+        for (let pass = 0; pass < 3; pass += 1) {
+          const reopened = await openCopy()
+          const later = reopened.memory.drafts.filter(draft => draft.id !== 'letter')
+          expect(later).toHaveLength(1)
+          expect(later[0]).toMatchObject({ subject: 'Letter', body: latestBody, attachments: latestFiles, to: record(b)!.to })
+          expect(draftDelivery(reopened.memory, later[0].id).state).toBe('none')
+          expect(reopened.memory.messages.some(message => message.sentDraftId === 'letter' && message.deliveryAccepted)).toBe(true)
+          await reopened.save()
+        }
+        expect(mail.send).toHaveBeenCalledTimes(1)
+      })
+    })
+  })
+
+  it('a real newer edit to the derived draft wins the normal file merge', async () => {
+    const original = letter({ body: 'Second original revision', updatedAt: '2091-01-01T00:00:00Z', sendState: 'failed', sendSettledAttemptId: 'A' })
+    const later = letter({ id: 'draft_compose_after_letter_A', body: 'First revision', updatedAt: '2090-01-01T00:00:00Z' })
+    const receipt = { ...accepted(), deliveryAccepted: true, sentDraftId: 'letter', sentAttemptId: 'A' }
+    const { a, b } = await twoCopies({ drafts: [original, later] })
+    a.edit(store => ({ ...store, messages: [receipt], drafts: store.drafts.map(draft => draft.id === later.id ? { ...draft, body: 'Newer direct derived edit', updatedAt: '2092-01-01T00:00:00Z' } : draft) }))
+    await a.save(); await b.save()
+    const kept = (await openCopy()).memory.drafts.filter(draft => draft.id !== 'letter')
+    expect(kept).toHaveLength(1)
+    expect(kept[0].body).toBe('Newer direct derived edit')
+  })
+
+  it('an edit during a rejected reconstruction save survives the following saves', async () => {
+    const later = letter({ id: 'draft_compose_after_letter_A', body: 'Rebuilt', updatedAt: '2090-01-01T00:00:00Z' })
+    const { a, b } = await twoCopies()
+    a.edit(store => ({ ...store, drafts: [later] })); await a.save()
+    await a.discard(later.id)
+    b.edit(store => ({ ...store, drafts: [later] }))
+    const saving = b.save()
+    b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, body: 'Real edit during save', updatedAt: '2091-01-01T00:00:00Z' })) }))
+    await saving
+    expect(b.memory.drafts[0].body).toBe('Real edit during save')
+    for (let pass = 0; pass < 3; pass += 1) {
+      await b.save()
+      expect((await openCopy()).memory.drafts[0].body).toBe('Real edit during save')
+    }
+  })
+
+  describe.each(['Letter', ''])('provider subject %s', subject => {
+    it.each(['gmail', 'imap'] as const)('a parsed %s CRLF HTML receipt on disk creates no unchanged later draft', async provider => {
+      const draft = letter({ to: [{ name: '', email: 'ana@example.test' }], body: 'Hello\nNext', bodyHtml: '<p>Hello</p>\n<p>Next</p>', subject, sendState: 'failed', sendSettledAttemptId: 'B', sendSupersedes: ['A'], sendUncertainties: [{ attemptId: 'A', messageId: '<submitted-A>', reason: 'Unknown older send' }] })
+      const { a, b } = await twoCopies({ drafts: [draft] })
+      const receipt = await parsedSentReceipt(provider, true, { crlf: true, subject })
+      a.edit(store => mergeMailProviderSyncResult(store, { ...store, drafts: [], messages: [receipt] }))
+      await a.save()
+      await b.save()
+      for (let pass = 0; pass < 3; pass += 1) {
+        const reopened = await openCopy()
+        expect(reopened.memory.drafts.filter(draft => draft.id !== 'letter')).toHaveLength(0)
+        await reopened.save()
+      }
+    })
+
+  })
+
   describe.each(['gmail', 'imap'] as const)('receipt parsed by %s', provider => {
     describe.each(['plain', 'html', 'compacted html'] as const)('%s body', format => {
       it.each(['unchanged', 'body edit', 'recipient edit', 'To moved to Cc', 'Bcc added', 'HTML edit'] as const)('actual receipt sync preserves %s correctly', async change => {

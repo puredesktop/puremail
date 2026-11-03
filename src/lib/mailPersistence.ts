@@ -30,7 +30,7 @@ import {
   type StoreFileChanges,
   type UnseenChanges,
 } from './storeFileMerge'
-import { draftAfterEarlierReceipt, hasUnconfirmedSendEvidence, RECEIPT_DRAFT_ID_PREFIX } from './mailDeliveryStatus'
+import { draftAfterEarlierReceipt, receiptDraftRevision, hasUnconfirmedSendEvidence, RECEIPT_DRAFT_ID_PREFIX } from './mailDeliveryStatus'
 import type { Draft, MailRun, MailStore, MailMessage, ScheduledSend } from '../types'
 
 export const MAIL_APP_SLUG = 'mail'
@@ -268,6 +268,8 @@ const thisCopy = {
   file: null as ParsedDraftsFile | null,
   fileVersion: undefined as string | null | undefined,
   draftBaseline: new Map<string, string>(),
+  /** Rejected reconstruction snapshots remain comparable after their id leaves the file. */
+  rejectedReceiptBaseline: new Map<string, string>(),
   runBaseline: new Map<string, string>(),
   scheduleBaseline: new Set<string>(),
   receiptBaseline: new Set<string>(),
@@ -343,7 +345,7 @@ function mergedDraftsFile(
   // A provider listing started before another copy pushed a draft does not
   // list it, and that drops the draft from this copy's memory moments after it
   // arrived. That is not this copy deleting it.
-  const draftBaseline = new Map(thisCopy.draftBaseline)
+  const draftBaseline = new Map([...thisCopy.rejectedReceiptBaseline, ...thisCopy.draftBaseline])
   const nowMs = Date.parse(now)
   const heldInMemory = new Set(persistable.drafts.map(draft => draft.id))
   for (const id of draftBaseline.keys()) {
@@ -356,22 +358,27 @@ function mergedDraftsFile(
   const earlierReceipt = (record: Pick<Draft, 'id' | 'sendSupersedes' | 'sendSettledAttemptId'>) => receiptsOnFile.find(message =>
     message.deliveryAccepted && message.sentDraftId === record.id && message.sentAttemptId &&
     (record.sendSettledAttemptId === message.sentAttemptId || record.sendSupersedes?.includes(message.sentAttemptId)))
-  const laterWords = new Map<string, Draft>()
   const fullDrafts = new Map(store.drafts.map(draft => [draft.id, draft]))
-  const withEarlierReceipt = (record: Draft): Draft => {
-    const receipt = earlierReceipt(record)
-    if (!receipt) return record
-    // The exact compacted representation of this copy's record can use its
-    // full bytes. Never borrow across a different edit or attempt's evidence.
-    const full = fullDrafts.get(record.id)
-    const comparison = full && (record === full || JSON.stringify(compactPersistedDraft(full)) === JSON.stringify(record)) ? full : record
-    const { evidence, later } = draftAfterEarlierReceipt(comparison, receipt)
-    const discarded = later && (thisCopy.discards.has(later.id) || disk?.draftTombstones.some(tombstone => tombstone.id === later.id))
-    if (later && !discarded && !persistable.drafts.some(draft => draft.id === later.id) && !disk?.drafts.some(draft => draft.id === later.id)) {
-      const previous = laterWords.get(later.id)
-      if (!previous || Date.parse(later.updatedAt) > Date.parse(previous.updatedAt)) laterWords.set(later.id, compactPersistedDraft(later))
-    }
-    return evidence
+  const withEarlierReceipts = (records: Draft[]): Draft[] => {
+    const laterWords = new Map<string, Draft>()
+    const stamped = records.map(record => {
+      const receipt = earlierReceipt(record)
+      if (!receipt) return record
+      // Borrow full bytes only from this exact persisted revision.
+      const full = fullDrafts.get(record.id)
+      const comparison = full && (record === full || JSON.stringify(compactPersistedDraft(full)) === JSON.stringify(record)) ? full : record
+      const { evidence, later } = draftAfterEarlierReceipt(comparison, receipt)
+      const discarded = later && (thisCopy.discards.has(later.id) || disk?.draftTombstones.some(tombstone => tombstone.id === later.id))
+      if (later && !discarded) laterWords.set(later.id, receiptDraftRevision(laterWords.get(later.id), later))
+      return evidence
+    })
+    const revised = stamped.map(record => {
+      const later = laterWords.get(record.id)
+      if (!later) return record
+      laterWords.delete(record.id)
+      return receiptDraftRevision(record, later)
+    })
+    return [...revised, ...laterWords.values()].map(compactPersistedDraft)
   }
   // A delayed sync/controller result can re-create this reserved id in memory
   // after another copy discarded it. It is a derived revision, not a provider
@@ -382,7 +389,7 @@ function mergedDraftsFile(
   const rejectedReceiptDrafts: NonNullable<DraftsFileChanges['rejectedReceiptDrafts']> = []
   const memoryDrafts = store.drafts.filter(record => {
     if (!record.id.startsWith(RECEIPT_DRAFT_ID_PREFIX) || record.sendAttempt || hasUnconfirmedSendEvidence(record)) return true
-    const baseline = thisCopy.draftBaseline.get(record.id)
+    const baseline = thisCopy.draftBaseline.get(record.id) ?? thisCopy.rejectedReceiptBaseline.get(record.id)
     const rebuilt = baseline === undefined || recordFingerprint(compactPersistedDraft(record)) === baseline
     if (!rebuilt) return true
     const tombstone = discardedRevisions.get(record.id)
@@ -394,8 +401,8 @@ function mergedDraftsFile(
   })
   const drafts = mergeRecords<Draft>({
     baseline: draftBaseline,
-    memory: memoryDrafts.map(withEarlierReceipt).map(compactPersistedDraft),
-    disk: (disk?.drafts ?? []).map(withEarlierReceipt).map(compactPersistedDraft),
+    memory: withEarlierReceipts(memoryDrafts),
+    disk: withEarlierReceipts(disk?.drafts ?? []),
     tombstones: disk?.draftTombstones ?? [],
     discards: thisCopy.discards,
     confirmed: record => !earlierReceipt(record) && recordConfirmedSent(receiptsOnFile, record),
@@ -403,12 +410,11 @@ function mergedDraftsFile(
   })
   // Take the rejection back into this running copy too, not only onto disk.
   drafts.removed.push(...blockedRevisions.filter(tombstone => !drafts.removed.some(item => item.id === tombstone.id)))
-  for (const later of laterWords.values()) { drafts.merged.push(later); drafts.arrived.push(later) }
   // Receipt stamping above is an application change too, even when both
   // preprocessed sides compare equal in the merge.
   for (const kept of drafts.merged) {
     const held = persistable.drafts.find(draft => draft.id === kept.id)
-    if (held && recordFingerprint(held) !== recordFingerprint(kept) && !drafts.arrived.some(draft => draft.id === kept.id)) drafts.arrived.push(kept)
+    if ((!held || recordFingerprint(held) !== recordFingerprint(kept)) && !drafts.arrived.some(draft => draft.id === kept.id)) drafts.arrived.push(kept)
   }
   const runs = mergeRecords<MailRun>({
     baseline: thisCopy.runBaseline,
@@ -547,7 +553,7 @@ async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<Dr
     if (sameContent(value, raw, ignoreHomes)) {
       agreeWithFile(file, version)
       thisCopy.discards.clear()
-      return holdArrivals(changes)
+      return holdArrivals(changes, store)
     }
     const written = await writePlatformStorageJson({
       appSlug: MAIL_APP_SLUG,
@@ -558,12 +564,17 @@ async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<Dr
     if (written.conflict) continue
     agreeWithFile(parseDraftsFile(JSON.parse(JSON.stringify(value))), written.version)
     thisCopy.discards.clear()
-    return holdArrivals(changes)
+    return holdArrivals(changes, store)
   }
   throw new Error('Other copies of Mail kept saving at the same moment. Your drafts are safe here and will be saved on the next try.')
 }
 
-function holdArrivals(changes: DraftsFileChanges): DraftsFileChanges {
+function holdArrivals(changes: DraftsFileChanges, snapshot: MailStore): DraftsFileChanges {
+  for (const rejected of changes.rejectedReceiptDrafts ?? []) {
+    const record = snapshot.drafts.find(draft => draft.id === rejected.id)
+    if (record) thisCopy.rejectedReceiptBaseline.set(record.id, recordFingerprint(compactPersistedDraft(record)))
+  }
+  for (const record of changes.drafts) thisCopy.rejectedReceiptBaseline.delete(record.id)
   const until = Date.now() + ARRIVED_HOLD_MS
   for (const draft of changes.drafts) thisCopy.arrivedUntil.set(draft.id, until)
   return changes

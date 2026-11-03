@@ -240,7 +240,7 @@ export function mergeRecords<T extends Stamped>(input: {
   for (const record of disk) {
     if (memoryIds.has(record.id) || baseline.has(record.id)) continue
     const discardedAt = discards?.get(record.id)
-    if (discardedAt && !inTheAir(record)) {
+    if (discardedAt && !inTheAir(record) && !record.sentAt) {
       tombstones.set(record.id, { id: record.id, deletedAt: discardedAt, reason: 'discarded' })
       continue
     }

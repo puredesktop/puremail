@@ -1,5 +1,5 @@
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
-import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, draftReleaseBlock, settleDraftNotSent, stopDraftSchedules, draftAfterEarlierReceipt } from './mailDeliveryStatus'
+import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, draftReleaseBlock, settleDraftNotSent, stopDraftSchedules, draftAfterEarlierReceipt, receiptDraftRevision } from './mailDeliveryStatus'
 import { recordConfirmedSent } from './draftsFileMerge'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
@@ -34,7 +34,9 @@ export function settleReceipt(store: MailStore, sent: Draft, attemptId: string, 
     to: sent.to, cc: sent.cc ?? [], bcc: sent.bcc ?? [], attachments: sent.attachments,
   })
   const done = sendDraft({ ...store, drafts: store.drafts.map(item => (item.id === sent.id ? { ...sent, sendAttempt: undefined } : item)) }, sent.id, undefined, options)
-  return { ...done, drafts: [...done.drafts, ...(later && !done.drafts.some(item => item.id === later.id) ? [later] : []), { ...current, to: sent.to, cc: sent.cc, bcc: sent.bcc, subject: sent.subject, body: sent.body, bodyHtml: sent.bodyHtml, attachments: sent.attachments, sentAt: options?.sentMessage?.receivedAt ?? new Date().toISOString(), sentMessageId: options?.sentMessageId }] }
+  const drafts = done.drafts.map(draft => later?.id === draft.id ? receiptDraftRevision(draft, later) : draft)
+  if (later && !drafts.some(draft => draft.id === later.id)) drafts.push(later)
+  return { ...done, drafts: [...drafts, { ...current, to: sent.to, cc: sent.cc, bcc: sent.bcc, subject: sent.subject, body: sent.body, bodyHtml: sent.bodyHtml, attachments: sent.attachments, sentAt: options?.sentMessage?.receivedAt ?? new Date().toISOString(), sentMessageId: options?.sentMessageId }] }
 }
 
 /** One submission per draft. Persist uncertainty before contacting the server. */

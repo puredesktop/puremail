@@ -1,3 +1,48 @@
+# Current review — successive late-receipt revisions
+
+The inspected pair is Mail PR77 at `a395020996b11ac40d1426640f8bc6cb5bc97636` and Executive PR91 at `6146645f74826ad271b76a49460773ffc644273c`, on `puredev/keep-replacement-attachments-when-late-r-f83756`. The supported Mail read confirms its head. Executive PR91 returns 404 to the integration, so its full local source establishes the companion snapshot. The current manifest maps tested working content beyond these heads. PureDev owns commits, pushes and ordinary review.
+
+The second revision was dropped because the receipt routes only inserted a missing stable id. Mail now advances a free derived draft to the newer revision, with each file side entering the ordinary merge. A newer direct edit to that derived draft still wins. Sync and controller settlement share the revision rule. Twelve attachment/wording rows use the real update handler, actual receipt sync or conditional persistence, three reopenings and one fake submission. Attachment-only rows keep every other content field unchanged. The handler updates words and version guards, while the fixture applies attachments through its fake edit state because `updateDraft` does not accept attachment arguments.
+
+New HTML receipt digests normalize interior CRLF and boundary whitespace. Older digests retain exact/canonical candidate compatibility. Parsed Gmail and IMAP CRLF receipts are saved by one copy and read by another, with ordinary and empty subjects. An empty provider subject placeholder compares equal to the empty draft subject. Pending discards leave confirmed sent records intact.
+
+The writer retains an exact rejected reconstruction witness in this running copy after a successful save. A genuine edit made during that save remains comparable on subsequent saves. The actual conditional-writer test checks three later saves and reopenings. A first edit before this copy has any agreed or rejected witness remains indistinguishable from reconstruction against another copy’s explicit discard, so that case honors the discard. The documentation now states that boundary rather than promising all unknown edits survive.
+
+## Current checks
+
+Mail affected checks pass **358 cases / 5 files / 0 skips**, and the full suite passes **1,737 cases / 118 files / 0 skips**. Typecheck and build exit 0. The final negative run on the inspected Mail production blobs reports **18 failed / 1 passed / 2 files / 207 skipped**, exit 1, with the same final regression tests. Six production blobs were restored only in the disposable test copy for the negative run and then restored to the correction. The 19 added cases comprise twelve successive-edit rows, four CRLF/subject rows, a newer direct edit, a save-race follow-up, and a pending discard of a sent record.
+
+The exact commands, exits, source hashes and log hashes are recorded in `review4Followup` of the manifest. Runtime configs are the checked-in app configs. A disposable layout uses suite `f36884f801f4ad3e8780db6c954a82bb5267623f` and Knowledge `82152ae10e381733e97eca54df27a1c32e3cb6b7`. All 4,561 shared files and 103 Knowledge files, including the archived gitignore, match those pins. The direct package hashes match the retained versions. The copied root installed-lock hash differs, so the current Executive candidate and complete pinned main are rerun serially on this one installation. App-specific installed-lock evidence remains unavailable.
+
+The initial layout lacked required bridge/chrono dependencies and had different root happy-dom and Mail Vite versions. Its intermediate full Mail run recorded 1,686 passed with seven suite import failures, typecheck exit 2 including one optional-fixture typing error, and build exit 1. The fixture type was corrected, the configured installation restored, and final checks rerun. The first Executive full attempt was interrupted with exit 130 after discovering that setup mismatch. No app config or shared stub was bypassed. The ignored setup log records the exact Mail SWC 1.16.1/plugin 13.0.0 installation, with scripts enabled and a task-local cache.
+
+The fresh complete Executive candidate reports **630 passed / 6 failed / 114 files / 0 skips**, exit 1. Complete pinned main `3f0641e3a5aeffaaad563404c687562c0462de17` reports **556 passed / 6 failed / 107 files / 0 skips**, exit 1, on the same installation after the candidate. The failing case names match exactly. They are the import-boundary case, both DecisionAssignmentLinks cases, both LeadWorkspace cases and the first CTO-adoption case. The adoption case produces an extra recorded-turn assertion in both runs, at 27,273 ms and 28,190 ms respectively. Its test, `hostRig.ts` and `adopt.ts` blobs are identical to pinned main. This occurrence is preserved separately from task5’s earlier adoption failure and the retained 631/5 stage. All 62 consumer and nine CTO-run cases pass; CTO adoption has three passes and one failure. The question-card case passes in both complete runs. The historical two-card cause remains unproven, with no flaky or unrelated classification. Executive typecheck and build exit 0. The old baseline’s additional signed-out timeout passes in both current runs. Full candidate/baseline durations are 472.33 s and 578.91 s. No CTO workflow code was changed.
+
+### Final commands
+
+All commands run from the indicated app under `.verification/suite/apps/`, with its checked-in config.
+
+| App/check | Command | Exit | Cases / files / skips |
+|---|---|---:|---|
+| Mail affected | `../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx` | 0 | 358 passed / 5 files / 0 skips |
+| Mail full | `../../node_modules/.bin/vitest run` | 0 | 1,737 passed / 118 files / 0 skips |
+| Mail typecheck | `../../node_modules/.bin/tsc -p tsconfig.json --noEmit` | 0 | final source |
+| Mail build | `./node_modules/.bin/vite build` | 0 | final source |
+| Executive full | `../../node_modules/.bin/vitest run` | 1 | 630 passed / 6 failed / 114 files / 0 skips |
+| Executive typecheck | `../../node_modules/.bin/tsc -p tsconfig.json --noEmit` | 0 | unchanged source/config |
+| Executive build | `./node_modules/.bin/vite build` | 0 | unchanged source/config |
+| Complete pinned Executive main | `../../node_modules/.bin/vitest run` | 1 | 556 passed / 6 failed / 107 files / 0 skips |
+
+The final negative command is `../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts -t 'a second edit after receipt|CRLF HTML receipt|edit during a rejected|pending discard without a baseline|real newer edit to the derived'`, with the six inspected production blobs and the final test source. It exits 1 with 18 failed / 1 passed / 2 files / 207 skipped. The final negative and positive log hashes and full source identities are in the manifest. An ancestor-checkout base-config warning and the existing large-chunk build warnings remain visible in logs. No configuration override was used.
+
+## Scope and delivery
+
+The earlier exit, compose, attempt, boot/load, dispatch, schedule/Undo, persistence-failure, duplicate-approval and receipt regressions remain in the full Mail suite. Executive runtime/tests/config and ps-suite source required no correction. Other HTML serialization changes, historical noncanonical HTML digests, or unavailable text/contact/attachment evidence may still retain a conservative unsent copy requiring a Sent check and a fresh decision. The accepted forced-frame-close/save acknowledgement prerequisite, atomic `ifMatch` and all-participating-copies requirement remain in force. No live desktop validation is claimed. Existing PureDesktop profile `puredesktop`, design revision 4, is retained, with no new visual artifact.
+
+Mail PR73 is still open in the supported read. The owner decides its disposition, and both versions of the work must not be merged. Current saved descriptions target Mail PR77 and Executive PR91. The final supported Mail PR77 description update returned HTTP 403, “Resource not accessible by integration”. Executive PR91 still returns HTTP 404 on read, so its update was not attempted. Exact saved descriptions and hashes are retained. The pending step is normal PureDev delivery applying each app’s `docs/send-evidence-pr-description.md` to Mail PR77 and Executive PR91. No credentials, alternate accounts or permission changes were used.
+
+## Review 3 — retained provider-normalization correction
+
 # Replacement attachments and late receipts — req-0039 continuation
 
 An older genuine receipt now keeps its own submission authoritative while an attachment-only replacement survives as a separate unsent draft. It has no hold, submission identity or schedule and needs a fresh explicit send decision. Names and MIME types alone no longer count as file identity. No composition flow, warning or sending authority was added.

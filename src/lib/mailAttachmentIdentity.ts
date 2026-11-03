@@ -53,7 +53,7 @@ export function receiptTextHash(text: string): string {
 export function withReceiptContentIdentity(message: MailMessage): MailMessage {
   return {
     ...message,
-    ...(typeof message.bodyHtml === 'string' ? { receiptBodyHtmlHash: receiptTextHash(message.bodyHtml) } : {}),
+    ...(typeof message.bodyHtml === 'string' ? { receiptBodyHtmlHash: receiptTextHash(message.bodyHtml.replace(/\r\n/g, '\n').trim()) } : {}),
     ...(Array.isArray(message.attachments) ? { attachments: message.attachments.map(file => {
       const hash = attachmentReceiptHash(file)
       return hash ? { ...file, receiptContentHash: hash } : file

@@ -1,4 +1,4 @@
-import { draftAfterEarlierReceipt, draftContentRevision, hasUnconfirmedSendEvidence, draftIdFromMessageId, imapDraftMessageId } from './mailDeliveryStatus'
+import { draftAfterEarlierReceipt, receiptDraftRevision, draftContentRevision, hasUnconfirmedSendEvidence, draftIdFromMessageId, imapDraftMessageId } from './mailDeliveryStatus'
 import {
   calendarDraftResourceId,
   type CalendarDraftIntent,
@@ -3817,14 +3817,18 @@ export function mergeMailProviderSyncResult(
       if (!messageId) return draft
       const message = providerStore.messages.find(message => message.messageIdHeader === messageId)!
       const settled = draftAfterEarlierReceipt(draft, { ...message, sentAttemptId: receipt?.entry.attemptId ?? draft.sendAttempt?.id ?? draft.sendSettledAttemptId })
-      if (settled.later && !currentStore.drafts.some(item => item.id === settled.later!.id)) laterWords.push(settled.later)
+      if (settled.later) laterWords.push(settled.later)
       return settled.evidence
     }),
     incomingDrafts,
     Boolean(providerStore.syncCoverage?.draftsCovered),
     draft => (localDrafts.has(draft) ? localAccounts : remoteAccounts).get(draft.threadId),
   )
-  mergedDrafts.push(...laterWords)
+  for (const later of laterWords) {
+    const index = mergedDrafts.findIndex(draft => draft.id === later.id)
+    if (index < 0) mergedDrafts.push(later)
+    else mergedDrafts[index] = receiptDraftRevision(mergedDrafts[index], later)
+  }
   const retainedDraftThreadIds = new Set(mergedDrafts.filter(draft => !draft.sentAt).map(draft => draft.threadId))
   const incomingMessages = providerStore.messages.filter(message => !message.isDraft || !staleDraftMessageIds.has(message.id)).map(message => {
     if (message.isDraft) return message

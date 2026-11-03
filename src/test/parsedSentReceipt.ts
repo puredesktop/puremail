@@ -3,9 +3,9 @@ import { ImapMailProvider, type ImapTransport } from '../lib/imapMailProvider'
 import type { MailMessage } from '../types'
 
 /** Real app parsers, with synthetic HTTP responses and IMAP envelopes only. */
-export async function parsedSentReceipt(provider: 'gmail' | 'imap', html: boolean): Promise<MailMessage> {
+export async function parsedSentReceipt(provider: 'gmail' | 'imap', html: boolean, options: { crlf?: boolean; subject?: string } = {}): Promise<MailMessage> {
   const body = 'Hello\nNext'
-  const bodyHtml = html ? '<p>Hello</p>\n<p>Next</p>' : undefined
+  const bodyHtml = html ? `<p>Hello</p>${options.crlf ? '\r\n' : '\n'}<p>Next</p>` : undefined
   switch (provider) {
     case 'gmail': {
       const encode = (value: string) => btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -33,7 +33,7 @@ export async function parsedSentReceipt(provider: 'gmail' | 'imap', html: boolea
               headers: [
                 { name: 'From', value: 'me@example.test' },
                 { name: 'To', value: 'ana@example.test' },
-                { name: 'Subject', value: 'Letter' },
+                { name: 'Subject', value: options.subject ?? 'Letter' },
                 { name: 'Message-ID', value: '<submitted-A>' },
               ],
               parts,
@@ -51,7 +51,7 @@ export async function parsedSentReceipt(provider: 'gmail' | 'imap', html: boolea
         fetchMessages: async () => [{
           uid: 1,
           messageId: '<submitted-A>',
-          subject: 'Letter',
+          subject: options.subject ?? 'Letter',
           from: { name: 'Me', email: 'me@example.test' },
           to: [{ name: 'ana@example.test', email: 'ana@example.test' }],
           date: new Date().toISOString(),

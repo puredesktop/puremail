@@ -164,6 +164,13 @@ export function unsentDraftAfterReceipt(draft: Draft, id: string): Draft {
   }
 }
 
+/** Advance a free derived draft without replacing another decision or a newer edit. */
+export function receiptDraftRevision(existing: Draft | undefined, incoming: Draft): Draft {
+  if (!existing) return incoming
+  if (existing.sentAt || existing.sendAttempt || hasUnconfirmedSendEvidence(existing)) return existing
+  return Date.parse(incoming.updatedAt) > Date.parse(existing.updatedAt) ? incoming : existing
+}
+
 const receiptText = (text: string): string => text.replace(/\r\n/g, '\n').trim()
 function receiptAddresses(contacts: Draft['to']): string[] | null {
   if (!Array.isArray(contacts) || contacts.some(contact => !contact || typeof contact.email !== 'string' || !contact.email.trim())) return null
@@ -183,7 +190,7 @@ export function draftAfterEarlierReceipt(draft: Draft, receipt: Pick<MailMessage
   const complete = typeof receipt.subject === 'string' && typeof receipt.body === 'string' && Array.isArray(receipt.to) && Array.isArray(receipt.attachments)
   const draftAddresses = [draft.to, draft.cc ?? [], draft.bcc ?? []].map(receiptAddresses)
   const sentAddresses = [receipt.to, receipt.cc ?? [], receipt.bcc ?? []].map(receiptAddresses)
-  const same = complete && typeof draft.body === 'string' && draft.subject === receipt.subject && receiptText(draft.body) === receiptText(receipt.body) && sameHtml &&
+  const same = complete && typeof draft.body === 'string' && (draft.subject || '(no subject)') === (receipt.subject || '(no subject)') && receiptText(draft.body) === receiptText(receipt.body) && sameHtml &&
     draftAddresses.every((emails, index) => emails !== null && sentAddresses[index] !== null && JSON.stringify(emails) === JSON.stringify(sentAddresses[index])) &&
     draft.attachments.length === receipt.attachments.length && draft.attachments.every((file, index) => sameReceiptAttachment(file, receipt.attachments[index]))
   // The id is stable over repeated reads and conditional-write retries.
