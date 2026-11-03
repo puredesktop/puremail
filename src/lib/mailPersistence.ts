@@ -30,7 +30,7 @@ import {
   type StoreFileChanges,
   type UnseenChanges,
 } from './storeFileMerge'
-import { draftAfterEarlierReceipt } from './mailDeliveryStatus'
+import { draftAfterEarlierReceipt, hasUnconfirmedSendEvidence, RECEIPT_DRAFT_ID_PREFIX } from './mailDeliveryStatus'
 import type { Draft, MailRun, MailStore, MailMessage, ScheduledSend } from '../types'
 
 export const MAIL_APP_SLUG = 'mail'
@@ -373,15 +373,29 @@ function mergedDraftsFile(
     }
     return evidence
   }
+  // A delayed sync/controller result can re-create this reserved id in memory
+  // after another copy discarded it. It is a derived revision, not a provider
+  // listing a draft again. Keep the general provider-id revival rule unchanged.
+  const discardedRevisions = new Map((disk?.draftTombstones ?? []).filter(tombstone => tombstone.reason === 'discarded').map(tombstone => [tombstone.id, tombstone]))
+  for (const [id, deletedAt] of thisCopy.discards) discardedRevisions.set(id, { id, deletedAt, reason: 'discarded' })
+  const blockedRevisions: Tombstone[] = []
+  const memoryDrafts = store.drafts.filter(record => {
+    const tombstone = discardedRevisions.get(record.id)
+    if (!tombstone || !record.id.startsWith(RECEIPT_DRAFT_ID_PREFIX) || record.sendAttempt || hasUnconfirmedSendEvidence(record)) return true
+    blockedRevisions.push(tombstone)
+    return false
+  })
   const drafts = mergeRecords<Draft>({
     baseline: draftBaseline,
-    memory: store.drafts.map(withEarlierReceipt).map(compactPersistedDraft),
+    memory: memoryDrafts.map(withEarlierReceipt).map(compactPersistedDraft),
     disk: (disk?.drafts ?? []).map(withEarlierReceipt).map(compactPersistedDraft),
     tombstones: disk?.draftTombstones ?? [],
     discards: thisCopy.discards,
     confirmed: record => !earlierReceipt(record) && recordConfirmedSent(receiptsOnFile, record),
     now,
   })
+  // Take the rejection back into this running copy too, not only onto disk.
+  drafts.removed.push(...blockedRevisions.filter(tombstone => !drafts.removed.some(item => item.id === tombstone.id)))
   for (const later of laterWords.values()) { drafts.merged.push(later); drafts.arrived.push(later) }
   // Receipt stamping above is an application change too, even when both
   // preprocessed sides compare equal in the merge.

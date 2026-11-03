@@ -199,6 +199,21 @@ describe('sends and schedules in the merged file', () => {
     expect(applyDraftsFileChanges(store, { ...empty, drafts: [settled] }).drafts[0]).toEqual(settled)
   })
 
+  it('a discarded receipt-derived copy stays removed despite clock skew, while a live send and ordinary edits retain their protections', () => {
+    const id = 'draft_compose_after_original_A'
+    const removal: Tombstone = { id, reason: 'discarded', deletedAt: NOW }
+    const take = (record: Draft) => applyDraftsFileChanges({ ...emptyMailStore(), drafts: [record] }, { ...empty, removedDrafts: [removal] }).drafts
+    expect(take(draft(id, { updatedAt: '2099-01-01T00:00:00Z' }))).toEqual([])
+    for (const phase of ['held', 'preparing', 'submitting'] as const) {
+      const live = draft(id, { sendAttempt: { ...attempt, phase } })
+      expect(take(live)).toEqual([live])
+    }
+    const uncertain = draft(id, { sendState: 'uncertain' })
+    expect(take(uncertain)).toEqual([uncertain])
+    const ordinary = draft('provider-listed', { updatedAt: '2099-01-01T00:00:00Z' })
+    expect(applyDraftsFileChanges({ ...emptyMailStore(), drafts: [ordinary] }, { ...empty, removedDrafts: [{ ...removal, id: ordinary.id }] }).drafts).toEqual([ordinary])
+  })
+
   const entry = (id: string, status: ScheduledSend['status']): ScheduledSend => ({ id, draftId: 'd', threadId: 't', sendAt: NOW, createdAt: NOW, status })
 
   it('a stale copy cannot revive a stopped schedule, and the stop reaches it', () => {

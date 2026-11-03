@@ -1,5 +1,5 @@
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
-import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, draftReleaseBlock, settleDraftNotSent, stopDraftSchedules, unsentDraftAfterReceipt } from './mailDeliveryStatus'
+import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, draftReleaseBlock, settleDraftNotSent, stopDraftSchedules, draftAfterEarlierReceipt } from './mailDeliveryStatus'
 import { recordConfirmedSent } from './draftsFileMerge'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
@@ -25,9 +25,16 @@ export function settleReceipt(store: MailStore, sent: Draft, attemptId: string, 
   }
   const movedOn = current && (Boolean(current.sendUncertainties?.length) || (current.sendAttempt && current.sendAttempt.id !== attemptId) || (current.sendSettledAttemptId && current.sendSettledAttemptId !== attemptId) || draftSendFingerprint(finalizeRunDraftForSend(current)) !== approved)
   if (!current || !movedOn) return sendDraft(store, sent.id, undefined, options)
-  const later = unsentDraftAfterReceipt(current, `draft_compose_${crypto.randomUUID()}`)
+  // The approved snapshot supplies complete content evidence, even when the
+  // provider receipt omits bytes. All receipt routes share this comparison/id.
+  const { later } = draftAfterEarlierReceipt(current, {
+    id: options?.sentMessage?.id ?? options?.sentMessageId ?? attemptId,
+    receivedAt: options?.sentMessage?.receivedAt ?? new Date().toISOString(), sentAttemptId: attemptId,
+    subject: sent.subject, body: sent.body, bodyHtml: sent.bodyHtml ?? '',
+    to: sent.to, cc: sent.cc ?? [], bcc: sent.bcc ?? [], attachments: sent.attachments,
+  })
   const done = sendDraft({ ...store, drafts: store.drafts.map(item => (item.id === sent.id ? { ...sent, sendAttempt: undefined } : item)) }, sent.id, undefined, options)
-  return { ...done, drafts: [...done.drafts, ...(draftSendFingerprint(finalizeRunDraftForSend(current)) !== approved ? [later] : []), { ...current, to: sent.to, cc: sent.cc, bcc: sent.bcc, subject: sent.subject, body: sent.body, bodyHtml: sent.bodyHtml, attachments: sent.attachments, sentAt: options?.sentMessage?.receivedAt ?? new Date().toISOString(), sentMessageId: options?.sentMessageId }] }
+  return { ...done, drafts: [...done.drafts, ...(later && !done.drafts.some(item => item.id === later.id) ? [later] : []), { ...current, to: sent.to, cc: sent.cc, bcc: sent.bcc, subject: sent.subject, body: sent.body, bodyHtml: sent.bodyHtml, attachments: sent.attachments, sentAt: options?.sentMessage?.receivedAt ?? new Date().toISOString(), sentMessageId: options?.sentMessageId }] }
 }
 
 /** One submission per draft. Persist uncertainty before contacting the server. */

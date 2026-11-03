@@ -2,11 +2,56 @@
 
 An older genuine receipt now keeps its own submission authoritative while an attachment-only replacement survives as a separate unsent draft. It has no hold, submission identity or schedule and needs a fresh explicit send decision. Names and MIME types alone no longer count as file identity. No composition flow, warning or sending authority was added.
 
-## Current review and delivered pair
+## Current review — one revision across every receipt route
+
+A sender that had taken in the later edit used to create a random-id unsent draft in `settleReceipt`, while the receipt-aware file writer created a second stable-id draft. The controller now delegates to `draftAfterEarlierReceipt` using the complete approved snapshot, so controller, provider sync and persistence agree on comparison and the same `draft_compose_after_<draft>_<attempt>` identity. An existing derived draft is retained instead of appended again. This also prevents a spurious copy when attachment bytes/source prove sameness despite provider part-id bookkeeping.
+
+The expanded actual two-copy matrix covers the sender both stale and caught up before its callback, with and without a fresh approval, plain/formatted bodies, changed bytes/identity/remote reference, incomplete receipt evidence and provably unchanged controls. Reopening repeats three times, with exactly one fake submission. Provider-sync races separately apply a delayed result after another copy's saved discard or the same copy's pending discard, for bytes/identity/reference replacements, including a future `updatedAt` to reject clock inference.
+
+Before the merge, the writer now rejects free receipt-derived records whose reserved id has an explicit saved or pending discard, and applies that rejection back into the running copy. This closes the provider-sync resurrection route as well as the file-generation route. The general provider-id revival branch is unchanged. A held, preparing, submitting or unconfirmed send retains its existing evidence protections; the special application rule concerns a free discarded derived copy, not a clock comparison. Existing original-provider records and conflicting alternate writing retain their protections.
+
+### Delivery identity and ownership
+
+The inspected delivery snapshot is **[Mail PR77](https://github.com/puredesktop/puremail/pull/77)** at `a9ea5c78092b409caf7ca7b5f634a1e898c43082`, paired with **[Executive PR91](https://github.com/purescience-inc/pureexecutive/pull/91)** at `8c03f856d3f3a243553aa8b99f77aa43e3ac4f86`, branch `puredev/keep-replacement-attachments-when-late-r-f83756`. Normal PureDev run `f8375650-4011-43d2-8dd2-d5f64d3fd3dd` and local heads agree. The supported GitHub read confirms Mail's head; Executive PR91 still returns 404 to the integration, so no independent remote-head read is claimed there. The full blob manifest identifies the tested content beyond this snapshot. PureDev owns commits, pushes and ordinary review; this handoff does not depend on whether another delivery has since advanced the branch.
+
+Earlier **Mail PR73 / Executive PR77** are predecessor evidence, not the targets of this review. The supported read still reports Mail PR73 open. The owner must decide its disposition; do not merge both copies of the work. No old PR was closed or merged here. Executive runtime/tests/config and ps-suite are unchanged; Executive's documents identify the current pair and source evidence. The historical sections below retain each earlier check and delivery stage rather than presenting them as the latest heads or results.
+
+### Current checks and source correspondence
+
+Checks ran serially with the real checked-in configs, no timeout/plugin/config overrides, and the same retained installation. Final inventories: **272 Mail / 281 Executive source/config files**, byte-for-byte equal to the tested copies. The direct installed-package hashes and suite installed lock match retained evidence; app-specific installed-lock evidence remains unavailable and is not invented. Fresh comparison also finds zero differences in **4,561** resolved shared-source files and **102** Knowledge files. Executive's source/config blobs match both delivered `8c03f85…` and the preceding tested candidate. This demonstrates why the retained complete pinned-baseline result remains comparable.
+
+| Check | Full command (from `.verification/suite/apps/<app>`) | Exit | Cases / files / skips |
+|---|---|---:|---|
+| Mail affected | `../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts src/lib/mailReceiptRevisions.test.ts src/lib/mailSendSettlement.test.tsx src/lib/mailSendOutcome.test.tsx` | 0 | **295 passed / 5 files / 0 skipped** |
+| Mail full | `../../node_modules/.bin/vitest run` | 0 | **1,674 passed / 118 files / 0 skipped** |
+| Mail typecheck | `../../node_modules/.bin/tsc -p tsconfig.json --noEmit` | 0 | final source |
+| Mail build | `./node_modules/.bin/vite build` | 0 | checked-in app config |
+| Executive full rerun | `../../node_modules/.bin/vitest run` | 1 | **631 passed / 5 failed / 114 files / 0 skipped** |
+| Executive typecheck | `../../node_modules/.bin/tsc -p tsconfig.json --noEmit` | 0 | unchanged runtime/config |
+| Executive build | `./node_modules/.bin/vite build` | 0 | checked-in app config |
+| Retained complete pinned Executive baseline `3f0641e…` | `../../node_modules/.bin/vitest run` | 1 | **556 passed / 6 failed / 107 files / 0 skipped** |
+
+The final new regression command run against delivered Mail `a9ea5c7…` reports **35 failed / 12 passed / 2 files / 121 skipped**, exit 1. Only the four changed production files were replaced with their exact delivered blobs in the disposable app copy for that negative run, then restored. Final test/source hashes, all full commands/exits/counts, and raw-log hashes are in `review2Followup` of the manifest. The initial negative probe stage (before the last guard test) remains separately recorded as **34 failed / 12 passed / 1 file / 96 skipped**. Exact final regression command:
+
+```sh
+../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/draftsFileMerge.test.ts -t 'sender has taken in the edit before receipt: true|two-copy provider sync cannot resurrect|discarded receipt-derived copy'
+```
+
+The Mail full run adds **47** cases to the prior 1,627-case stage: 40 caught-up sender rows, six provider-sync discard races, and one application test covering clock skew, all three live phases, uncertainty and ordinary provider records. It retains all previous attachment, controller/sender, actual Close/stash/autosave, exit, boot/load, no-age-inference, two-copy dispatch, schedule/Undo, persistence-failure, duplicate-approval and receipt cases. All services/files are fake. No live desktop validation is claimed; known tooling base-config/chunk-size warnings remain.
+
+Executive again passes all **62** consumer cases, all **9** CTO-run cases (question-card case **8,474 ms**) and all **4** CTO-adoption cases. Its five failures are exactly the named import-boundary/DecisionAssignmentLinks/LeadWorkspace failures retained below and reproduced on the pinned full baseline. The baseline's additional signed-out timeout passes here. The historical two-card cause remains unproven; no flaky/unrelated classification or CTO workflow repair is made. Review 1's results, its initial typecheck failure, task5's first-run CTO-adoption failure and every earlier limitation remain at their actual historical stages below.
+
+### Current posting result and next delivery step
+
+The supported **Mail PR77** update with the exact current saved description again returned **HTTP 403, “Resource not accessible by integration”**. **Executive PR91** returned **HTTP 404** on supported read, so no update was attempted there. The exact bodies remain in each repository's `docs/send-evidence-pr-description.md`; their hashes and the tool responses are recorded under `review2Followup` in the manifest. No alternate account, TLS bypass, credential or permission change was used.
+
+Normal PureDev delivery must apply these source changes and the two exact descriptions to **Mail PR77 / Executive PR91** on `puredev/keep-replacement-attachments-when-late-r-f83756`, then run ordinary review. The owner decides the open predecessor Mail PR73's disposition; no predecessor PR was closed or merged here, and both copies of this work must not be merged. The accepted host prerequisite is unchanged and does not block this app-only correction. No evidence-only commit or future delivery receipt is required for worker checks. These statements identify ownership and inspected evidence rather than asserting a commit state that later delivery could invalidate.
+
+## Review 1 — retained delivery snapshot
 
 Normal PureDev delivery has now created **[Mail PR77](https://github.com/puredesktop/puremail/pull/77)** at `6047fc4735fbc8485e48b862eb1d9f4212cc4ee6` and **[Executive PR91](https://github.com/purescience-inc/pureexecutive/pull/91)** at `cee10343cd1088919325549efc8fae392b457e02`, on `puredev/keep-replacement-attachments-when-late-r-f83756`. These are the current reviewed pair and the targets for these working-tree fixes. The earlier **Mail PR73 / Executive PR77** at `2bdde1f…` / `c7696c2…` are retained predecessor evidence, not this review's delivery targets. Mail PR73 is still open; no old PR has been closed or merged by this worker. PureDev delivered a new pair despite the original reuse instruction; do not mistake the predecessors for the corrected pair or merge both copies of the work.
 
-The current identities come from normal PureDev run `f8375650-4011-43d2-8dd2-d5f64d3fd3dd` (pushed `2026-11-03T18:12:44.878Z`) and exact local heads. The supported GitHub read independently confirms Mail PR77/head `6047fc4…`; Executive PR91 still returns HTTP 404 to this integration, so its remote head is not independently claimed. This follow-up is uncommitted on those delivered heads; PureDev owns the next commits/pushes and ordinary review. Earlier statements below about no worker commit describe the earlier worker stage, before PureDev delivery.
+The current identities come from normal PureDev run `f8375650-4011-43d2-8dd2-d5f64d3fd3dd` (pushed `2026-11-03T18:12:44.878Z`) and exact local heads. The supported GitHub read independently confirms Mail PR77/head `6047fc4…`; Executive PR91 still returns HTTP 404 to this integration, so its remote head is not independently claimed. This was the delivery snapshot inspected in review 1; PureDev owns commits, pushes and ordinary review. Earlier statements below about no worker commit describe the earlier worker stage, before PureDev delivery.
 
 Claude Code identified a real gap that the earlier worker PASS verdict missed: after “I checked Sent — allow retry”, editing without a new press did not add `sendSupersedes`, so a stale sender's accepted receipt could tombstone the replacement. Receipt-aware persistence now also matches the settled attempt's own identity. The existing `confirmed` exclusion retains that receipt's evidence record, and the comparison decides whether to create the stable unsent draft. Tests use the retry button's exact patch, no new hold, a stale sender with no look before its callback, unchanged attachment labels and other compose fields, three reopening passes, equal-content controls, and one fake service call. Later words are covered too.
 
@@ -14,7 +59,7 @@ The review also reproduced a discarded derived draft returning from a third stal
 
 Review check results and exact source mapping are recorded below and in the manifest; preceding counts remain historical stages.
 
-## Review follow-up checks
+## Review 1 — retained follow-up checks
 
 Checks ran serially using the same pinned verification layout, real checked-in configs and unchanged dependency installation described below. No app config, timeout, plugin or shared stub was changed. Current source/config inventories are **272 Mail / 281 Executive**, byte-for-byte equal to the tested copies; the manifest records every blob. Executive's entire source/config inventory also matches delivered `cee1034…`, so the retained complete pinned-baseline run remains valid comparison evidence. The review reran its full candidate suite instead of substituting selected-file passes.
 
@@ -39,11 +84,11 @@ The review's first full Mail run also passed all 1,627 cases, but its following 
 
 Executive's five failures are the exact five named below and in the pinned baseline. All **62** consumer cases pass again (35 parser, 17 existing card, 10 actual Send/No host). All **9** CTO-run cases pass, including the question-card case (**8,304 ms**) and signed-out recovery (**12,453 ms**). All **4** CTO-adoption cases pass, including the historical first-run failure (**26,079 ms**). No new Executive failure or consumer regression is demonstrated. The historical two-card cause remains unproven; it is not called unrelated or flaky. The accepted forced-close host prerequisite, atomic `ifMatch` dependency, all-copies requirement and earlier failed stages remain below.
 
-## Current description posting
+## Review 1 — retained posting attempt
 
 The supported update of **Mail PR77** with the exact current saved description returned **HTTP 403, “Resource not accessible by integration”**. The supported read of **Executive PR91** returned **HTTP 404**, so no update was attempted or claimed there. The exact two replacement bodies remain in each repository's `docs/send-evidence-pr-description.md`; hashes and the responses are retained in the manifest. These are current-target results, distinct from task5's historical Mail PR73 403/Executive PR77 404. No TLS bypass, alternate account, credential or permission work was used.
 
-Precise pending step: normal PureDev delivery updates the delivered **Mail PR77 / Executive PR91** on the `…f83756` branch with these uncommitted fixes and the two saved descriptions, then runs ordinary review. The predecessor PRs remain untouched. There is no required owner choice about the accepted host prerequisite before this app-only correction, and no evidence-only commit or future delivery receipt is a prerequisite for worker checks. This worker made no commit, push or merge; PureDev's preceding delivered commits are explicitly identified above.
+Precise pending step: normal PureDev delivery updates the delivered **Mail PR77 / Executive PR91** on the `…f83756` branch with the source corrections and the two saved descriptions, then runs ordinary review. The predecessor PRs remain untouched. There is no required owner choice about the accepted host prerequisite before this app-only correction, and no evidence-only commit or future delivery receipt is a prerequisite for worker checks. This worker made no commit, push or merge; PureDev's preceding delivered commits are explicitly identified above.
 
 ## Source and normal delivery — retained initial stage
 

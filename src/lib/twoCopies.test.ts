@@ -9,6 +9,7 @@ import { createScheduledSendDispatcher } from '../hooks/useScheduledSends'
 import { createMailDeliveryController } from './mailDelivery'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { recoverInterruptedSends } from './mailRuns'
+import { mergeMailProviderSyncResult } from './mailModel'
 import { markScheduledSend, scheduleSend } from './mailScheduledSend'
 import { createStoreDraftSender } from './mailSendRelease'
 import type { Draft, MailMessage, MailProvider, MailStore, MailTask, ScheduledSend, QueuedMailAction } from '../types'
@@ -73,10 +74,10 @@ async function openCopy() {
       copy.memory = cache.applyStoreFileChanges(copy.memory, result.cacheChanges)
     },
     exit() { persistence.writeDraftsFileBeforeUnload(copy.memory) },
-    async discard(id: string) {
+    async discard(id: string, persist = true) {
       persistence.recordDraftDiscard(id)
       copy.edit(store => ({ ...store, drafts: store.drafts.filter(draft => draft.id !== id) }))
-      await copy.save()
+      if (persist) await copy.save()
     },
     /** A copy left open looks for what the others saved, without having changed anything. */
     async look() {
@@ -580,53 +581,87 @@ describe('two copies sending over the real files', () => {
 
   describe.each([undefined, '<p>Approved</p>'])('receipt application with HTML %s', bodyHtml => {
     describe.each([true, false])('new approval after allowing retry: %s', approveAgain => {
-      it.each(lateReceiptAttachmentCases)('two-copy receipt application: %s', async (_name, oldFiles, files, changed) => {
-        const base = letter({ bodyHtml, attachments: oldFiles ?? files })
-        const scheduled = scheduleSend({ ...demoMailStore(), drafts: [base] }, { draftId: 'letter', threadId: threadId(), sendAt: '2026-11-03T10:00:00Z' })
-        const { a, b } = await twoCopies({ drafts: [base], scheduledSends: scheduled.scheduledSends })
-        const mail = service()
-        let finish!: (message: MailMessage) => void
-        mail.send.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-        const first = controller(a)(mail.provider, record(a)!)
-        await settle()
-        const oldId = record(a)!.sendAttempt!.id
-        await b.save()
-        b.edit(store => recoverInterruptedSends(store)); await b.save()
-        // Exact retry-button patch: permission to edit, with no implied approval.
-        b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, sendUncertainties: draft.sendUncertainties?.map(entry => ({ ...entry, checkedAt: new Date().toISOString() })), sendState: 'failed' as const, sendError: 'You checked Sent and allowed another attempt. Open this draft to send it.' })) }))
-        b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, attachments: files, updatedAt: new Date().toISOString() })) }))
-        if (approveAgain) b.edit(store => holdDraftForSend(store, 'letter', { id: 'B', approved: draftSendFingerprint(record(b)!), at: '1999-01-01T00:00:00Z' }))
-        if (approveAgain) b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, sendAttempt: undefined, sendState: 'failed' as const, sendError: 'Newer refusal', sendSettledAttemptId: 'B' })), scheduledSends: store.scheduledSends!.map(entry => ({ ...entry, status: 'failed' as const, lastError: 'Newer refusal' })) }))
-        await b.save()
-        const newerEvidence = { sendSettledAttemptId: record(b)!.sendSettledAttemptId, sendState: record(b)!.sendState, sendError: record(b)!.sendError }
-        finish({ ...accepted(), bodyHtml, attachments: oldFiles } as MailMessage); await first
-        // Cache refresh is a legitimate application path too; it must retain the proof.
-        await a.look(); await b.look()
-        await b.save()
-        for (let pass = 0; pass < 3; pass += 1) {
-          const reopened = await openCopy()
-          expect(record(reopened)).toMatchObject(newerEvidence)
-          const receipt = reopened.memory.messages.find(message => message.sentDraftId === 'letter')!
-          expect(receipt).toMatchObject({ sentAttemptId: oldId, deliveryAccepted: true })
-          expect(receipt.attachments?.map(({ receiptContentHash: _hash, ...file }) => file)).toEqual(oldFiles?.map(({ content: _content, ...file }) => file))
-          receipt.attachments?.forEach((file, index) => {
-            if (file.receiptContentHash) expect(file.receiptContentHash).toBe(attachmentReceiptHash(oldFiles![index]))
-          })
-          expect(draftDelivery(reopened.memory, 'letter').state).toBe('submitted')
-          expect(reopened.memory.scheduledSends![0]).toMatchObject(approveAgain ? { status: 'failed', lastError: 'Newer refusal' } : { status: 'unconfirmed' })
-          const later = reopened.memory.drafts.filter(draft => draft.id !== 'letter')
-          expect(later).toHaveLength(changed ? 1 : 0)
-          if (changed) {
-            expect(later[0]).toMatchObject({ subject: base.subject, to: base.to, body: base.body, attachments: files })
-            expect(later[0].bodyHtml).toBe(bodyHtml)
-            expect(later[0].sendAttempt).toBeUndefined()
-            expect(draftDelivery(reopened.memory, later[0].id).state).toBe('none')
-            expect(reopened.memory.scheduledSends!.some(entry => entry.draftId === later[0].id)).toBe(false)
+      describe.each([false, true])('sender has taken in the edit before receipt: %s', caughtUp => {
+        it.each(lateReceiptAttachmentCases)('two-copy receipt application: %s', async (_name, oldFiles, files, changed) => {
+          const base = letter({ bodyHtml, attachments: oldFiles ?? files })
+          const scheduled = scheduleSend({ ...demoMailStore(), drafts: [base] }, { draftId: 'letter', threadId: threadId(), sendAt: '2026-11-03T10:00:00Z' })
+          const { a, b } = await twoCopies({ drafts: [base], scheduledSends: scheduled.scheduledSends })
+          const mail = service()
+          let finish!: (message: MailMessage) => void
+          mail.send.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+          const first = controller(a)(mail.provider, record(a)!)
+          await settle()
+          const oldId = record(a)!.sendAttempt!.id
+          await b.save()
+          b.edit(store => recoverInterruptedSends(store)); await b.save()
+          // Exact retry-button patch: permission to edit, with no implied approval.
+          b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, sendUncertainties: draft.sendUncertainties?.map(entry => ({ ...entry, checkedAt: new Date().toISOString() })), sendState: 'failed' as const, sendError: 'You checked Sent and allowed another attempt. Open this draft to send it.' })) }))
+          b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, attachments: files, updatedAt: new Date().toISOString() })) }))
+          if (approveAgain) b.edit(store => holdDraftForSend(store, 'letter', { id: 'B', approved: draftSendFingerprint(record(b)!), at: '1999-01-01T00:00:00Z' }))
+          if (approveAgain) b.edit(store => ({ ...store, drafts: store.drafts.map(draft => ({ ...draft, sendAttempt: undefined, sendState: 'failed' as const, sendError: 'Newer refusal', sendSettledAttemptId: 'B' })), scheduledSends: store.scheduledSends!.map(entry => ({ ...entry, status: 'failed' as const, lastError: 'Newer refusal' })) }))
+          await b.save()
+          const newerEvidence = { sendSettledAttemptId: record(b)!.sendSettledAttemptId, sendState: record(b)!.sendState, sendError: record(b)!.sendError }
+          if (caughtUp) await a.save() // Ordinary drafts-file refresh before the service callback.
+          finish({ ...accepted(), bodyHtml, attachments: oldFiles } as MailMessage); await first
+          // Cache refresh is a legitimate application path too; it must retain the proof.
+          await a.look(); await b.look()
+          await b.save()
+          for (let pass = 0; pass < 3; pass += 1) {
+            const reopened = await openCopy()
+            expect(record(reopened)).toMatchObject(newerEvidence)
+            const receipt = reopened.memory.messages.find(message => message.sentDraftId === 'letter')!
+            expect(receipt).toMatchObject({ sentAttemptId: oldId, deliveryAccepted: true })
+            expect(receipt.attachments?.map(({ receiptContentHash: _hash, ...file }) => file)).toEqual(oldFiles?.map(({ content: _content, ...file }) => file))
+            receipt.attachments?.forEach((file, index) => {
+              if (file.receiptContentHash) expect(file.receiptContentHash).toBe(attachmentReceiptHash(oldFiles![index]))
+            })
+            expect(draftDelivery(reopened.memory, 'letter').state).toBe('submitted')
+            expect(reopened.memory.scheduledSends![0]).toMatchObject(approveAgain ? { status: 'failed', lastError: 'Newer refusal' } : { status: 'unconfirmed' })
+            const later = reopened.memory.drafts.filter(draft => draft.id !== 'letter')
+            expect(later).toHaveLength(changed ? 1 : 0)
+            if (changed) {
+              expect(later[0]).toMatchObject({ subject: base.subject, to: base.to, body: base.body, attachments: files })
+              expect(later[0].bodyHtml).toBe(bodyHtml)
+              expect(later[0].sendAttempt).toBeUndefined()
+              expect(draftDelivery(reopened.memory, later[0].id).state).toBe('none')
+              expect(reopened.memory.scheduledSends!.some(entry => entry.draftId === later[0].id)).toBe(false)
+            }
+            await reopened.save()
           }
-          await reopened.save()
-        }
-        expect(mail.send).toHaveBeenCalledTimes(1)
+          expect(mail.send).toHaveBeenCalledTimes(1)
+        })
       })
+    })
+  })
+
+  describe.each([false, true])('a provider-sync result arrives after a discard (pending locally: %s)', pending => {
+    it.each(lateReceiptAttachmentCases.slice(0, 3))('two-copy provider sync cannot resurrect %s', async (_name, oldFiles, replacement) => {
+      const earlier = letter({
+        attachments: replacement, updatedAt: '2099-01-01T00:00:00Z',
+        sendState: 'failed', sendError: 'Checked Sent', sendSettledAttemptId: 'B', sendSupersedes: ['A'],
+        sendUncertainties: [{ attemptId: 'A', messageId: '<submitted-A>', reason: 'Older confirmation missing' }],
+      })
+      const { a, b } = await twoCopies({ drafts: [earlier] })
+      const receipt = { ...accepted(), messageIdHeader: '<submitted-A>', attachments: oldFiles }
+      const sync = (store: MailStore) => mergeMailProviderSyncResult(store, { ...store, drafts: [], messages: [receipt] } as MailStore)
+      // Capture the other/in-flight sync result before the discard, then apply it afterward.
+      const delayed = sync(b.memory)
+      a.edit(sync); await a.save()
+      const later = a.memory.drafts.find(draft => draft.id !== 'letter')!
+      expect(later.attachments).toEqual(replacement)
+      expect(delayed.drafts.some(draft => draft.id === later.id)).toBe(true)
+      await a.discard(later.id, !pending)
+      const target = pending ? a : b
+      target.edit(() => delayed)
+      await target.save()
+      expect(target.memory.drafts.some(draft => draft.id === later.id)).toBe(false)
+      for (let pass = 0; pass < 3; pass += 1) {
+        const reopened = await openCopy()
+        expect(reopened.memory.drafts.some(draft => draft.id === later.id)).toBe(false)
+        expect(reopened.memory.messages.some(message => message.deliveryAccepted && message.sentAttemptId === 'A')).toBe(true)
+        expect(JSON.parse(files.get('mail-drafts.json')!).draftTombstones.some((t: { id: string; reason: string }) => t.id === later.id && t.reason === 'discarded')).toBe(true)
+        await reopened.save()
+      }
     })
   })
 

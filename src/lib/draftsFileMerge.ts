@@ -1,4 +1,4 @@
-import { confirmedSentCopy } from './mailDeliveryStatus'
+import { confirmedSentCopy, RECEIPT_DRAFT_ID_PREFIX } from './mailDeliveryStatus'
 import type { Draft, MailMessage, MailRun, MailStore, ScheduledSend, ScheduledSendStatus } from '../types'
 
 /**
@@ -324,6 +324,7 @@ const withoutRemoved = <T extends Stamped>(current: T[], removed: readonly Tombs
     if (!tombstone) return true
     // A send begun here since that merge's snapshot stands, unless it went.
     if (confirmed(record)) return false
+    if (tombstone.reason === 'discarded' && record.id.startsWith(RECEIPT_DRAFT_ID_PREFIX) && !inTheAir(record)) return false
     return inTheAir(record) || time(record.updatedAt) > time(tombstone.deletedAt)
   })
 }
