@@ -21,7 +21,9 @@ import {
   reportExecutiveDraftStates,
   serializeDigestCursor,
   sharedAccount,
+  executiveEditsWaiting,
   takeExecutiveDiscards,
+  takeExecutiveEdits,
   takeExecutiveDrafts,
   writeMailDigest,
   type ExecutiveShareFiles,
@@ -727,4 +729,40 @@ it('creates an unsent update draft with validated reply routing', () => {
   expect(built.draft.replyTo).toEqual([{ name: 'CTO', email: 'adam+cto@pure.science' }])
   expect(built.draft.syncState).toBe('pending'); expect(built.draft.sentAt).toBeUndefined()
   expect(checkDraftRequest(JSON.stringify({ ...raw, replyTo: [{ address: 'bad\r\nBcc: victim@example.com' }] }), key, share).ok).toBe(false)
+})
+
+describe('the person’s edit on the card (drafts/edit)', () => {
+  const drafts = `${MAIL}/drafts`
+  const withDraft = (): MailStore => {
+    const checked = checkDraftRequest(JSON.stringify(DRAFT), DRAFT.key, share)
+    if (!checked.ok) throw new Error(checked.why)
+    return addExecutiveDraft(store(), buildExecutiveDraft(store(), ACCOUNT, checked.request, { now: '2026-10-27T09:00:00Z' }))
+  }
+  const ask = (patch: Record<string, unknown> = {}) => ({ [`${drafts}/edit/${DRAFT.key}.json`]: JSON.stringify({ v: 1, key: DRAFT.key, body: 'My words.', version: 'v1', ...patch }) })
+
+  it('hands on the words and the version, and clears the request', async () => {
+    const { disk, files } = memoryFiles(ask())
+    const seen: unknown[] = []
+    expect(await executiveEditsWaiting(files, ROOT)).toBe(true)
+    const result = await takeExecutiveEdits({ files, root: ROOT, store: withDraft(), instanceId: 'w1', now: 10, edit: (...args) => { seen.push(args); return { ok: true } } })
+    expect(seen).toEqual([[withDraft().drafts.at(-1)!.id, 'My words.', 'v1']])
+    expect(result).toEqual({ edited: [DRAFT.key], refused: [] })
+    expect([...disk.keys()].filter(path => path.includes('/edit/'))).toEqual([])
+    expect(await executiveEditsWaiting(files, ROOT)).toBe(false)
+  })
+
+  it('says why when it cannot, in the person’s words, and sends nothing', async () => {
+    const { disk, files } = memoryFiles(ask())
+    const result = await takeExecutiveEdits({ files, root: ROOT, store: withDraft(), instanceId: 'w1', now: 10, edit: () => ({ ok: false, reason: 'It changed.' }) })
+    expect(result.refused).toEqual([{ key: DRAFT.key, why: 'It changed.' }])
+    expect(JSON.parse(disk.get(`${drafts}/edit/refused/${DRAFT.key}.json`)!)).toMatchObject({ why: 'It changed.' })
+  })
+
+  it('refuses an empty edit, and a draft that is gone or sent', async () => {
+    const edit = () => { throw new Error('must not edit') }
+    const empty = memoryFiles(ask({ body: '  ' }))
+    expect((await takeExecutiveEdits({ files: empty.files, root: ROOT, store: withDraft(), instanceId: 'w1', now: 10, edit })).refused[0]!.why).toMatch(/could not be read/)
+    const gone = memoryFiles(ask())
+    expect((await takeExecutiveEdits({ files: gone.files, root: ROOT, store: store(), instanceId: 'w1', now: 10, edit })).refused[0]!.why).toMatch(/not in PureMail/)
+  })
 })

@@ -19,6 +19,9 @@
  *                         a draft simply not in this store is missing.
  *   drafts/discard/<key>.json written by the Executive app when the person
  *                         says No: the draft for that key is discarded here.
+ *   drafts/edit/<key>.json written by the Executive app when the person edits
+ *                         the draft on its card: its body is replaced here,
+ *                         only at the version they were looking at.
  *
  * Nothing here sends mail, calls a model or touches the network. The state
  * lives in these files, never in the mail store: mergeMailProviderSyncResult
@@ -52,6 +55,7 @@ export const EXECUTIVE_TAKEN_DIR = `${EXECUTIVE_DRAFTS_DIR}/taken`
 export const EXECUTIVE_REFUSED_DIR = `${EXECUTIVE_DRAFTS_DIR}/refused`
 export const EXECUTIVE_STATE_DIR = `${EXECUTIVE_DRAFTS_DIR}/state`
 export const EXECUTIVE_DISCARD_DIR = `${EXECUTIVE_DRAFTS_DIR}/discard`
+export const EXECUTIVE_EDIT_DIR = `${EXECUTIVE_DRAFTS_DIR}/edit`
 /** The longest body a state file carries (the card folds it anyway). */
 export const DRAFT_STATE_BODY_LIMIT = 20_000
 /** Drafts taken longer ago than this are no longer reported. */
@@ -1184,6 +1188,83 @@ export async function takeExecutiveDiscards(input: {
     await files.write(statePath, `${JSON.stringify(gone, null, 2)}\n`)
     await files.remove(claimPath)
     result.discarded.push(key)
+  }
+  return result
+}
+
+export interface EditResult {
+  edited: string[]
+  refused: Array<{ key: string; why: string }>
+}
+
+/** Is anything waiting to be edited? Cheap enough to ask often. */
+export async function executiveEditsWaiting(files: ExecutiveShareFiles, root: string): Promise<boolean> {
+  return (await files.list(joinPath(root, EXECUTIVE_EDIT_DIR))).some(name => /^.+\.json$/.test(name))
+}
+
+/**
+ * The person edited a draft on its card in the Executive app:
+ * `drafts/edit/<key>.json` holds the new body and the version they saw. It
+ * changes only that draft's body, never sends. If it cannot, `refused/<key>.json`
+ * says why in the person's words, and the card shows that.
+ */
+export async function takeExecutiveEdits(input: {
+  files: ExecutiveShareFiles
+  root: string
+  store: Pick<MailStore, 'drafts'>
+  instanceId: string
+  edit: (draftId: string, body: string, expectedVersion?: string) => { ok: true } | { ok: false; reason: string }
+  now?: number
+}): Promise<EditResult> {
+  const { files, root, store, instanceId, edit } = input
+  const now = input.now ?? Date.now()
+  const dir = joinPath(root, EXECUTIVE_EDIT_DIR)
+  const refusedDir = `${dir}/refused`
+  const result: EditResult = { edited: [], refused: [] }
+  for (const name of await files.list(dir)) {
+    const fresh = /^(.+)\.json$/.exec(name)
+    const claimed = /^(.+)\.json\.taking-/.exec(name)
+    const key = (fresh ?? claimed)?.[1]
+    if (!key || !DRAFT_KEY_PATTERN.test(key)) continue
+    if (claimed) {
+      const age = claimAge(name, '.json.taking-', now)
+      if (age === null || age <= DRAFT_CLAIM_STALE_MS) continue
+    }
+    const claimName = `${key}.json.taking-${instanceId}-${now}`
+    if (!(await tryRename(files, `${dir}/${name}`, claimName))) continue
+    const claimPath = `${dir}/${claimName}`
+    let request: { v?: unknown; key?: unknown; body?: unknown; version?: unknown } = {}
+    try {
+      request = JSON.parse((await files.read(claimPath)) ?? '{}') as typeof request
+    } catch {
+      request = {}
+    }
+    const refuse = async (why: string) => {
+      await files.write(`${refusedDir}/${key}.json`, `${JSON.stringify({ key, why, refusedAt: new Date(now).toISOString() }, null, 2)}\n`)
+      await files.remove(claimPath)
+      result.refused.push({ key, why })
+    }
+    if (request.v !== 1 || request.key !== key || typeof request.body !== 'string' || !request.body.trim()) {
+      await refuse('The edit could not be read. Try again.')
+      continue
+    }
+    const draft = existingExecutiveDraft(store, key)
+    if (!draft) {
+      await refuse('This draft is not in PureMail any more.')
+      continue
+    }
+    if (draft.sentAt) {
+      await refuse('It was sent already.')
+      continue
+    }
+    const done = edit(draft.id, request.body, typeof request.version === 'string' ? request.version : undefined)
+    if (!done.ok) {
+      await refuse(done.reason)
+      continue
+    }
+    await files.remove(`${refusedDir}/${key}.json`)
+    await files.remove(claimPath)
+    result.edited.push(key)
   }
   return result
 }

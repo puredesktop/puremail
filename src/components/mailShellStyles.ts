@@ -591,15 +591,38 @@ export const ReaderToolbar = styled.div.attrs(chrome('toolbar'))`
      clipping the row clipped the menu out of existence. The labels give way
      below instead, which is what was actually overflowing. */
   overflow: visible;
+  /* The reader's own width, not the window's: beside the mailbox list or in a
+     split pane it can be narrow in a wide window. */
+  container: mail-actions / inline-size;
 
   > * {
     flex: none;
   }
 
+  /* Icons only. The label is the part of an action that can go. */
+  @container mail-actions (max-width: 1000px) {
+    ${ReaderToolbarLabel} {
+      display: none;
+    }
+  }
+
+  /* Then what has another way to it: the thread's place, and the reply
+     switches, which the reply itself offers again. */
+  @container mail-actions (max-width: 660px) {
+    [data-goes-first] {
+      display: none;
+    }
+  }
+
+  @container mail-actions (max-width: 580px) {
+    [data-goes-next] {
+      display: none;
+    }
+  }
+
   @media (max-width: 860px) {
     gap: 6px;
 
-    /* Icons only. The label is the part of an action that can go. */
     ${ReaderToolbarLabel} {
       display: none;
     }
@@ -619,6 +642,16 @@ export const ReaderToolbarSwap = styled.div`
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
+
+  /* Its layers are out of flow, so it has no width of its own: without this
+     it shrinks to nothing and the reply actions lie on top of the others. */
+  @container mail-actions (max-width: 1000px) {
+    min-width: 260px;
+  }
+
+  @container mail-actions (max-width: 580px) {
+    min-width: 170px;
+  }
 `
 
 export const ReaderToolbarSwapLayer = styled.div<{ $shown?: boolean }>`
