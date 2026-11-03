@@ -57,6 +57,8 @@ export function useExecutiveMailShare(input: {
   discardDraft: (draftId: string) => { ok: true } | { ok: false; reason: string }
   onDraftsTaken?: (result: DraftImportResult) => void
   onDraftsDiscarded?: (result: DiscardResult) => void
+  /** Changes when any draft's send state does: report it now, not at the next poll. */
+  deliverySignature?: string
 }): {
   /** Call after a successful sync, with the accounts that sync covered. */
   afterSync: (syncedAccounts: MailAccount[]) => void
@@ -115,6 +117,13 @@ export function useExecutiveMailShare(input: {
     const poll = window.setInterval(() => look.current(null), 30_000)
     return () => { window.clearTimeout(timer); window.clearInterval(poll) }
   }, [input.enabled])
+
+  const reported = useRef(input.deliverySignature)
+  useEffect(() => {
+    if (!input.enabled || reported.current === input.deliverySignature) return
+    reported.current = input.deliverySignature
+    look.current(null)
+  }, [input.enabled, input.deliverySignature])
 
   return { afterSync: syncedAccounts => look.current(syncedAccounts), teamReads: teamReadStatuses(input.readStore(), receipts) }
 }

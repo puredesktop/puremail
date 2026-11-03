@@ -101,6 +101,12 @@ function memoryFiles(initial: Record<string, string> = {}) {
   return { disk, files }
 }
 
+/** The local send with its confirmation: the optimistic placeholder alone proves nothing. */
+function confirmedSend(store: MailStore, draftId: string, at: string): MailStore {
+  const sent = sendDraft(store, draftId, at)
+  return { ...sent, messages: sent.messages.map(message => ({ ...message, optimistic: undefined })) }
+}
+
 describe('share file', () => {
   it('reads a version-1 share and normalises the never-read list', () => {
     expect(share).toEqual({
@@ -470,7 +476,7 @@ describe('where the team’s drafts stand (drafts/state)', () => {
     expect(stateOf(disk)).toMatchObject({ state: 'draft', body: 'Hello Ana,\n\nA kinder chase.' })
     expect(stateOf(disk)!.version).not.toBe(first.version)
     // sent from PureMail: the draft goes, the sent copy stays
-    s = sendDraft(s, draftId, '2026-11-01T09:05:00.000Z')
+    s = confirmedSend(s, draftId, '2026-11-01T09:05:00.000Z')
     expect(s.drafts.some(d => d.id === draftId)).toBe(false)
     await reportExecutiveDraftStates({ files, root: ROOT, store: s, account: ACCOUNT, finalKeys: finals, now: NOW + 3000 })
     expect(stateOf(disk)).toMatchObject({ state: 'sent', sentAt: '2026-11-01T09:05:00.000Z', body: 'Hello Ana,\n\nA kinder chase.' })
@@ -545,6 +551,57 @@ describe('where the team’s drafts stand (drafts/state)', () => {
     expect(stateOf(disk)).toMatchObject({ state: 'discarded', discardedBy: 'request' })
   })
 
+  describe('a send and the store holding the draft, together', () => {
+    const attempt = { id: 'a1', phase: 'submitting' as const, approved: 'fingerprint', at: '2026-11-01T08:59:00.000Z' }
+    const sending = (): MailStore => {
+      const s = withDraft()
+      return { ...s, drafts: s.drafts.map(d => (d.id === draftId ? { ...d, sendAttempt: attempt } : d)) }
+    }
+
+    it('reports the send under way with the store that holds it', async () => {
+      const { disk, files } = memoryFiles(takenFile)
+      await reportExecutiveDraftStates({ files, root: ROOT, store: sending(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+      expect(stateOf(disk)).toMatchObject({ state: 'draft', heldBy: 'store-here', delivery: { state: 'submitting' } })
+    })
+
+    it('gone from the store that held it mid-send is unconfirmed, not missing', async () => {
+      const { disk, files } = memoryFiles(takenFile)
+      await reportExecutiveDraftStates({ files, root: ROOT, store: sending(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+      await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW + 1000, storeId: 'store-here' })
+      expect(stateOf(disk)).toMatchObject({ state: 'draft', heldBy: 'store-here', delivery: { state: 'unconfirmed' } })
+    })
+
+    it('another desktop’s store says nothing about a send it does not hold', async () => {
+      const { disk, files } = memoryFiles(takenFile)
+      await reportExecutiveDraftStates({ files, root: ROOT, store: sending(), account: ACCOUNT, now: NOW, storeId: 'store-holder' })
+      await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW + 1000, storeId: 'store-empty' })
+      expect(stateOf(disk)).toMatchObject({ state: 'draft', heldBy: 'store-holder', delivery: { state: 'submitting' } })
+    })
+
+    it('a real discard after the send was undone stands over the last report', async () => {
+      const { disk, files } = memoryFiles(takenFile)
+      await reportExecutiveDraftStates({ files, root: ROOT, store: sending(), account: ACCOUNT, now: NOW, storeId: 'store-here' })
+      await reportExecutiveDraftStates({ files, root: ROOT, store: store(), account: ACCOUNT, now: NOW + 1000, storeId: 'store-here', discardedAt: id => (id === draftId ? '2026-11-01T09:00:00.500Z' : undefined) })
+      expect(stateOf(disk)).toMatchObject({ state: 'discarded', discardedBy: 'mail' })
+    })
+
+    it('a confirmed copy under the id last reported is sent, whatever id the draft has now', async () => {
+      const { disk, files } = memoryFiles({ ...takenFile, [`${drafts}/state/${DRAFT.key}.json`]: JSON.stringify({ v: 1, key: DRAFT.key, draftId: 'imap_draft_7', state: 'draft', at: '2026-11-01T08:00:00.000Z', to: [], cc: [], subject: 'Re: pilot terms', body: 'Hello', version: 'v1', delivery: { state: 'submitting' } }) })
+      const s = withDraft()
+      const sent = { ...s, messages: [...s.messages, message('imap_msg_Sent_7', 't1', { sentDraftId: 'imap_draft_7', deliveryAccepted: true, receivedAt: '2026-11-01T08:30:00.000Z' })] }
+      await reportExecutiveDraftStates({ files, root: ROOT, store: sent, account: ACCOUNT, now: NOW })
+      expect(stateOf(disk)).toMatchObject({ state: 'sent', sentMessageId: 'imap_msg_Sent_7', delivery: { state: 'submitted', at: '2026-11-01T08:30:00.000Z' } })
+    })
+
+    it('an optimistic sending placeholder under the last id is not a sent copy', async () => {
+      const { disk, files } = memoryFiles({ ...takenFile, [`${drafts}/state/${DRAFT.key}.json`]: JSON.stringify({ v: 1, key: DRAFT.key, draftId: 'imap_draft_7', state: 'draft', at: '2026-11-01T08:00:00.000Z', to: [], cc: [], subject: 'Re: pilot terms', body: 'Hello', version: 'v1' }) })
+      const s = withDraft()
+      const placeholder = { ...s, messages: [...s.messages, message('msg_sent_imap_draft_7_1', 't1', { optimistic: true })] }
+      await reportExecutiveDraftStates({ files, root: ROOT, store: placeholder, account: ACCOUNT, now: NOW })
+      expect(stateOf(disk)?.state).toBe('draft')
+    })
+  })
+
   it('stops reporting drafts taken more than 30 days ago', async () => {
     const { disk, files } = memoryFiles({ [`${drafts}/taken/${DRAFT.key}.json`]: JSON.stringify({ ...DRAFT, draftId, takenAt: '2026-09-01T09:00:00.000Z' }) })
     await reportExecutiveDraftStates({ files, root: ROOT, store: withDraft(), account: ACCOUNT, now: NOW })
@@ -574,7 +631,7 @@ describe('the person’s No (drafts/discard)', () => {
 
   it('leaves a draft that was sent already alone', async () => {
     const { disk, files } = memoryFiles(ask())
-    const sent = sendDraft(withDraft(), draftId, '2026-11-01T08:00:00.000Z')
+    const sent = confirmedSend(withDraft(), draftId, '2026-11-01T08:00:00.000Z')
     const thrown: string[] = []
     const result = await takeExecutiveDiscards({ files, root: ROOT, store: sent, instanceId: 'w1', now: 10, discard: id => { thrown.push(id); return { ok: true } } })
     expect(thrown).toEqual([])

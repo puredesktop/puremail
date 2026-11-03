@@ -76,7 +76,7 @@ export function storeWithRunCardSaved(
   now = new Date().toISOString(),
 ): MailStore {
   const draft = store.drafts.find(item => item.id === card.draftId)
-  if (!draft || draft.sentAt || !runCardDiffersFromDraft(card, draft)) return store
+  if (!draft || draft.sentAt || draft.sendAttempt || !runCardDiffersFromDraft(card, draft)) return store
   const to = parseComposeRecipients(card.to)
   const upserted = upsertReplyDraft(store, {
     context: { threadId: draft.threadId, messageId: null, kind: 'draft', draftId: draft.id },

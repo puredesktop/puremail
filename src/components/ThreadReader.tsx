@@ -1480,7 +1480,9 @@ export function ThreadReader({
     ? 'meeting details in this email'
     : selectedInviteMessage?.attachments[0]?.name ?? 'this email'
   /** The footer band belongs to the message on screen. */
-  const attachmentMessage = activeMessageTab
+  // A partial persisted copy is not evidence that it has no attachments.
+  // Leave its attachment controls unavailable without normalizing the stored copy.
+  const attachmentMessage = activeMessageTab && Array.isArray(activeMessageTab.attachments) ? activeMessageTab : null
   // Three rows by default, all of them on demand — the band is an edge, not
   // a file manager, but every file must stay reachable.
   const [attachmentsExpanded, setAttachmentsExpanded] = useState(false)
@@ -1498,7 +1500,7 @@ export function ThreadReader({
   )
   const headerRecipients =
     headerMessage?.to
-      .map(person => person.name || person.email)
+      ?.map(person => person.name || person.email)
       .filter(Boolean)
       .join(', ') ??
     selectedAccount?.email ??

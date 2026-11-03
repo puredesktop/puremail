@@ -15,6 +15,20 @@ function fixture() {
 }
 
 describe('drawer reply lifecycle', () => {
+  it.each([
+    ['held', { sendAttempt: { id: 'a', phase: 'held', approved: 'x', at: 'now' } }, /Undo it first/],
+    ['submitting', { sendAttempt: { id: 'a', phase: 'submitting', approved: 'x', at: 'now' } }, /being sent/],
+    ['unconfirmed', { sendState: 'uncertain', sendError: 'Check Sent' }, /not confirmed/],
+  ] as const)('a %s draft cannot be rewritten by a prepare or a commit', (_name, patch, words) => {
+    const f = fixture()
+    const first = f.requests.prepare(f.store, f.accountId, f.threadId)
+    const store = f.requests.commit(f.store, f.accountId, first.requestId, 'Hi,\n\nFirst version.').store
+    const prepared = f.requests.prepare(store, f.accountId, f.threadId)
+    const sending = { ...store, drafts: store.drafts.map(item => ({ ...item, ...patch })) as Draft[] }
+    expect(() => f.requests.prepare(sending, f.accountId, f.threadId)).toThrow(words)
+    expect(() => f.requests.commit(sending, f.accountId, prepared.requestId, 'Rewritten')).toThrow(words)
+  })
+
   it('keeps a synced draft out of reply context and repairs a previously stale source when regenerating', () => {
     const f = fixture()
     const first = f.requests.prepare(f.store, f.accountId, f.threadId)

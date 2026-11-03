@@ -1,4 +1,5 @@
 import { draftEditVersion } from '../lib/mailDrawerDrafts'
+import { deliveryNote, draftDelivery, draftDiscardBlock, draftEditBlock, draftReleaseBlock, type DraftDelivery } from '../lib/mailDeliveryStatus'
 import type { AgentToolHandlerResult } from '@purescience/platform-ui/bridge/react/usePlatformAgentTools'
 import {
   buildMailProposal,
@@ -523,6 +524,7 @@ function draftSummary(
     item => item.id === draft.threadId,
   )
   const qaStatus = qaStatusForDraft(draft)
+  const delivery = draftDelivery(context.store, draft.id)
   return {
     draftId: draft.id,
     threadId: draft.threadId,
@@ -531,13 +533,16 @@ function draftSummary(
     to: draft.to.map(contact => contact.email),
     ...(draft.cc?.length ? { cc: draft.cc.map(item => item.email) } : {}),
     kind: draftKindForDraft(draft),
-    state: draft.sentAt
+    state: delivery.state === 'submitted'
       ? 'sent'
-      : qaStatus === 'pending'
-        ? 'being_written'
-        : qaStatus === 'failed'
-          ? 'failed'
-          : 'not_sent',
+      : delivery.state === 'held' || delivery.state === 'submitting' || delivery.state === 'unconfirmed' || delivery.state === 'conflict'
+        ? delivery.state
+        : qaStatus === 'pending'
+          ? 'being_written'
+          : qaStatus === 'failed'
+            ? 'failed'
+            : 'not_sent',
+    delivery: { ...delivery, note: deliveryNote(delivery) },
     ...(draft.qaError ? { error: draft.qaError } : {}),
     savedToAccount: Boolean(draft.providerDraftId),
     attachments: draft.attachments.map(attachmentSummary),
@@ -602,6 +607,8 @@ export function updateDraftHandler(
       'That draft has already been sent and cannot be edited.',
     )
   }
+  const editBlock = draftEditBlock(context.store, draftId)
+  if (editBlock) throw new AgentMailToolError(editBlock)
   const expectedVersion = requireString(args, 'expectedVersion')
   if (expectedVersion !== draftEditVersion(draft)) throw new AgentMailToolError('The draft changed. Read getDraft again before editing.')
   const patch = {
@@ -656,6 +663,8 @@ export function discardDraftHandler(
       'That draft has already been sent; there is nothing to discard.',
     )
   }
+  const discardBlock = draftDiscardBlock(context.store, draftId)
+  if (discardBlock) throw new AgentMailToolError(discardBlock)
   const result = context.discardDraft(draftId)
   if (!result.ok) throw new AgentMailToolError(result.reason)
   return ok({
@@ -682,28 +691,37 @@ export function sendDraftHandler(
   const draftId = requireString(args, 'draftId')
   const version = optionalString(args, 'version')
   const draft = context.store.drafts.find(item => item.id === draftId)
-  if (draft?.sentAt || (!draft && context.store.messages.some(message => !message.isDraft && (message.sentDraftId === draftId || message.id.startsWith(`msg_sent_${draftId}_`))))) {
-    throw new AgentMailToolError('This draft was sent already.')
-  }
+  const before = draftDelivery(context.store, draftId)
+  if (before.state === 'submitted') throw new AgentMailToolError('This draft was sent already.')
   if (!draft) throw new AgentMailToolError('This draft is not in PureMail any more, so nothing was sent.')
-  if (version && version !== draftEditVersion(draft)) {
-    throw new AgentMailToolError('It changed after you approved it, so it was not sent. Look at it again.')
-  }
-  let sentMessageId: string | undefined
-  const result = context.sendStoreDraft(draft, {
-    label: 'Message',
-    onCommitted: id => { sentMessageId = id },
-  })
-  if (!result.ok) throw new AgentMailToolError(result.reason)
-  return ok({
+  const reply = (delivery: DraftDelivery, extra: Record<string, unknown> = {}) => ok({
     draftId,
     to: draft.to.map(contact => contact.email),
     subject: draft.subject,
-    status: result.undoSeconds > 0 || !sentMessageId ? 'queued' : 'sent',
-    undoSeconds: result.undoSeconds,
-    ...(sentMessageId ? { sentMessageId } : {}),
-    note: result.undoSeconds > 0 ? `Leaves in ${result.undoSeconds}s unless the person undoes it.` : sentMessageId ? 'Sent.' : 'Sending now.',
+    status: delivery.state === 'submitted' ? 'sent' : 'queued',
+    delivery,
+    note: deliveryNote(delivery),
+    ...extra,
   })
+  // The same draft approved again: that attempt stands. No second timer, no second send.
+  if (before.state === 'held' || before.state === 'submitting') return reply(before, { alreadyQueued: true })
+  if (version && version !== draftEditVersion(draft)) {
+    throw new AgentMailToolError('It changed after you approved it, so it was not sent. Look at it again.')
+  }
+  const blocked = draftReleaseBlock(context.store, draftId)
+  if (blocked) throw new AgentMailToolError(blocked.reason)
+  let sentMessageId: string | undefined
+  let failure: string | undefined
+  const result = context.sendStoreDraft(draft, {
+    label: 'Message',
+    onCommitted: id => { sentMessageId = id },
+    onFailed: reason => { failure = reason },
+  })
+  if (!result.ok) throw new AgentMailToolError(result.reason)
+  if (failure) throw new AgentMailToolError(failure)
+  if (result.already) return reply({ state: result.already }, { undoSeconds: result.undoSeconds, alreadyQueued: true })
+  if (sentMessageId) return reply({ state: 'submitted', sentMessageId }, { undoSeconds: result.undoSeconds, sentMessageId })
+  return reply({ state: result.undoSeconds > 0 ? 'held' : 'submitting' }, { undoSeconds: result.undoSeconds })
 }
 
 function requireUnsentDraft(
@@ -721,6 +739,8 @@ function requireUnsentDraft(
       'That draft has already been sent; its attachments cannot change.',
     )
   }
+  const editBlock = draftEditBlock(context.store, draftId)
+  if (editBlock) throw new AgentMailToolError(editBlock)
   return draft
 }
 

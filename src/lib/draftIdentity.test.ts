@@ -145,7 +145,7 @@ describe('the executive share follows the draft, whatever its id', () => {
 describe('applying another copy’s save does not change what identity it holds', () => {
   it('an imported copy of a draft another copy made becomes that draft', () => {
     const b = store([])
-    const applied = applyDraftsFileChanges(b, { drafts: [pushed], removedDrafts: [], runs: [], removedRuns: [], sentReceipts: [], recovery: { accounts: [], mailboxes: [], threads: [thread('thread_barbara')] } })
+    const applied = applyDraftsFileChanges(b, { drafts: [pushed], removedDrafts: [], runs: [], removedRuns: [], scheduledSends: [], sentReceipts: [], recovery: { accounts: [], mailboxes: [], threads: [thread('thread_barbara')] } })
     expect(ids(applied)).toEqual([LOCAL_ID])
     expect(ids(mergeMailProviderSyncResult(applied, listing([listed])))).toEqual([LOCAL_ID])
   })

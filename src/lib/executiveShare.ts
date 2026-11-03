@@ -28,7 +28,7 @@
  * guarded by renaming the file being worked on (a rename succeeds for one
  * window only).
  */
-import { imapDraftMessageId } from './mailDeliveryStatus'
+import { NO_EVIDENCE_REASON, confirmedSentCopy, draftDelivery, draftDiscardBlock, imapDraftMessageId, type DraftDeliveryState } from './mailDeliveryStatus'
 import { attachmentByteSize, attachmentKindLabel } from './mailAttachments'
 import { createComposedMessageDraft, createReplyDraft } from './mailModel'
 import { draftEditVersion } from './mailDrawerDrafts'
@@ -899,6 +899,12 @@ export interface ExecutiveDraftState {
   version: string
   sentAt?: string
   sentMessageId?: string
+  /**
+   * Additive: what happened to a send, on the one reading every view uses
+   * (lib/mailDeliveryStatus). `state` stays draft until the mail service
+   * confirmed it; absent in files written before this field.
+   */
+  delivery?: { state: DraftDeliveryState; reason?: string; at?: string }
   /** Why it says discarded: a discard request, or the person's action in Mail. Absent in files from before missing existed. */
   discardedBy?: 'request' | 'mail'
   /** The mail store holding it (draftsStoreId): a store without it does not speak for it. */
@@ -919,6 +925,14 @@ export function parseDraftState(raw: string | null): ExecutiveDraftState | null 
     return null
   }
 }
+
+/**
+ * A discard from a stale view yields to the send it did not know of: the draft is
+ * back carrying that send's record, with no real discard on record. A bare draft
+ * turning up (an account listing it again) shows nothing, and the discard stands.
+ */
+const discardTakenBack = (state: ExecutiveDraftState | null, store: Pick<MailStore, 'drafts' | 'messages'>, discardedAt?: (draftId: string) => string | undefined): boolean =>
+  state?.state === 'discarded' && ['held', 'submitting', 'unconfirmed', 'not_submitted'].includes(draftDelivery(store, state.draftId).state) && !discardedAt?.(state.draftId)
 
 /** Discarded without saying why was inferred from absence by an older build: looked at again. */
 const isFinal = (state: ExecutiveDraftState | null): boolean => state?.state === 'sent' || (state?.state === 'discarded' && Boolean(state.discardedBy))
@@ -966,18 +980,20 @@ export function executiveDraftState(
   const heldElsewhere = Boolean(holder && options.storeId && holder !== options.storeId)
   // A copy brought in from the account: the store that made the draft speaks for it.
   if (draft && heldElsewhere && (draft.importedFromProvider || !isExecutiveDraftId(key, draft.id))) return null
-  if (draft && !draft.sentAt) {
+  // The last id reported can differ from the one first taken, when it was reported under the account's id.
+  const lastId = previous?.draftId && previous.draftId !== id ? previous.draftId : null
+  const sent = confirmedSentCopy(store, id) ?? (lastId ? confirmedSentCopy(store, lastId) : undefined)
+  const delivery = draftDelivery(store, id)
+  if (draft && !sent && delivery.state !== 'submitted') {
     return {
       v: 1, key, draftId: id, state: 'draft', at: now,
       to: people(draft.to), cc: people(draft.cc), subject: draft.subject,
       body: draft.body.slice(0, DRAFT_STATE_BODY_LIMIT), version: draftEditVersion(draft),
+      delivery: { state: delivery.state, ...(delivery.reason ? { reason: delivery.reason } : {}), ...(delivery.at ? { at: delivery.at } : {}) },
       ...(options.storeId ? { heldBy: options.storeId } : {}),
       ...(draft.providerDraftId ? { providerDraftId: draft.providerDraftId } : {}),
     }
   }
-  // The last id reported can differ from the one first taken, when it was reported under the account's id.
-  const lastId = previous?.draftId && previous.draftId !== id ? previous.draftId : null
-  const sent = sentMessageForRunItem(store, { draftId: id }) ?? (lastId ? sentMessageForRunItem(store, { draftId: lastId }) : null)
   if (draft?.sentAt || sent) {
     return {
       v: 1, key, draftId: id, state: 'sent', at: now,
@@ -987,6 +1003,7 @@ export function executiveDraftState(
       version: previous?.version ?? '',
       sentAt: draft?.sentAt ?? sent?.receivedAt ?? now,
       ...(sent ? { sentMessageId: sent.gmailMessageId ?? sent.id } : {}),
+      delivery: { state: 'submitted', ...(delivery.at ?? sent?.receivedAt ? { at: delivery.at ?? sent?.receivedAt } : {}) },
     }
   }
   if (!store.threads.some(thread => thread.accountId === account.id)) return null
@@ -997,6 +1014,11 @@ export function executiveDraftState(
   const discardedAt = options.discardedAt?.(id) ?? (lastId ? options.discardedAt?.(lastId) : undefined)
   if (discardedAt) return { v: 1, key, draftId: id, state: 'discarded', at: discardedAt, discardedBy: 'mail', ...known }
   if (heldElsewhere) return null
+  // Gone while a send was in the air, with no Sent copy to show for it: that is not a discard.
+  const inTheAir = previous?.state === 'draft' && ['held', 'submitting', 'unconfirmed'].includes(previous.delivery?.state ?? '')
+  if (previous && inTheAir) {
+    return { ...previous, at: now, delivery: { state: 'unconfirmed', reason: NO_EVIDENCE_REASON } }
+  }
   return { v: 1, key, draftId: id, state: 'missing', at: now, ...known, ...(holder ? { heldBy: holder } : {}) }
 }
 
@@ -1044,8 +1066,8 @@ export async function reportExecutiveDraftStates(input: {
     }
     const path = `${stateDir}/${key}.json`
     const previous = parseDraftState(await files.read(path))
-    if (isFinal(previous)) {
-      finalKeys.add(key)
+    if (isFinal(previous) && !discardTakenBack(previous, store, discardedAt)) {
+      if (previous?.state === 'sent') finalKeys.add(key)
       continue
     }
     const takenBy = typeof taken.takenBy === 'string' ? taken.takenBy : undefined
@@ -1053,7 +1075,7 @@ export async function reportExecutiveDraftStates(input: {
     if (!next || sameState(previous, next)) continue
     await files.write(path, `${JSON.stringify(next, null, 2)}\n`)
     written.push(key)
-    if (isFinal(next)) finalKeys.add(key)
+    if (next.state === 'sent') finalKeys.add(key)
   }
   return { written }
 }
@@ -1127,12 +1149,17 @@ export async function takeExecutiveDiscards(input: {
     const statePath = `${stateDir}/${key}.json`
     const previous = parseDraftState(await files.read(statePath))
     const id = draft?.id ?? (named || executiveDraftIds(key).draftId)
-    if (draft?.sentAt || (!draft && sentMessageForRunItem(store, { draftId: id }))) {
+    if (draft?.sentAt || confirmedSentCopy(store, id)) {
       await files.remove(claimPath)
       result.sent.push(key)
       continue
     }
     if (draft) {
+      const blocked = draftDiscardBlock(store, draft.id)
+      if (blocked) {
+        await refuse(`PureMail could not discard it: ${blocked}`)
+        continue
+      }
       const done = discard(draft.id)
       if (!done.ok) {
         await refuse(`PureMail could not discard it: ${done.reason}`)
