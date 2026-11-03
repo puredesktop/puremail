@@ -39,7 +39,7 @@ import {
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { sendDraft } from '../lib/mailModel'
 import { CHANGED_REASON, holdDraftForSend, markDraftPreparing, settleDraftNotSent } from '../lib/mailDeliveryStatus'
-import { composeSaveTarget } from '../hooks/useComposeDraftAutosave'
+import { composeDraftEvidence, composeSaveTarget } from '../hooks/useComposeDraftAutosave'
 import { draftSendFingerprint } from '../lib/mailDrawerDrafts'
 import { composeHoldBlock, composeHoldStillApproved, sendFailure } from '../lib/mailSendRelease'
 import { useOutsideClose } from './useOutsideClose'
@@ -793,7 +793,7 @@ export function ComposeEditor({
   // A confirmed send removes the draft: what it last said is what this window's words are compared with.
   const lastSeenDraft = useRef<Draft | undefined>(undefined)
   const seenDraft = composeContext?.draftId ? storeRef.current.drafts.find(item => item.id === composeContext.draftId) : undefined
-  if (seenDraft) lastSeenDraft.current = seenDraft
+  if (seenDraft) lastSeenDraft.current = composeDraftEvidence(seenDraft)
   const windowThread = useRef<string | undefined>(undefined)
   windowThread.current = composeContext?.threadId
   /**

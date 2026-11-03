@@ -41,6 +41,9 @@ type Stamped = {
   id: string
   updatedAt: string
   sentAt?: string
+  sendSupersedes?: string[]
+  sendError?: string
+  sendUncertainties?: Draft['sendUncertainties']
   sendState?: string
   importedFromProvider?: boolean
   sendAttempt?: { id: string; phase?: string }
@@ -54,7 +57,7 @@ export function recordConfirmedSent(messages: MailMessage[], record: Pick<Stampe
     Boolean(record.sendMessageId && messages.some(message => !message.isDraft && !message.optimistic && message.messageIdHeader === record.sendMessageId))
 }
 
-const inTheAir = (record: Stamped): boolean => Boolean(record.sendAttempt) || record.sendState === 'uncertain'
+const inTheAir = (record: Stamped): boolean => Boolean(record.sendAttempt) || record.sendState === 'uncertain' || Boolean(record.sendUncertainties?.some(item => !item.checkedAt))
 
 const time = (value: string | undefined): number => {
   const parsed = Date.parse(value ?? '')
@@ -99,6 +102,10 @@ const readAsUnconfirmed = (attempt: Stamped, reading: Stamped): boolean =>
 function winner<T extends Stamped>(memory: T, disk: T): T {
   if (Boolean(memory.sentAt) !== Boolean(disk.sentAt)) return memory.sentAt ? memory : disk
   if (markedFirst(disk, memory)) return disk
+  const memoryId = memory.sendAttempt?.id ?? memory.sendSettledAttemptId
+  const diskId = disk.sendAttempt?.id ?? disk.sendSettledAttemptId
+  if (diskId && memory.sendSupersedes?.includes(diskId)) return memory
+  if (memoryId && disk.sendSupersedes?.includes(memoryId)) return disk
   if ((memory.sendState === 'uncertain') !== (disk.sendState === 'uncertain')) return memory.sendState === 'uncertain' ? memory : disk
   if (settles(disk, memory)) return disk
   if (settles(memory, disk)) return memory
@@ -188,9 +195,25 @@ export function mergeRecords<T extends Stamped>(input: {
       continue
     }
     // A write made without knowing of an attempt this copy still holds does not end it.
-    const kept = mine === held && !attemptStands(record, onDisk) ? onDisk : winner(record, onDisk)
+    const chosen = mine === held && !attemptStands(record, onDisk) ? onDisk : winner(record, onDisk)
+    // A record winning the current attempt cannot erase another attempt's uncertainty.
+    // The person's explicit check is monotonic for that identity; clocks do not order it.
+    const outcomes = new Map<string, NonNullable<Draft['sendUncertainties']>[number]>()
+    for (const entry of [...(onDisk.sendUncertainties ?? []), ...(record.sendUncertainties ?? [])]) {
+      const previous = outcomes.get(entry.attemptId)
+      outcomes.set(entry.attemptId, previous?.checkedAt ? previous : entry)
+    }
+    // A stale controller may not have read the later decision before its
+    // provider callback. Its settled uncertainty still belongs to its own id.
+    for (const other of [record, onDisk]) {
+      const otherId = other.sendAttempt?.id ?? other.sendSettledAttemptId
+      if (other.sendState === 'uncertain' && otherId && chosen.sendSupersedes?.includes(otherId)) {
+        outcomes.set(otherId, { attemptId: otherId, reason: other.sendError || 'The earlier send was not confirmed. Check Sent.', ...(other.sendMessageId ? { messageId: other.sendMessageId } : {}) })
+      }
+    }
+    const kept = outcomes.size ? { ...chosen, sendUncertainties: [...outcomes.values()] } : chosen
     merged.push(kept)
-    if (kept === onDisk) arrived.push(onDisk)
+    if (recordFingerprint(kept) !== mine) arrived.push(kept)
   }
 
   for (const [id, held] of baseline) {
@@ -285,7 +308,7 @@ const upsertNewer = <T extends Stamped>(current: T[], arrived: readonly T[]): T[
     if (!newer) return record
     incoming.delete(record.id)
     // What stops a send here holds whatever the times: its own marker's `updatedAt` proves nothing.
-    if (settles(newer, record) || markedFirst(newer, record) || readAsUnconfirmed(record, newer)) return newer
+    if (newer.sendSupersedes?.includes(record.sendAttempt?.id ?? record.sendSettledAttemptId ?? '') || settles(newer, record) || markedFirst(newer, record) || readAsUnconfirmed(record, newer)) return newer
     // Edited here since the snapshot that merge was made from: this edit stays,
     // and the next save decides. Likewise a send begun here since.
     return time(record.updatedAt) > time(newer.updatedAt) || attemptStands(record, newer) ? record : newer

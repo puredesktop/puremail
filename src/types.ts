@@ -311,6 +311,10 @@ export interface Draft {
   /** Stable IMAP draft Message-ID across APPEND/delete replacements. */
   providerDraftMessageIdHeader?: string
   sendMessageId?: string
+  /** Attempt identities this draft's later explicit send decision supersedes; no clock ordering. */
+  sendSupersedes?: string[]
+  /** Uncertainty from a different submission, kept apart from the current attempt's outcome. */
+  sendUncertainties?: Array<{ attemptId: string; reason: string; messageId?: string; checkedAt?: string }>
   sendState?: 'failed' | 'uncertain'
   sendError?: string
   /** The send under way for this draft: on disk, so a restart can tell a lost hold from a possible submission. */

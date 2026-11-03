@@ -4,13 +4,28 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePendingSend } from '../hooks/usePendingSend'
 import { createMailDeliveryController, MailSendError } from './mailDelivery'
-import { SUPERSEDED_REASON, draftDelivery, markDraftSendFailed } from './mailDeliveryStatus'
-import { createComposedMessageDraft, emptyMailStore } from './mailModel'
-import { recoverInterruptedSends, settleUndoneHold } from './mailRuns'
+import { SUPERSEDED_REASON, draftDelivery, draftReleaseBlock, markDraftSendFailed } from './mailDeliveryStatus'
+import { createComposedMessageDraft, emptyMailStore, mergeMailProviderSyncResult } from './mailModel'
+import { recoverInterruptedSends, runItemDelivery, settleUndoneHold } from './mailRuns'
 import { scheduleSend } from './mailScheduledSend'
 import { createStoreDraftSender, sendFailure } from './mailSendRelease'
+import { writePersistedMailStore, readSavedMailStore } from './mailPersistence'
+import { applyDraftsFileChanges } from './draftsFileMerge'
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+import { executiveDraftIds, executiveDraftState } from './executiveShare'
+import { getDraftHandler, listDraftsHandler } from '../agents/handlers'
+import type { MailAgentToolContext } from '../agents/catalog'
+import type { MailRunItem } from '../types'
+const disk = vi.hoisted(() => new Map<string, string>())
+vi.mock('../bridge/platformBridge', () => ({
+  readPlatformStorageJson: async ({ fileName }: { fileName: string }) => ({ value: disk.has(fileName) ? JSON.parse(disk.get(fileName)!) : null, version: disk.get(fileName) ?? null }),
+  writePlatformStorageJson: async ({ fileName, value, ifMatch }: { fileName: string; value: unknown; ifMatch?: string | null }) => {
+    if (ifMatch !== undefined && ifMatch !== (disk.get(fileName) ?? null)) return { conflict: true }
+    const raw = JSON.stringify(value); disk.set(fileName, raw); return { conflict: false, version: raw }
+  },
+}))
 
 /**
  * The real delivery controller, sender and hold, a fake mail service, and a
@@ -25,7 +40,7 @@ function rig() {
   const provider = { send: ({ draft }: { draft: Draft }) => send(draft) } as unknown as MailProvider
   const prepared: Array<{ resolve: () => void; reject: (error: unknown) => void }> = []
   const prepare = vi.fn((draft: Draft) => new Promise<Draft>((resolve, reject) => { prepared.push({ resolve: () => resolve({ ...draft }), reject }) }))
-  const deliver = createMailDeliveryController({ read: () => store, update, persist: async () => {}, prepare, release: () => {}, online: () => true })
+  const deliver = createMailDeliveryController({ read: () => store, update, persist: async () => { const result = await writePersistedMailStore(store); expect(result.draftsWritten).toBe(true); store = applyDraftsFileChanges(store, result.draftChanges) }, prepare, release: () => {}, online: () => true })
   let hold!: ReturnType<typeof usePendingSend>
   function Window() {
     hold = usePendingSend({ undoSendDelaySeconds: 10, setCommandNotice: () => {}, onUndone: pending => { if (pending.draftId) update(current => settleUndoneHold(current, pending.draftId!, pending.id)) } })
@@ -59,14 +74,16 @@ function rig() {
 }
 
 const NEWER = { id: 'newer', phase: 'held' as const, approved: 'identical-content', at: '2026-11-02T10:00:20Z' }
-const afterNewer: Array<[string, Partial<Draft>, 'held' | 'not_submitted' | 'unconfirmed']> = [
+const afterNewer: Array<[string, Partial<Draft>, 'held' | 'submitting' | 'not_submitted' | 'unconfirmed']> = [
   ['a newer hold', { sendAttempt: NEWER }, 'held'],
+  ['a newer preparation', { sendAttempt: { ...NEWER, phase: 'preparing' } }, 'submitting'],
+  ['a newer submission', { sendAttempt: { ...NEWER, phase: 'submitting' }, sendMessageId: '<newer@puremail.local>' }, 'submitting'],
   ['a newer attempt undone', { sendAttempt: undefined, sendUndoneAt: '2026-11-02T10:00:21Z', sendSettledAttemptId: 'newer' }, 'not_submitted'],
   ['a newer attempt known not sent', { sendAttempt: undefined, sendState: 'failed', sendError: 'Newer refusal', sendSettledAttemptId: 'newer' }, 'not_submitted'],
   ['a newer attempt left unconfirmed', { sendAttempt: undefined, sendState: 'uncertain', sendError: 'Newer unknown', sendSettledAttemptId: 'newer' }, 'unconfirmed'],
 ]
 
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-02T10:00:00Z')) })
+beforeEach(() => { disk.clear(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-02T10:00:00Z')) })
 afterEach(() => vi.useRealTimers())
 
 describe.each(afterNewer)('an older attempt ending after %s, with the same content', (_name, newer, state) => {
@@ -140,12 +157,13 @@ describe('what an older attempt keeps', () => {
 
   it('its genuine uncertainty under a newer hold: the hold keeps its identity, but cannot leave, and the draft ends unconfirmed', async () => {
     const r = rig()
-    const { settle } = await submit(r)
+    const { attemptId, settle } = await submit(r)
     r.patch({ sendState: undefined, sendError: undefined, sendAttempt: NEWER })
     await act(async () => { settle().reject(new Error('Connection closed after submission')); await vi.advanceTimersByTimeAsync(0) })
     expect(r.current()!.sendAttempt?.id).toBe('newer')
-    expect(draftDelivery(r.read(), r.draftId).state).toBe('held')
-    expect(r.current()).toMatchObject({ sendState: 'uncertain', sendError: 'Connection closed after submission' })
+    expect(draftDelivery(r.read(), r.draftId).state).toBe('unconfirmed')
+    expect(r.current()).toMatchObject({ sendAttempt: NEWER, sendUncertainties: [{ attemptId, reason: 'Connection closed after submission' }] })
+    expect(r.current()!.sendState).toBeUndefined()
     expect(r.failed.at(-1)!.outcome).toBe('uncertain')
     expect(r.notices.at(-1)).toMatch(/did not confirm an earlier send/)
     // The newer attempt's own end cannot wipe that out.
@@ -159,7 +177,7 @@ describe('what an older attempt keeps', () => {
     const { attemptId, settle } = await submit(r)
     r.patch({ sendState: undefined, sendError: undefined, sendAttempt: undefined, sendUndoneAt: '2026-11-02T10:00:21Z', sendSettledAttemptId: 'newer' })
     await act(async () => { settle().reject(new Error('Connection closed after submission')); await vi.advanceTimersByTimeAsync(0) })
-    expect(r.current()).toMatchObject({ sendState: 'uncertain', sendSettledAttemptId: attemptId })
+    expect(r.current()).toMatchObject({ sendSettledAttemptId: 'newer', sendUncertainties: [{ attemptId, reason: 'Connection closed after submission' }] })
     expect(draftDelivery(r.read(), r.draftId).state).toBe('unconfirmed')
     r.close()
   })
@@ -172,6 +190,89 @@ describe('what an older attempt keeps', () => {
     expect(r.read().messages.find(message => message.sentDraftId === r.draftId)).toMatchObject({ sentAttemptId: attemptId, deliveryAccepted: true })
     expect(draftDelivery(r.read(), r.draftId).state).toBe('submitted')
     await r.pass(60_000)
+    expect(r.send).toHaveBeenCalledTimes(1)
+    r.close()
+  })
+
+  it.each(afterNewer)('an ambiguous older submission after %s keeps both identities and the newer schedule decision on persisted readback', async (_name, newer) => {
+    const r = rig()
+    const { attemptId, settle } = await submit(r)
+    const olderMessageId = r.current()!.sendMessageId
+    r.patch({ sendState: undefined, sendError: undefined, ...newer })
+    const current = { ...r.current()! }
+    const schedule = structuredClone(r.read().scheduledSends)
+    await act(async () => { settle().reject(new Error('Earlier submission unknown')); await vi.advanceTimersByTimeAsync(0) })
+    expect(r.current()).toMatchObject({ ...current, sendUncertainties: [{ attemptId, reason: 'Earlier submission unknown', messageId: olderMessageId }] })
+    const saved = (await readSavedMailStore())!
+    expect(saved.drafts.find(draft => draft.id === r.draftId)).toEqual(r.current())
+    expect(saved.scheduledSends).toEqual(schedule)
+    expect(draftDelivery(saved, r.draftId)).toMatchObject({ state: 'unconfirmed', reason: 'Earlier submission unknown' })
+    expect(draftReleaseBlock(saved, r.draftId)?.outcome).toBe('uncertain')
+    expect(runItemDelivery(saved, { draftId: r.draftId, status: 'pending' } as MailRunItem).state).toBe('unconfirmed')
+    const context = { store: saved } as MailAgentToolContext
+    expect(JSON.parse(getDraftHandler(context, { draftId: r.draftId }).content).delivery.state).toBe('unconfirmed')
+    expect(JSON.parse(listDraftsHandler(context, {}).content).drafts[0].delivery.state).toBe('unconfirmed')
+    const key = 'late-result'
+    const ids = executiveDraftIds(key)
+    const teamStore = { ...saved, drafts: saved.drafts.map(draft => ({ ...draft, id: ids.draftId })) }
+    expect(executiveDraftState(teamStore, { id: 'account' }, key, ids.draftId, null, '2026-11-02T10:00:00Z')?.delivery?.state).toBe('unconfirmed')
+    // A later sync receipt identifies the OLD submission even after the current marker changed.
+    const old = saved.drafts.find(draft => draft.id === r.draftId)!.sendUncertainties![0]!
+    const confirmed = mergeMailProviderSyncResult(saved, { ...saved, drafts: [], messages: [{ id: 'late-synced-receipt', threadId: current.threadId, from: { name: 'Me', email: 'me@example.test' }, to: current.to, subject: current.subject, body: current.body, attachments: [], receivedAt: '2026-11-02T10:02:00Z', read: true, messageIdHeader: old.messageId }] })
+    expect(confirmed.drafts.find(draft => draft.id === r.draftId)).toMatchObject(JSON.parse(JSON.stringify(current)))
+    expect(confirmed.messages.find(message => message.id === 'late-synced-receipt')).toMatchObject({ deliveryAccepted: true, sentDraftId: r.draftId, sentAttemptId: attemptId })
+    expect(draftDelivery(confirmed, r.draftId).state).toBe('submitted')
+    const written = await writePersistedMailStore(confirmed)
+    expect(written.draftsWritten).toBe(true)
+    expect(draftDelivery((await readSavedMailStore())!, r.draftId).state).toBe('submitted')
+    expect(r.send).toHaveBeenCalledTimes(1)
+    r.close()
+  })
+
+  it.each(afterNewer)('a genuine receipt after %s preserves the newer record while every view reads confirmed', async (_name, newer) => {
+    const r = rig()
+    const { attemptId, settle } = await submit(r)
+    r.patch({ sendState: undefined, sendError: undefined, ...newer })
+    const current = { ...r.current()! }
+    const schedule = structuredClone(r.read().scheduledSends)
+    await act(async () => { settle().resolve({ id: 'older-receipt', threadId: current.threadId, from: { name: 'Me', email: 'me@example.test' }, to: current.to, subject: current.subject, body: current.body, attachments: [], receivedAt: '2026-11-02T10:00:00Z', read: true }); await vi.advanceTimersByTimeAsync(0) })
+    expect(r.current()).toMatchObject(JSON.parse(JSON.stringify(current)))
+    const saved = (await readSavedMailStore())!
+    expect(saved.drafts.find(draft => draft.id === r.draftId)).toMatchObject(JSON.parse(JSON.stringify(current)))
+    expect(saved.messages.find(message => message.sentDraftId === r.draftId)).toMatchObject({ sentAttemptId: attemptId, deliveryAccepted: true })
+    expect(saved.scheduledSends).toEqual(schedule)
+    expect(draftDelivery(saved, r.draftId).state).toBe('submitted')
+    expect(runItemDelivery(saved, { draftId: r.draftId, status: 'pending' } as MailRunItem).state).toBe('submitted')
+    const context = { store: saved } as MailAgentToolContext
+    expect(JSON.parse(getDraftHandler(context, { draftId: r.draftId }).content).delivery.state).toBe('submitted')
+    expect(JSON.parse(listDraftsHandler(context, { includeSent: true }).content).drafts[0].delivery.state).toBe('submitted')
+    const key = 'late-receipt', ids = executiveDraftIds(key)
+    const teamStore = { ...saved, drafts: saved.drafts.map(draft => ({ ...draft, id: ids.draftId })), messages: saved.messages.map(message => ({ ...message, sentDraftId: ids.draftId })) }
+    expect(executiveDraftState(teamStore, { id: 'account' }, key, ids.draftId, null, '2026-11-02T10:00:00Z')?.state).toBe('sent')
+    expect(draftReleaseBlock(saved, r.draftId)?.outcome).toBe('not_sent')
+    expect(r.send).toHaveBeenCalledTimes(1)
+    r.close()
+  })
+
+  it('a receipt synced after older uncertainty preserves different later recipients, HTML, attachments and words as an unsent draft of their own', async () => {
+    const r = rig()
+    const { attemptId, settle } = await submit(r)
+    const messageId = r.current()!.sendMessageId
+    const file = { id: 'later-file', name: 'later.pdf', mimeType: 'application/pdf', sizeLabel: '1 B', content: 'data:application/pdf;base64,QQ==' }
+    r.patch({ sendAttempt: NEWER, sendState: undefined, sendError: undefined, subject: 'Later subject', body: 'Later words', bodyHtml: '<p><b>Later words</b></p>', to: [{ name: 'Bo', email: 'bo@example.test' }], attachments: [file] })
+    await act(async () => { settle().reject(new Error('Older result unknown')); await vi.advanceTimersByTimeAsync(0) })
+    const saved = (await readSavedMailStore())!
+    const received = { id: 'synced-earlier', threadId: r.current()!.threadId, sentAttemptId: attemptId, messageIdHeader: messageId, from: { name: 'Me', email: 'me@example.test' }, to: [{ name: 'Ana', email: 'ana@example.test' }], cc: [], bcc: [], subject: 'Letter', body: 'Same words', attachments: [], receivedAt: '2026-11-02T10:02:00Z', read: true }
+    const confirmed = mergeMailProviderSyncResult(saved, { ...saved, drafts: [], messages: [received] })
+    const later = confirmed.drafts.find(draft => draft.id !== r.draftId)!
+    expect(later).toMatchObject({ subject: 'Later subject', body: 'Later words', bodyHtml: '<p><b>Later words</b></p>', to: [{ email: 'bo@example.test' }], attachments: [file] })
+    expect(later.sendAttempt).toBeUndefined()
+    expect(draftDelivery(confirmed, later.id).state).toBe('none')
+    expect(confirmed.drafts.find(draft => draft.id === r.draftId)).toMatchObject({ body: 'Same words', sendAttempt: NEWER })
+    const again = mergeMailProviderSyncResult(confirmed, { ...saved, drafts: [], messages: [received] })
+    expect(again.drafts.filter(draft => draft.id !== r.draftId)).toHaveLength(1)
+    await writePersistedMailStore(again)
+    expect((await readSavedMailStore())!.drafts.find(draft => draft.id === later.id)).toMatchObject({ body: 'Later words', bodyHtml: '<p><b>Later words</b></p>' })
     expect(r.send).toHaveBeenCalledTimes(1)
     r.close()
   })

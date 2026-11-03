@@ -16,11 +16,20 @@ import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
  * opened link is what makes the shell put the open window aside. The provider
  * only records, and nothing is approved, so nothing can be sent.
  */
-const face = vi.hoisted(() => ({ props: null as unknown }))
+const face = vi.hoisted(() => ({ props: null as unknown, evidence: 'normal' as 'normal' | 'missing' | 'partial' }))
 vi.mock('./ComposeEditor', async original => ({
   ...(await original<object>()),
   ComposeEditor: (props: unknown) => { face.props = props; return null },
 }))
+// Simulate a window whose comparison snapshot was lost/partial, while keeping
+// the real autosave and stash path. The returned ref is the stash's only input.
+vi.mock('../hooks/useComposeDraftAutosave', async original => {
+  const real = await original<typeof import('../hooks/useComposeDraftAutosave')>()
+  return { ...real, useComposeDraftAutosave: (...args: Parameters<typeof real.useComposeDraftAutosave>) => {
+    const ref = real.useComposeDraftAutosave(...args)
+    return face.evidence === 'normal' ? ref : { current: face.evidence === 'missing' ? undefined : { id: 'going', to: [{ name: 'Mira', email: 'mira@example.com' }], cc: [], bcc: [], subject: 'Hello', body: 'Words', bodyHtml: '<p>Words</p>' } as unknown as Draft }
+  } }
+})
 vi.mock('../hooks/useExecutiveMailShare', () => ({ useExecutiveMailShare: vi.fn(() => ({ afterSync: vi.fn(), teamReads: {} })) }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -38,10 +47,11 @@ let root: Root | null = null
 type ShellProps = ComponentProps<typeof PureMailShell>
 
 /** Mail open with the draft in its compose window, then confirmed sent from elsewhere with the window still open. */
-async function openThenConfirmedSent() {
+async function openThenConfirmedSent(evidence: 'partial' | 'absent' | 'complete' | 'missing-recipients' | 'missing-attachments' = 'partial') {
   const store = demoMailStore()
   const threadId = 'thread-of-the-draft'
-  const sentMessage = { id: 'msg_sent_going_1', threadId, from: { name: 'Me', email: 'me@example.test' }, to: [{ name: 'Mira', email: 'mira@example.com' }], subject: 'Hello', body: 'Words', attachments: [], receivedAt: '2026-11-01T00:00:01.000Z', read: true, deliveryAccepted: true, sentDraftId: 'going' } as unknown as MailMessage
+  const sentMessage = { id: 'msg_sent_going_1', threadId, from: { name: 'Me', email: 'me@example.test' }, to: [{ name: 'Mira', email: 'mira@example.com' }], subject: 'Hello', body: 'Words', attachments: [], receivedAt: '2026-11-01T00:00:01.000Z', read: true, deliveryAccepted: true, sentDraftId: 'going', ...(['complete', 'missing-recipients', 'missing-attachments'].includes(evidence) ? { ...(evidence !== 'missing-recipients' ? { cc: [] } : {}), bcc: [], bodyHtml: '<p>Words</p>' } : {}) } as unknown as MailMessage
+  if (evidence === 'missing-attachments') delete (sentMessage as Partial<MailMessage>).attachments
   const mail = provider()
   const render = (openedFile: { path: string } | null) => root!.render(
     <AppFrame>
@@ -52,11 +62,11 @@ async function openThenConfirmedSent() {
   await act(async () => render({ path: `${DRAFT_LINK_PREFIX}going` }))
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
   expect(props()?.composeContext?.draftId).toBe('going')
-  act(() => { props().setStore((current: MailStore) => ({ ...current, drafts: current.drafts.filter(draft => draft.id !== 'going'), messages: [...current.messages, sentMessage] })) })
+  act(() => { props().setStore((current: MailStore) => ({ ...current, drafts: current.drafts.filter(draft => draft.id !== 'going'), messages: evidence === 'absent' ? current.messages : [...current.messages, sentMessage] })) })
   return { mail, putAside: async () => { await act(async () => render({ path: `${DRAFT_LINK_PREFIX}next` })) }, store: () => props().storeRef.current }
 }
 
-beforeEach(() => { window.localStorage.clear() })
+beforeEach(() => { window.localStorage.clear(); face.evidence = 'normal' })
 afterEach(async () => {
   await act(async () => root?.unmount())
   root = null
@@ -88,4 +98,37 @@ describe('the shell putting aside a window on a draft that went, before autosave
     expect(desk.store().drafts.map(draft => draft.id)).toEqual(['next'])
     expect(desk.mail.send).not.toHaveBeenCalled()
   })
+})
+
+it.each(['missing', 'partial'] as const)('actual shell stash with %s lastSeen preserves matching words with incomplete or absent sent evidence', async lastSeen => {
+  face.evidence = lastSeen
+  const desk = await openThenConfirmedSent('partial')
+  await desk.putAside()
+  const kept = desk.store().drafts.filter(draft => draft.id !== 'next')
+  expect(kept).toHaveLength(1)
+  expect(kept[0]).toMatchObject({ subject: 'Hello', body: 'Words', bodyHtml: '<p>Words</p>', to: [{ name: 'Mira', email: 'mira@example.com' }], cc: [], bcc: [], attachments: [] })
+  expect(desk.mail.send).not.toHaveBeenCalled()
+})
+
+it('actual shell stash with no comparison data keeps every field; a complete unchanged sent copy creates no duplicate', async () => {
+  face.evidence = 'missing'
+  const desk = await openThenConfirmedSent('absent')
+  await desk.putAside()
+  expect(desk.store().drafts.filter(draft => draft.id !== 'next')).toHaveLength(1)
+  expect(desk.mail.send).not.toHaveBeenCalled()
+})
+
+it('actual shell stash without lastSeen uses a complete unchanged sent copy without duplicating it', async () => {
+  face.evidence = 'missing'
+  const desk = await openThenConfirmedSent('complete')
+  await desk.putAside()
+  expect(desk.store().drafts.map(draft => draft.id)).toEqual(['next'])
+})
+
+it.each(['missing-recipients', 'missing-attachments'] as const)('actual stash with a matching prefix and %s keeps all compose fields', async evidence => {
+  face.evidence = 'missing'
+  const desk = await openThenConfirmedSent(evidence)
+  await desk.putAside()
+  expect(desk.store().drafts.filter(draft => draft.id !== 'next')).toMatchObject([{ body: 'Words', subject: 'Hello', to: [{ email: 'mira@example.com' }], cc: [], bcc: [], bodyHtml: '<p>Words</p>', attachments: [] }])
+  expect(desk.mail.send).not.toHaveBeenCalled()
 })

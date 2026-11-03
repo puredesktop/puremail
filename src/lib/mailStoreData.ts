@@ -35,6 +35,8 @@ function strippedPersistedAttachment(attachment: Attachment): Attachment {
 }
 
 export function compactPersistedMessage(message: MailMessage): MailMessage {
+  // The tolerant parser retains old/partial messages; missing metadata is unknown.
+  if (!Array.isArray(message.attachments)) return message
   const attachments = message.attachments.some(
     attachment => attachment.content && attachment.remote,
   )

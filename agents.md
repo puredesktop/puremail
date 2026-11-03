@@ -402,7 +402,7 @@ An open Mail window may be carrying out the send (two conversations can each hav
 
 Knowing that an unclaimed send really stopped, so that it could read as not sent with no check by a person, needs something Mail does not have: a host-level answer to "is the Mail instance that owns this attempt still running?", covering nested frames and other devices sharing the store. The shell offers none today, and this app does not invent one.
 
-A discard from a window with an old view cannot erase a send that is held, preparing, submitting or unconfirmed. Only a confirmed copy ends such a record: the draft comes back to the window that removed it, and the team's status file stops saying discarded. A failure from an older attempt never rewrites a newer attempt's state, reason, identity or schedule, and identical content does not make them one attempt. If the older attempt may have gone, that stands: the newer hold keeps its identity but cannot leave, and the draft ends `unconfirmed`.
+A discard from a window with an old view cannot erase a send that is held, preparing, submitting or unconfirmed. Only a confirmed copy ends such a record: the draft comes back to the window that removed it, and the team's status file stops saying discarded. A definite failure from an older attempt never rewrites a newer attempt's state, reason, identity or schedule, and identical content does not make them one attempt. An older ambiguous submission is retained separately in `sendUncertainties`, with its own attempt identity, reason and submitted Message-ID. The newer record keeps its own evidence, while every delivery reading is conservatively `unconfirmed`, including during a newer hold or submission. A genuine receipt remains authoritative for its own attempt; the newer record is retained with the confirmation, and different later words are kept as a separate unsent draft.
 
 ## The reading room
 
@@ -496,9 +496,9 @@ own memory, over the same files. `lib/twoCopies.test.ts` proves the file rules w
 two loads of the real modules on one fake file; `components/heldCopyShell.test.tsx`
 mounts the shell with a recording provider and proves what a held copy leaves alone.
 
-Every whole-file store is safe with two copies:
+Whole-file stores merge changes between copies:
 
-- `mail-drafts.json`: `lib/draftsFileMerge.ts`, per record, with tombstones. Scheduled
+- `mail-drafts.json`: `lib/draftsFileMerge.ts`, per record, with tombstones. The fast exit write uses the last agreed version as `ifMatch`, so a stale closing copy cannot erase newer saved evidence. A rejected write cannot guarantee saving last words before forced exit; the exact host prerequisite is in `docs/drafts.md`. Scheduled
   sends live here, with the drafts they would send, and keep the status furthest along.
 - `mail-store.json`: `lib/storeFileMerge.ts`, three ways against what this copy last
   agreed with the file on: records by id, strings by value, objects by key. A record

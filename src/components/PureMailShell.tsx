@@ -1463,7 +1463,7 @@ export function PureMailShell({
         )
       }
     },
-    deliverySignature: store.drafts.filter(draft => draft.sendAttempt || draft.sendState || draft.sendUndoneAt || draft.syncState === 'conflict' || draft.providerConflict).map(draft => [draft.id, draft.sendAttempt?.phase, draft.sendState, draft.sendError, draft.sendUndoneAt, draft.syncState === 'conflict' || Boolean(draft.providerConflict)].join('~')).join('|'),
+    deliverySignature: store.drafts.filter(draft => draft.sendUncertainties?.some(item => !item.checkedAt) || draft.sendAttempt || draft.sendState || draft.sendUndoneAt || draft.syncState === 'conflict' || draft.providerConflict).map(draft => [draft.id, JSON.stringify(draft.sendUncertainties), draft.sendAttempt?.phase, draft.sendState, draft.sendError, draft.sendUndoneAt, draft.syncState === 'conflict' || Boolean(draft.providerConflict)].join('~')).join('|'),
     discardDraft: draftId => {
       const draft = storeRef.current.drafts.find(item => item.id === draftId)
       if (!draft) return { ok: false, reason: 'It is not in PureMail any more.' }
@@ -2005,9 +2005,9 @@ export function PureMailShell({
       showToast(draftEditBlock(storeRef.current, existing.id) ?? 'This message is on its way.', hold ? { label: 'Undo send', run: () => { undoPendingSend(hold.id) } } : undefined)
       return
     }
-    if (existing && (existing.sendState === 'uncertain' || existing.providerConflict || existing.syncState === 'conflict')) {
+    if (existing && (draftDelivery(storeRef.current, existing.id).state === 'unconfirmed' || existing.providerConflict || existing.syncState === 'conflict')) {
       openMailRecovery()
-      setToast({ id: Date.now(), error: true, message: existing.sendState === 'uncertain' ? 'Review the previous send before editing this draft.' : 'Compare the conflicting draft versions before editing.' })
+      setToast({ id: Date.now(), error: true, message: draftDelivery(storeRef.current, existing.id).state === 'unconfirmed' ? 'Review the previous send before editing this draft.' : 'Compare the conflicting draft versions before editing.' })
       return
     }
     // The window already holds this very draft — just bring it back.
@@ -2397,7 +2397,7 @@ export function PureMailShell({
     rsvp.id = `invite_rsvp_${account.id}_${invite.uid}_${response}`
     if (storeRef.current.messages.some(item => item.deliveryAccepted && item.sentDraftId === rsvp.id)) return
     const existing = storeRef.current.drafts.find(item => item.id === rsvp.id)
-    if (existing?.sendState === 'uncertain') throw new Error('The previous RSVP send was not confirmed. Check Sent before retrying.')
+    if (existing && draftDelivery(storeRef.current, existing.id).state === 'unconfirmed') throw new Error('The previous RSVP send was not confirmed. Check Sent before retrying.')
     const savedRsvp = { ...existing, ...rsvp }
     setStore(current => ({ ...current, drafts: [...current.drafts.filter(item => item.id !== rsvp.id), savedRsvp] }))
     markDraftSending(rsvp.id, true)
@@ -4236,7 +4236,7 @@ export function PureMailShell({
         setConnectionTest(result)
         const verified = mailConnectionsVerified(result)
         if (verified) { setConnectionError(null) }
-        const issues = storeRef.current.drafts.filter(draft => !draft.sentAt && (draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && storeRef.current.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId))
+        const issues = storeRef.current.drafts.filter(draft => !draft.sentAt && (draft.sendUncertainties?.some(item => !item.checkedAt) || draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && storeRef.current.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId))
         const receivingFailure = !/^IMAP connection verified|^Account API connection verified/i.test(result.receiving) ? mailErrorToastText(result.receiving) : ''
         const sendingFailure = !/verified/i.test(result.sending) || /failed|not verified|unavailable|timed out|error/i.test(result.sending) ? mailErrorToastText(result.sending) : ''
         const failures = receivingFailure === sendingFailure
@@ -4256,7 +4256,7 @@ export function PureMailShell({
     if (activeProvider === 'demo') return
     const drafts = store.drafts.filter(draft => !draft.sentAt && !sendingDraftIds.includes(draft.id) && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId))
     const issues = [
-      ...drafts.filter(draft => draft.sendError || draft.providerSaveWarning || (draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId)).map(draft => ({ key: `${draft.id}:${draft.sendError ?? draft.providerSaveWarning ?? draft.syncState}`, message: draft.sendState === 'uncertain' ? 'Send not confirmed. Check Sent before trying again.' : draft.sendError ? `Message not sent. ${mailErrorToastText(draft.sendError)}` : 'A draft needs sync review.' })),
+      ...drafts.filter(draft => draft.sendError || draft.providerSaveWarning || (draft.sendUncertainties?.some(item => !item.checkedAt) || draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId)).map(draft => ({ key: `${draft.id}:${draft.sendError ?? draft.providerSaveWarning ?? draft.syncState}`, message: draftDelivery(store, draft.id).state === 'unconfirmed' ? 'Send not confirmed. Check Sent before trying again.' : draft.sendError ? `Message not sent. ${mailErrorToastText(draft.sendError)}` : 'A draft needs sync review.' })),
       ...store.messages.filter(message => message.deliveryWarnings?.length && store.threads.some(thread => thread.id === message.threadId && thread.accountId === selectedAccountId)).map(message => ({ key: `${message.id}:${message.deliveryWarnings!.join()}`, message: message.deliveryRejectedRecipients?.length ? `Some recipients were rejected: ${message.deliveryRejectedRecipients.join(', ')}. Review before writing to them again.` : 'Message sent, but its Sent or Drafts copy needs attention. Do not resend it.' })),
       ...store.threads.filter(thread => thread.accountId === selectedAccountId && (thread.syncState === 'failed' || thread.syncState === 'conflict')).map(thread => ({ key: `${thread.id}:${thread.syncState}`, message: 'A mailbox change needs sync review.' })),
       ...store.tasks.filter(task => task.source.accountId === selectedAccountId && (task.syncState === 'failed' || task.syncState === 'conflict')).map(task => ({ key: `${task.id}:${task.syncState}`, message: 'A mail task needs sync review.' })),
@@ -4406,21 +4406,21 @@ export function PureMailShell({
             </Meta>
             <div id="mail-recovery-details" hidden={!syncReviewExpanded}>
             <Meta>Review each item below. Retrying draft sync saves a draft; it does not send mail.</Meta>
-            {store.drafts.filter(draft => (draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId)).map(draft => (
+            {store.drafts.filter(draft => (draft.sendUncertainties?.some(item => !item.checkedAt) || draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId)).map(draft => (
               <div key={draft.id} style={{ padding: '12px 0', borderTop: '1px solid var(--platform-colors-border, #ddd)' }}>
                 <strong>{draft.subject || '(No subject)'}</strong>
                 <Meta>Draft · {draft.syncState === 'conflict' ? 'Conflicting versions' : 'Save failed'}</Meta>
-                <Meta>{draft.sendError || draft.providerSaveWarning || (draft.providerSaveError ? mailErrorToastText(draft.providerSaveError) : undefined) || (draft.providerConflict
+                <Meta>{draftDelivery(store, draft.id).reason || draft.sendError || draft.providerSaveWarning || (draft.providerSaveError ? mailErrorToastText(draft.providerSaveError) : undefined) || (draft.providerConflict
                   ? 'This draft changed in another mail client. Compare both versions before choosing one.'
                   : 'The draft was not confirmed as synced. No detailed reason was saved for this older failure.')}</Meta>
                 <Button size="sm" variant="subtle" onClick={() => openDraftInComposeWindow(draft)}>Open draft</Button>{' '}
-                {!draft.providerConflict && draft.syncState !== 'conflict' && !draft.providerSaveUncertain && !draft.providerSaveWarning && draft.sendState !== 'uncertain' && (
+                {!draft.providerConflict && draft.syncState !== 'conflict' && !draft.providerSaveUncertain && !draft.providerSaveWarning && draftDelivery(store, draft.id).state !== 'unconfirmed' && (
                   <Button size="sm" disabled={!networkOnline || !mailProvider} onClick={() => {
                     setStore(current => recoverMailDraftSync(current, draft.id, 'retry'))
                     setCommandNotice('Retrying this draft’s save to your account. No mail will be sent.')
                   }}>Retry draft sync</Button>
                 )}
-                {draft.sendState === 'uncertain' && <Button size="sm" variant="subtle" onClick={() => setStore(current => ({ ...current, drafts: current.drafts.map(item => item.id === draft.id ? { ...item, sendState: 'failed', sendError: 'You checked Sent and allowed another attempt. Open this draft to send it.' } : item) }))}>I checked Sent — allow retry</Button>}
+                {draftDelivery(store, draft.id).state === 'unconfirmed' && <Button size="sm" disabled={Boolean(draft.sendAttempt)} variant="subtle" onClick={() => setStore(current => ({ ...current, drafts: current.drafts.map(item => item.id === draft.id ? { ...item, sendUncertainties: item.sendUncertainties?.map(entry => ({ ...entry, checkedAt: new Date().toISOString() })), sendState: 'failed', sendError: 'You checked Sent and allowed another attempt. Open this draft to send it.' } : item) }))}>I checked Sent — allow retry</Button>}
                 {draft.providerSaveUncertain && <Button size="sm" variant="subtle" onClick={() => setStore(current => ({ ...current, drafts: current.drafts.map(item => item.id === draft.id ? { ...item, providerSaveUncertain: false, providerSaveWarning: undefined, syncState: 'pending' } : item) }))}>I checked Drafts — retry saving</Button>}
                 {draft.providerConflict && <details>
                   <summary>Compare versions</summary>
@@ -4430,7 +4430,7 @@ export function PureMailShell({
                   <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{draft.providerConflict.body}</pre>
                   {[true, false].map(useRemote => <Button key={String(useRemote)} size="sm" variant="subtle" onClick={() => setStore(current => resolveMailDraftConflict(current, draft.id, useRemote))}>{useRemote ? 'Use account version' : 'Keep my version'}</Button>)}
                 </details>}
-                {(draft.providerSaveUncertain || draft.sendState === 'uncertain') && <Meta>Check the account’s {draft.sendState === 'uncertain' ? 'Sent' : 'Drafts'} folder first, before allowing another attempt.</Meta>}
+                {(draft.providerSaveUncertain || draftDelivery(store, draft.id).state === 'unconfirmed') && <Meta>Check the account’s {draftDelivery(store, draft.id).state === 'unconfirmed' ? 'Sent' : 'Drafts'} folder first, before allowing another attempt.</Meta>}
               </div>
             ))}
             {store.threads.filter(thread => thread.accountId === selectedAccountId && (thread.syncState === 'failed' || thread.syncState === 'conflict')).map(thread => (

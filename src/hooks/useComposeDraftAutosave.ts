@@ -30,19 +30,31 @@ export interface ComposeDraftSnapshot {
 type ComposeFields = Pick<Draft, 'to' | 'subject' | 'body' | 'attachments'> & { cc: Draft['to']; bcc: Draft['to']; bodyHtml: string }
 
 /** Whether these window fields say something the draft does not. Bytes fetched for an attachment later are not words. */
-export function composeWordsDiffer(existing: Draft, fields: ComposeFields): boolean {
+export function composeWordsDiffer(existing: Partial<ComposeFields>, fields: ComposeFields): boolean {
+  // Persisted messages are only checked for an id, and their HTML is compacted
+  // away. Absence is unknown here, never evidence of an empty compose field.
+  if (typeof existing.subject !== 'string' || typeof existing.body !== 'string' ||
+      typeof existing.bodyHtml !== 'string' || !Array.isArray(existing.to) ||
+      !Array.isArray(existing.cc) || !Array.isArray(existing.bcc) || !Array.isArray(existing.attachments)) return true
   return !(
     existing.subject === (fields.subject.trim() || '(no subject)') &&
     existing.body === fields.body &&
-    (existing.bodyHtml ?? '') === fields.bodyHtml &&
-    JSON.stringify([existing.to, existing.cc ?? [], existing.bcc ?? []]) ===
+    existing.bodyHtml === fields.bodyHtml &&
+    JSON.stringify([existing.to, existing.cc, existing.bcc]) ===
       JSON.stringify([fields.to, fields.cc, fields.bcc]) &&
     existing.attachments.length === fields.attachments.length &&
     existing.attachments.every((a, index) => {
       const b = fields.attachments[index]
-      return a.id === b.id && a.name === b.name && a.mimeType === b.mimeType
+      return Boolean(a && b && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.mimeType === 'string' && a.id === b.id && a.name === b.name && a.mimeType === b.mimeType)
     })
   )
+}
+
+/** Capture a complete draft's optional empty fields while it is still present. */
+export function composeDraftEvidence(draft: Draft | undefined): Draft | undefined {
+  if (!draft || typeof draft.subject !== 'string' || typeof draft.body !== 'string' ||
+      !Array.isArray(draft.to) || !Array.isArray(draft.attachments)) return undefined
+  return { ...draft, cc: draft.cc ?? [], bcc: draft.bcc ?? [], bodyHtml: draft.bodyHtml ?? '' }
 }
 
 /**
@@ -50,13 +62,13 @@ export function composeWordsDiffer(existing: Draft, fields: ComposeFields): bool
  * draft (`free`), nowhere because the draft already says them (`nothing`), or
  * as a draft of their own because the draft is leaving or has gone (`apart`).
  */
-export function composeSaveTarget(store: Pick<MailStore, 'drafts' | 'messages'>, draftId: string | null | undefined, fields: ComposeFields, lastSeen?: Draft): 'free' | 'nothing' | 'apart' {
+export function composeSaveTarget(store: Pick<MailStore, 'drafts' | 'messages'>, draftId: string | null | undefined, fields: ComposeFields, lastSeen?: Partial<Draft>): 'free' | 'nothing' | 'apart' {
   if (!draftId) return 'free'
-  if (!draftEditBlock(store, draftId) && draftDelivery(store, draftId).state !== 'submitted') return 'free'
+  if (store.drafts.some(item => item.id === draftId) && !draftEditBlock(store, draftId) && draftDelivery(store, draftId).state !== 'submitted') return 'free'
   const draft = store.drafts.find(item => item.id === draftId)
   // Gone: what it last said is what went. Every field counts, not only the body;
   // with neither to compare against, keeping the words apart is the safe side.
-  const went = draft ?? (lastSeen?.id === draftId ? lastSeen : (confirmedSentCopy(store, draftId) as unknown as Draft | undefined))
+  const went = composeDraftEvidence(draft) ?? (lastSeen?.id === draftId ? lastSeen : confirmedSentCopy(store, draftId))
   return went && !composeWordsDiffer(went, fields) ? 'nothing' : 'apart'
 }
 
@@ -108,7 +120,7 @@ export function useComposeDraftAutosave(input: {
   const toldLocked = useRef(false)
   if (!editBlock) toldLocked.current = false
   const heldDraft = context?.draftId ? storeRef.current.drafts.find(draft => draft.id === context.draftId) : undefined
-  if (heldDraft) lastDraft.current = heldDraft
+  if (heldDraft) lastDraft.current = composeDraftEvidence(heldDraft)
   else if (!context?.draftId) lastDraft.current = undefined
   useEffect(() => {
     if (!active || pending) return
@@ -167,7 +179,7 @@ export function useComposeDraftAutosave(input: {
         }
         return
       }
-      if (context.draftId && current.sentAway) {
+      if (context.draftId && (current.sentAway || !storeRef.current.drafts.some(draft => draft.id === context.draftId))) {
         // With nothing to compare against the words are kept: an extra draft can be thrown away, lost words cannot.
         if (composeSaveTarget(storeRef.current, context.draftId, fields, lastDraft.current) === 'nothing') return
         const keptId = `draft_compose_${crypto.randomUUID()}`
@@ -192,7 +204,7 @@ export function useComposeDraftAutosave(input: {
             existing.providerConflict)
         )
           return store
-        if (existing && !composeWordsDiffer(existing, fields) && existing.attachments.every((a, index) => a.content === attachments[index].content)) return store
+        if (existing && !composeWordsDiffer(composeDraftEvidence(existing) ?? {}, fields) && existing.attachments.every((a, index) => a.content === attachments[index].content)) return store
         return upsertReplyDraft(store, { context, ...fields, newDraftId }).store
       })
       if (!context.draftId)

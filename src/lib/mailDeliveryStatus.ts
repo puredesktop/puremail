@@ -108,12 +108,31 @@ export function draftDelivery(store: DeliveryStore, draftId: string): DraftDeliv
     return { state: 'submitted', ...(at ? { at } : {}), ...(sentMessageId ? { sentMessageId } : {}) }
   }
   if (!draft) return { state: 'none' }
+  const earlier = draft.sendUncertainties?.find(item => !item.checkedAt && !store.messages.some(message => message.deliveryAccepted && message.sentAttemptId === item.attemptId))
+  if (earlier) return { state: 'unconfirmed', reason: earlier.reason }
   if (draft.sendAttempt) return { state: draft.sendAttempt.phase === 'held' ? 'held' : 'submitting', at: draft.sendAttempt.at }
   if (draft.sendState === 'uncertain') return { state: 'unconfirmed', reason: draft.sendError || UNCONFIRMED_REASON }
   if (draft.syncState === 'conflict' || draft.providerConflict) return { state: 'conflict', reason: CONFLICT_REASON }
   if (draft.sendState === 'failed' || draft.sendError) return { state: 'not_submitted', reason: draft.sendError || 'The send failed. Nothing was sent.' }
   if (draft.sendUndoneAt) return { state: 'not_submitted', reason: 'The send was undone. Nothing was sent.', at: draft.sendUndoneAt }
   return { state: 'none' }
+}
+
+/** A draft can carry uncertainty from its current or a superseded submission. */
+export function hasUnconfirmedSendEvidence(draft: Pick<Draft, 'sendState' | 'sendUncertainties'>): boolean {
+  return draft.sendState === 'uncertain' || Boolean(draft.sendUncertainties?.some(item => !item.checkedAt))
+}
+
+/** Keep later words apart when a receipt for a superseded submission arrives. */
+export function draftAfterEarlierReceipt(draft: Draft, receipt: MailMessage): { evidence: Draft; later?: Draft } {
+  const complete = typeof receipt.subject === 'string' && typeof receipt.body === 'string' && Array.isArray(receipt.to) && Array.isArray(receipt.attachments)
+  const same = complete && draft.subject === receipt.subject && draft.body === receipt.body && (draft.bodyHtml ?? '') === (receipt.bodyHtml ?? '') &&
+    JSON.stringify([draft.to, draft.cc ?? [], draft.bcc ?? []]) === JSON.stringify([receipt.to, receipt.cc ?? [], receipt.bcc ?? []]) &&
+    JSON.stringify(draft.attachments.map(file => [file.name, file.mimeType])) === JSON.stringify(receipt.attachments.map(file => [file.name, file.mimeType]))
+  // The id is stable over repeated reads and conditional-write retries.
+  const later: Draft | undefined = !draft.sentAt && !same ? { ...draft, id: `draft_compose_after_${draft.id}_${receipt.sentAttemptId ?? receipt.id}`, sendAttempt: undefined, sendSupersedes: undefined, sendUncertainties: undefined, sendState: undefined, sendError: undefined, sendUndoneAt: undefined, sendSettledAttemptId: undefined, sendMessageId: undefined, sentAt: undefined, sentMessageId: undefined, providerDraftId: undefined, providerDraftMessageId: undefined, providerDraftMessageIdHeader: undefined, syncState: 'pending' } : undefined
+  const evidence: Draft = { ...draft, ...(complete ? { subject: receipt.subject, body: receipt.body, bodyHtml: receipt.bodyHtml, to: receipt.to, cc: receipt.cc ?? [], bcc: receipt.bcc ?? [], attachments: receipt.attachments } : {}), sentAt: receipt.receivedAt, sentMessageId: receipt.id }
+  return { evidence, ...(later ? { later } : {}) }
 }
 
 /** One plain sentence for whoever reports it. */
@@ -158,7 +177,7 @@ const patchDraft = (store: MailStore, draftId: string, patch: (draft: Draft) => 
 
 export function holdDraftForSend(store: MailStore, draftId: string, attempt: Omit<NonNullable<Draft['sendAttempt']>, 'phase'>): MailStore {
   // An unconfirmed marker is cleared only by someone checking Sent, never by a new hold.
-  return patchDraft(store, draftId, draft => (draft.sendState === 'uncertain' ? draft : { ...draft, sendAttempt: { ...attempt, phase: 'held' }, sendState: undefined, sendError: undefined, sendUndoneAt: undefined, sendSettledAttemptId: undefined }))
+  return patchDraft(store, draftId, draft => (draftReleaseBlock(store, draftId) ? draft : { ...draft, sendSupersedes: [...new Set([...(draft.sendSupersedes ?? []), draft.sendAttempt?.id, draft.sendSettledAttemptId].filter((id): id is string => Boolean(id) && id !== attempt.id))], sendAttempt: { ...attempt, phase: 'held' }, sendState: undefined, sendError: undefined, sendUndoneAt: undefined, sendSettledAttemptId: undefined }))
 }
 
 /** An approved attempt ended without leaving: an old schedule must not quietly try again. Another try is a new decision. */

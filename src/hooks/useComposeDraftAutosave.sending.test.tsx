@@ -241,6 +241,21 @@ describe('typing in a window already open on a draft that is leaving', () => {
     d.close()
   })
 
+  it.each(['missing recipients', 'missing HTML', 'missing attachments', 'matching prefix only', 'entirely absent', 'complete unchanged'] as const)('autosave with no lastSeen and %s never loses the current fields', async kind => {
+    const d = desk({ openOnUnseen: true })
+    const evidence: Record<string, unknown> = { id: 'msg_sent_never-seen-here_1', sentDraftId: 'never-seen-here', deliveryAccepted: true, threadId: 't', to: parseComposeRecipients('ana@example.test'), cc: [], bcc: [], subject: 'Letter', body: APPROVED, bodyHtml: '', attachments: [], receivedAt: '2026-11-02T10:00:00Z' }
+    if (kind === 'missing recipients') delete evidence.cc
+    if (kind === 'missing HTML') delete evidence.bodyHtml
+    if (kind === 'missing attachments') delete evidence.attachments
+    if (kind === 'matching prefix only') { delete evidence.to; delete evidence.cc; delete evidence.bcc; delete evidence.attachments; delete evidence.bodyHtml }
+    d.update(store => ({ ...store, drafts: [], messages: kind === 'entirely absent' ? [] : [evidence as unknown as MailMessage] }))
+    await d.pass()
+    expect(d.read().drafts).toHaveLength(kind === 'complete unchanged' ? 0 : 1)
+    if (kind !== 'complete unchanged') expect(d.read().drafts[0]).toMatchObject({ subject: 'Letter', body: APPROVED, to: parseComposeRecipients('ana@example.test'), cc: [], bcc: [], attachments: [] })
+    expect(d.send).not.toHaveBeenCalled()
+    d.close()
+  })
+
   it('a draft that is free saves as it always did', async () => {
     const d = desk()
     d.type(TYPED)
@@ -253,7 +268,7 @@ describe('typing in a window already open on a draft that is leaving', () => {
 
 describe('where a window\'s words may go when it closes or is put aside', () => {
   const made = createComposedMessageDraft(emptyMailStore(), { to: parseComposeRecipients('ana@example.test'), subject: 'Letter', body: APPROVED, attachments: [] })
-  const draft = made.store.drafts[0]!
+  const draft = { ...made.store.drafts[0]!, cc: [], bcc: [], bodyHtml: '' }
   const fields = (body: string) => ({ to: draft.to, cc: [], bcc: [], subject: 'Letter', body, bodyHtml: '', attachments: draft.attachments })
   const withDraft = (patch: Partial<Draft>) => ({ drafts: [{ ...draft, ...patch }], messages: [] })
 

@@ -8,3 +8,6 @@ dist/
 # Local development records and generated caches
 .project-data/
 .swc/
+
+# Disposable, pinned app verification layout
+.verification/

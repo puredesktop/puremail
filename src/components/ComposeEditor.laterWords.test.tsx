@@ -16,9 +16,14 @@ vi.mock('@purescience/platform-ui/release/gesture', async original => ({ ...(awa
 const ATTACHED: Array<{ id: string; name: string; mimeType: string; content?: string }> = []
 
 /** The real window on a saved draft, with the real hold and delivery controller and a fake mail service. */
-async function open(options: { offline?: boolean } = {}) {
+async function open(options: { offline?: boolean; evidence?: 'partial' | 'absent' | 'complete' | 'partial-lastSeen' | 'missing-recipients' | 'missing-html' | 'missing-attachments' } = {}) {
   const made = createComposedMessageDraft(emptyMailStore(), { to: [{ name: 'Ana', email: 'ana@example.test' }], subject: 'Letter', body: 'Text', attachments: [] })
   const storeRef = { current: made.store as MailStore }
+  if (options.evidence) {
+    const draft = made.store.drafts[0]!
+    const message = { id: `msg_sent_${made.draftId}_1`, sentDraftId: made.draftId, deliveryAccepted: true, subject: 'Letter', body: 'Text', ...(['complete', 'missing-recipients', 'missing-html', 'missing-attachments'].includes(options.evidence) ? { to: draft.to, ...(options.evidence !== 'missing-recipients' ? { cc: [] } : {}), bcc: [], ...(options.evidence !== 'missing-html' ? { bodyHtml: '' } : {}), ...(options.evidence !== 'missing-attachments' ? { attachments: [] } : {}) } : {}) } as unknown as MailMessage
+    storeRef.current = { ...storeRef.current, drafts: options.evidence === 'partial-lastSeen' ? [{ id: made.draftId, to: draft.to, cc: [], bcc: [], subject: 'Letter', body: 'Text', bodyHtml: '' } as unknown as Draft] : [], messages: options.evidence === 'absent' ? [] : [message] }
+  }
   const setStore = (value: MailStore | ((current: MailStore) => MailStore)) => { storeRef.current = typeof value === 'function' ? value(storeRef.current) : value }
   const send = vi.fn(async (draft: Draft): Promise<MailMessage> => ({ id: 'accepted', threadId: draft.threadId, from: { name: 'Me', email: 'me@example.test' }, to: draft.to, subject: draft.subject, body: draft.body, attachments: [], receivedAt: '2026-11-02T10:00:00Z', read: true }))
   const deliver = createMailDeliveryController({ read: () => storeRef.current, update: setStore, persist: async () => {}, prepare: async draft => ({ ...draft }), release: () => {}, online: () => true })
@@ -191,5 +196,16 @@ it.each([
   if ('to' in next) expect(kept.to.map(contact => contact.email)).toEqual([next.to])
   if ('attachments' in next) expect(kept.attachments.map(file => file.name)).toEqual(['later.pdf'])
   if ('html' in next) { expect(kept.bodyHtml).toBe(next.html); expect(kept.body).toBe('Text') }
+  w.close()
+})
+
+it.each(['partial', 'absent', 'complete', 'partial-lastSeen', 'missing-recipients', 'missing-html', 'missing-attachments'] as const)('actual Close with %s comparison evidence preserves unchanged plain words conservatively', async evidence => {
+  const w = await open({ evidence })
+  // Remove partial lastSeen before Close as a receipt would; no full comparison was ever present.
+  w.storeRef.current = { ...w.storeRef.current, drafts: [] }
+  await w.press('button[aria-label="Close"]')
+  expect(w.storeRef.current.drafts).toHaveLength(evidence === 'complete' ? 0 : 1)
+  if (evidence !== 'complete') expect(w.storeRef.current.drafts[0]).toMatchObject({ subject: 'Letter', body: 'Text', to: [{ name: 'Ana', email: 'ana@example.test' }], cc: [], bcc: [], attachments: [] })
+  expect(w.send).not.toHaveBeenCalled()
   w.close()
 })

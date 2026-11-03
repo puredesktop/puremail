@@ -7,6 +7,7 @@ import {
   MAIL_STORE_FILE,
   readPersistedMailStore,
   writePersistedMailStore,
+  writeDraftsFileBeforeUnload,
 } from './mailPersistence'
 import { applyDraftsFileChanges } from './draftsFileMerge'
 import { emptyMailStore } from './mailStoreData'
@@ -15,6 +16,7 @@ import type { Draft, MailStore, ScheduledSend } from '../types'
 const files = new Map<string, unknown>()
 const failing = new Set<string>()
 const unreadable = new Set<string>()
+let omitReadVersions = false
 /** The shell's version token: the content, as near as a test needs. */
 const versionOf = (fileName: string) => (files.has(fileName) ? JSON.stringify(files.get(fileName)) : null)
 /** Run once just before the next conditional write applies: another copy saving in between. */
@@ -23,7 +25,7 @@ const beforeWrite = { run: null as (() => void) | null }
 vi.mock('../bridge/platformBridge', () => ({
   readPlatformStorageJson: async ({ fileName }: { fileName: string }) => {
     if (unreadable.has(fileName)) throw new Error(`Cannot read ${fileName}`)
-    return { value: files.has(fileName) ? files.get(fileName) : null, version: versionOf(fileName) }
+    return { value: files.has(fileName) ? files.get(fileName) : null, ...(omitReadVersions ? {} : { version: versionOf(fileName) }) }
   },
   writePlatformStorageJson: async ({
     fileName,
@@ -90,6 +92,7 @@ function storeWith(drafts: Draft[]): MailStore {
 
 describe('mail persistence', () => {
   beforeEach(() => {
+  omitReadVersions = false;
     forgetStoreFileForTest()
     files.clear()
     failing.clear()
@@ -551,4 +554,24 @@ describe('two copies where the second only knows the draft from the provider lis
     expect(onDisk.map(item => item.id)).toEqual(['draft_reply_exec-k'])
     expect(onDisk[0]).toMatchObject({ threadId: 'thread_1', sourceMessageId: 'msg_1' })
   })
+})
+
+it('a current fast exit uses its agreed version and saves the last words without an awaited read', async () => {
+  const original = storeWith([draft('exit-current', 'Before')])
+  await writePersistedMailStore(original)
+  await readPersistedMailStore()
+  writeDraftsFileBeforeUnload({ ...original, drafts: [draft('exit-current', 'Last words')] })
+  await Promise.resolve()
+  expect((files.get(MAIL_DRAFTS_FILE) as { drafts: Draft[] }).drafts[0]!.body).toBe('Last words')
+})
+
+it('a host without version evidence gets no unsafe fast exit write', async () => {
+  const original = storeWith([draft('exit-no-version', 'Durable words')])
+  await writePersistedMailStore(original)
+  omitReadVersions = true
+  await readPersistedMailStore()
+  const before = JSON.stringify(files.get(MAIL_DRAFTS_FILE))
+  writeDraftsFileBeforeUnload({ ...original, drafts: [draft('exit-no-version', 'Only here')] })
+  await Promise.resolve()
+  expect(JSON.stringify(files.get(MAIL_DRAFTS_FILE))).toBe(before)
 })
