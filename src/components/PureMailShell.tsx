@@ -68,8 +68,13 @@ import {
   existingExecutiveDraft,
 } from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
+import { isHeldCopy } from '../lib/heldCopy'
+import { heldCopyFetchDue, heldCopySendRefusal } from '../lib/heldCopySends'
+import { takeComposeIntents } from '../lib/composeIntents'
+import { applyStoreFileChanges } from '../lib/storeFileMerge'
 import { applyDraftsFileChanges } from '../lib/draftsFileMerge'
 import { draftHeldByAnotherCopy, recordDraftDiscard } from '../lib/mailPersistence'
+import { MailSendError } from '../lib/mailDelivery'
 import { useComposeDraftAutosave } from '../hooks/useComposeDraftAutosave'
 import { replacementMailThread } from '../lib/mailReaderSelection'
 import { usePendingSend } from '../hooks/usePendingSend'
@@ -494,7 +499,7 @@ export function PureMailShell({
   // fetch. Run markers make re-runs (StrictMode) no-ops.
   const filtersBootRanRef = useRef(false)
   useEffect(() => {
-    if (filtersBootRanRef.current) return
+    if (isHeldCopy() || filtersBootRanRef.current) return
     if (!selectedAccountIdRef.current) return
     filtersBootRanRef.current = true
     setStore(current => {
@@ -685,7 +690,11 @@ export function PureMailShell({
     setStore(current => markDraftSendFailed(current, draftId, error))
   }
   useEffect(() => {
-    const online = () => { setNetworkOnline(true); void refreshMail('auto') }
+    const online = () => {
+      setNetworkOnline(true)
+      if (isHeldCopy() && !heldCopyFetchDue(storeRef.current.lastSyncedAt, mailFetchIntervalMinutesForStore(storeRef.current))) return
+      void refreshMail('auto')
+    }
     const offline = () => setNetworkOnline(false)
     window.addEventListener('online', online)
     window.addEventListener('offline', offline)
@@ -1158,7 +1167,7 @@ export function PureMailShell({
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (compactInRoom) return // the saved view is the full app's, never the box's
+    if (compactInRoom || isHeldCopy()) return // the saved view is the normal tab's, never a held copy's, however large it has grown
     window.localStorage.setItem(
       MAIL_LAYOUT_STORAGE_KEY,
       JSON.stringify({
@@ -1222,6 +1231,10 @@ export function PureMailShell({
           setReaderMode('email')
         }
       },
+      onStoreChanges: changes => {
+        const next = applyStoreFileChanges(storeRef.current, changes)
+        if (next !== storeRef.current) setStore(next)
+      },
     })
 
   useComposeDraftAutosave({
@@ -1242,7 +1255,7 @@ export function PureMailShell({
   // never re-writes its intent.
   const inviteMirrorBusyRef = useRef(false)
   useEffect(() => {
-    if (activeProvider !== 'imap') return
+    if (isHeldCopy() || activeProvider !== 'imap') return
     if (inviteMirrorBusyRef.current) return
     const { intents, keys } = selectInviteMirrorCandidates(store)
     if (intents.length === 0) return
@@ -1295,7 +1308,7 @@ export function PureMailShell({
   // re-synced message from re-feeding forever.
   const contactFeedBusyRef = useRef(false)
   useEffect(() => {
-    if (activeProvider === 'demo') return
+    if (isHeldCopy() || activeProvider === 'demo') return
     if (contactFeedBusyRef.current) return
     const { entries, keys } = selectContactFeedCandidates(store)
     if (entries.length === 0) return
@@ -1318,7 +1331,7 @@ export function PureMailShell({
   // the user's own addresses); a thread is re-sent only when it changes.
   const encounterFeedBusyRef = useRef(false)
   useEffect(() => {
-    if (activeProvider === 'demo') return
+    if (isHeldCopy() || activeProvider === 'demo') return
     if (encounterFeedBusyRef.current) return
     const { entries, marks } = selectEncounterCandidates(store)
     if (entries.length === 0) return
@@ -1343,38 +1356,12 @@ export function PureMailShell({
   // draft in progress — unapplied intents stay queued for the next sweep.
   const composeIntentsQueueRef = useRef<Promise<void>>(Promise.resolve())
   useEffect(() => {
+    // A request to start an email opens in Mail's own tab, not in a mini app elsewhere on the desk.
+    if (isHeldCopy()) return
     const sweep = async (): Promise<void> => {
       try {
-        const result = (await bridge.call(
-          PLATFORM_BRIDGE_METHODS.STORAGE_READ_JSON,
-          [{ appSlug: 'mail', fileName: 'compose-intents.json' }],
-        )) as {
-          value?: {
-            entries?: Record<
-              string,
-              { to?: { name?: string; email?: string }[] }
-            >
-          }
-        } | null
-        const entries = Object.values(result?.value?.entries ?? {})
-        if (entries.length === 0) return
         if (composeOpenRef.current) return
-        await bridge.call(PLATFORM_BRIDGE_METHODS.STORAGE_WRITE_JSON, [
-          {
-            appSlug: 'mail',
-            fileName: 'compose-intents.json',
-            value: { entries: {} },
-          },
-        ])
-        const addresses = [
-          ...new Set(
-            entries.flatMap(entry =>
-              (entry.to ?? [])
-                .map(recipient => (recipient.email ?? '').trim())
-                .filter(Boolean),
-            ),
-          ),
-        ]
+        const addresses = await takeComposeIntents()
         if (addresses.length === 0) return
         composeOpenRef.current = true
         setComposeTo(addresses.join(', '))
@@ -1403,7 +1390,8 @@ export function PureMailShell({
   const googleDisconnectAnnouncedRef = useRef(false)
   const [googleRebootPending, setGoogleRebootPending] = useState(false)
   useEffect(() => {
-    if (activeProvider !== 'gmail') return
+    // Mail's own tab strips the account, and a held copy takes that from the file.
+    if (isHeldCopy() || activeProvider !== 'gmail') return
     if (!googleStatus) return
     if (googleStatus.connected || googleStatus.needsReconnect) return
     if (googleDisconnectAnnouncedRef.current) return
@@ -1427,15 +1415,16 @@ export function PureMailShell({
     provider: providerBacked,
     onError: setCommandNotice,
     onNotice: setCommandNotice,
-    heldElsewhere: draftHeldByAnotherCopy,
+    // A held copy leaves every background push to Mail's own tab; sending still prepares the one draft it sends.
+    heldElsewhere: isHeldCopy() ? () => true : draftHeldByAnotherCopy,
   })
   // The executive team's mail share (ps-suite #1013): when the Executive
   // app has shared this account, new mail goes to its digest after each
   // sync, and the drafts it leaves become ordinary DRAFTS here — saved by
   // the draft sync above like any other, and never sent.
   const executiveShare = useExecutiveMailShare({
-    // a copy of Mail held inside another app's page never takes or reports the team's drafts: only the real one does
-    enabled: activeProvider !== 'demo' && window.parent === window.top,
+    // A copy held in a page never takes or reports the team's drafts, never writes the digest: only Mail's own tab does.
+    enabled: activeProvider !== 'demo' && !isHeldCopy(),
     readStore: () => storeRef.current,
     syncDrafts,
     saveDraft: (account, request) => {
@@ -1490,7 +1479,11 @@ export function PureMailShell({
     release: id => deliveryInputs.current.releaseSend(id),
     online: () => navigator.onLine !== false,
   })
-  const sendDraftThroughProvider = (provider: MailProvider, draft: Draft) => deliveryController.current!(provider, draft)
+  const sendDraftThroughProvider = (provider: MailProvider, draft: Draft) => {
+    const refusal = isHeldCopy() ? heldCopySendRefusal(storeRef.current, draft) : null
+    if (refusal) return Promise.reject(new MailSendError(refusal, 'not_sent'))
+    return deliveryController.current!(provider, draft)
+  }
 
   useEffect(() => {
     if (mailFetching || !selectedThreadId || !providerBacked?.fetchThreadById) return
@@ -1585,6 +1578,8 @@ export function PureMailShell({
           )
           // New-mail notifications: computed on the merge boundary; the
           // notified-keys ref makes re-runs (StrictMode) idempotent.
+          // A held copy only brings the mail in: notices, triage and filters are the normal tab's to run, once.
+          if (isHeldCopy()) return { ...next, lastSyncedAt: new Date().toISOString() }
           const arrived = newlyArrivedThreads(current, next)
           if (arrived.length > 0) {
             window.setTimeout(() => {
@@ -1608,14 +1603,16 @@ export function PureMailShell({
               0,
             )
           }
-          return filtered.store
+          return { ...filtered.store, lastSyncedAt: new Date().toISOString() }
         })
-        // The executive team's digest reads the merged store, after the merge.
-        executiveShareRef.current.afterSync(nextStore.accounts)
-        // A successful sync means we are online: drain the offline queue.
-        window.setTimeout(() => {
-          void replayQueuedActionsNowRef.current()
-        }, 0)
+        if (!isHeldCopy()) {
+          // The executive team's digest reads the merged store, after the merge.
+          executiveShareRef.current.afterSync(nextStore.accounts)
+          // A successful sync means we are online: drain the offline queue.
+          window.setTimeout(() => {
+            void replayQueuedActionsNowRef.current()
+          }, 0)
+        }
         setConnectionError(null)
         const fetchedAt = new Date().toISOString()
         setLastMailFetchAt(fetchedAt)
@@ -1661,6 +1658,8 @@ export function PureMailShell({
   useEffect(() => {
     if (activeProvider === 'demo' || bootFetchRanRef.current) return
     bootFetchRanRef.current = true
+    // A tab is syncing: a held copy reads what that tab saves rather than fetching the same mail again.
+    if (isHeldCopy() && !heldCopyFetchDue(storeRef.current.lastSyncedAt, mailFetchIntervalMinutes)) return
     void refreshMail('boot')
   }, [initialSyncPending, activeProvider, refreshMail])
 
@@ -1668,6 +1667,7 @@ export function PureMailShell({
     if (!autoFetchEnabled) return
     const intervalMs = mailFetchIntervalMinutes * 60 * 1000
     const interval = window.setInterval(() => {
+      if (isHeldCopy() && !heldCopyFetchDue(storeRef.current.lastSyncedAt, mailFetchIntervalMinutes)) return
       void refreshMail('auto')
     }, intervalMs)
     return () => window.clearInterval(interval)
@@ -2802,6 +2802,12 @@ export function PureMailShell({
       return next === run ? current : replaceRun(current, next)
     })
   }
+  /** Send runs belong to Mail's own tab: a held copy says so rather than opening one. */
+  const refusedSendRunsHere = (): boolean => {
+    if (!isHeldCopy()) return false
+    setCommandNotice('Send runs open in Mail itself. Open Mail in its own tab to run one.')
+    return true
+  }
   /** A run surface takes the content column; an open compose is kept, not clobbered. */
   const closeComposeForRun = (): void => {
     if (!composeHoldsDraft(composeMode)) return
@@ -2819,6 +2825,7 @@ export function PureMailShell({
     setComposeSession(session => session + 1)
   }
   const openRunsIndex = (): void => {
+    if (refusedSendRunsHere()) return
     setReading(false)
     setRoomScreen(null)
     setRunScreen({ kind: 'index' })
@@ -2868,12 +2875,14 @@ export function PureMailShell({
     }
   }
   const openRunSetup = (runId: string): void => {
+    if (refusedSendRunsHere()) return
     closeComposeForRun()
     setReading(false)
     setRunScreen({ kind: 'setup', runId })
   }
   /** The loop itself, at the first open item — no setup detour. */
   const openRunLoop = (runId: string): void => {
+    if (refusedSendRunsHere()) return
     closeComposeForRun()
     setReading(false)
     updateRun(runId, (run, current) => startRun(reconcileRun(current, run)))
@@ -3569,6 +3578,7 @@ export function PureMailShell({
 
   // Snooze wake: boot catch-up plus a minute timer while the app is open.
   useEffect(() => {
+    if (isHeldCopy()) return
     const wake = (): void => {
       const result = wakeDueSnoozes(storeRef.current)
       if (result.wokenThreadIds.length === 0) return
@@ -3682,8 +3692,10 @@ export function PureMailShell({
 
   // Scheduled-send dispatcher: boot catch-up (sends due while the window
   // was closed dispatch on launch — renderer-timer limitation, see plan)
-  // plus a 30s timer while open.
+  // plus a 30s timer while open. Never in a held copy: this is what actually sends,
+  // and a due message would go out once from each copy running.
   useEffect(() => {
+    if (isHeldCopy()) return
     const dispatch = (): void => {
       for (const entry of dueScheduledSends(storeRef.current)) {
         dispatchScheduledSendRef.current(entry.id)

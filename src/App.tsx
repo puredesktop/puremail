@@ -7,6 +7,7 @@ import { usePlatformViewportResource } from '@purescience/platform-ui/bridge/rea
 import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { PureMailShell } from './components/PureMailShell'
 import { usePureMailBoot } from './hooks/usePureMailBoot'
+import { useCopyKnown } from './hooks/useCopyKnown'
 
 function isStandaloneDevMode(): boolean {
   return import.meta.env.DEV && window.parent === window
@@ -16,7 +17,9 @@ export function App(): React.ReactElement {
   const { bridge, error: bridgeError, ready, meta } = usePlatformBridge()
   const standalone = isStandaloneDevMode()
   const appReady = ready || standalone
-  const { boot, bootError, rebootMail } = usePureMailBoot(appReady)
+  // Whether this copy is held in a page comes first: the shell mounts knowing, so nothing starts on a guess.
+  const copyKnown = useCopyKnown(appReady)
+  const { boot, bootError, rebootMail } = usePureMailBoot(appReady && copyKnown)
   // A document opened in Mail (Open with → Mail): it becomes an attachment
   // on a new message once the mail shell is up.
   const { resource, clearResource } = usePlatformViewportResource(
@@ -28,7 +31,7 @@ export function App(): React.ReactElement {
   // mail shell, or an error screen (an error hidden behind the loader for
   // its 20s timeout would read as a hang).
   const showsFinalUi = Boolean(
-    (bridgeError && !standalone) || bootError || (appReady && boot),
+    (bridgeError && !standalone) || bootError || (appReady && copyKnown && boot),
   )
   useEffect(() => {
     if (showsFinalUi) bridge.viewportReady()
@@ -59,7 +62,7 @@ export function App(): React.ReactElement {
     )
   }
 
-  if (!appReady || !boot) {
+  if (!appReady || !copyKnown || !boot) {
     // Visually silent: the shell's global loader is still on screen at this
     // point, and a second branded "PureMail / Loading…" splash behind it
     // reads as a flash of a different loading screen. Errors above stay

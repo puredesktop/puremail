@@ -11,7 +11,7 @@ vi.mock('@purescience/platform-ui/bridge/react/useAdjacentApp', () => ({
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-function compactBeside(neighbour: { tabId: string; name: string } | null): boolean {
+function compactBeside(neighbour: { tabId: string; name: string; heldInRoom?: boolean } | null): boolean {
   vi.mocked(useAdjacentApp).mockReturnValue(neighbour)
   let compact = false
   function Probe() {
