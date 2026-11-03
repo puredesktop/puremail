@@ -17,6 +17,16 @@ import {
   type DraftsFileChanges,
   type Tombstone,
 } from './draftsFileMerge'
+import {
+  mergeStoreFile,
+  NO_STORE_CHANGES,
+  noUnseenChanges,
+  storeBaselineOf,
+  storeChangedSince,
+  type StoreBaseline,
+  type StoreFileChanges,
+  type UnseenChanges,
+} from './storeFileMerge'
 import type { Draft, MailRun, MailStore, MailMessage, ScheduledSend } from '../types'
 
 export const MAIL_APP_SLUG = 'mail'
@@ -174,7 +184,23 @@ function clearLegacyLocalStore(): void {
  * file is missing or unreadable: losing the mailbox cache costs a re-fetch,
  * losing drafts costs the user's writing.
  */
-export async function readPersistedMailStore(): Promise<{
+export function readPersistedMailStore(): Promise<{
+  store: MailStore | null
+  migratedFromLocalStorage: boolean
+}> {
+  return loadPersistedMailStore(true)
+}
+
+/**
+ * The saved record as it is now, for a copy already running. Its baselines stay
+ * put: moving them would make what it has not taken in yet read as its own
+ * delete or older edit, and its next save would undo what another copy saved.
+ */
+export async function readSavedMailStore(): Promise<MailStore | null> {
+  return (await loadPersistedMailStore(false)).store
+}
+
+async function loadPersistedMailStore(agree: boolean): Promise<{
   store: MailStore | null
   migratedFromLocalStorage: boolean
 }> {
@@ -193,6 +219,7 @@ export async function readPersistedMailStore(): Promise<{
   ])
   if (storeFile.status === 'fulfilled') {
     cached = parsePersistedMailStoreValue(storeFile.value.value)
+    if (cached && agree) agreeWithStoreFile(cached)
   } else {
     console.warn('[puremail] mailbox cache unreadable:', storeFile.reason)
   }
@@ -205,7 +232,7 @@ export async function readPersistedMailStore(): Promise<{
   if (draftsFile.value.value !== null && !drafts) {
     throw new Error('Your saved drafts file could not be understood. It has not been changed. Restore a readable copy, then try again.')
   }
-  agreeWithFile(drafts)
+  if (agree) agreeWithFile(drafts)
 
   if (cached) {
     return {
@@ -243,6 +270,13 @@ const thisCopy = {
   discards: new Map<string, string>(),
   /** Drafts that arrived from another copy moments ago, which may be pushing them to the provider itself. */
   arrivedUntil: new Map<string, number>(),
+  /** What this copy last agreed with mail-store.json on. Null until it has read or written the file. */
+  storeBaseline: null as StoreBaseline | null,
+  storeUnseen: noUnseenChanges() as UnseenChanges,
+}
+
+function agreeWithStoreFile(file: unknown): void {
+  thisCopy.storeBaseline = storeBaselineOf(file)
 }
 
 /** How long a draft from another copy is left for that copy to push to the provider. */
@@ -255,6 +289,12 @@ function agreeWithFile(file: ParsedDraftsFile | null): void {
   thisCopy.runBaseline = baselineOf(file?.runs ?? [])
   thisCopy.scheduleBaseline = new Set((file?.scheduledSends ?? []).map(entry => entry.id))
   thisCopy.receiptBaseline = new Set((file?.sentReceipts ?? []).map(message => message.id))
+}
+
+/** Tests only: a fresh running copy of this module's mail-store.json view, in a test that clears the files. */
+export function forgetStoreFileForTest(): void {
+  thisCopy.storeBaseline = null
+  thisCopy.storeUnseen = noUnseenChanges()
 }
 
 /** Names this mail store (the file's, once written): which desktop holds a draft. */
@@ -382,6 +422,57 @@ async function readDraftsFile(): Promise<{ raw: unknown; file: ParsedDraftsFile 
 
 const MAX_MERGE_TRIES = 5
 
+/** The cache as this copy would file it. Drafts, runs and schedules have their own file; a second copy here could disagree. */
+const storeFileValue = (store: MailStore): Record<string, unknown> => ({ ...persistableMailStore(store), drafts: [], runs: [], scheduledSends: [] })
+
+/**
+ * Merge this copy into mail-store.json (storeFileMerge.ts) and write only if that
+ * changes it; the write applies only if the file is still as read. A file that
+ * cannot be read has nothing to merge with, and writing it repairs it, as boot
+ * already treats an unreadable cache as gone.
+ */
+async function saveStoreFile(store: MailStore, look = false): Promise<StoreFileChanges> {
+  const value = storeFileValue(store)
+  if (!look && thisCopy.storeBaseline && !storeChangedSince(value, thisCopy.storeBaseline)) return NO_STORE_CHANGES
+  for (let attempt = 0; attempt < MAX_MERGE_TRIES; attempt++) {
+    let read: Awaited<ReturnType<typeof readPlatformStorageJson>>
+    try {
+      read = await readPlatformStorageJson({ appSlug: MAIL_APP_SLUG, fileName: MAIL_STORE_FILE })
+    } catch (error) {
+      if (look) throw error
+      console.warn('[puremail] mailbox cache unreadable; writing it again:', error)
+      await writePlatformStorageJson({ appSlug: MAIL_APP_SLUG, fileName: MAIL_STORE_FILE, value })
+      agreeWithStoreFile(value)
+      return NO_STORE_CHANGES
+    }
+    const disk = parsePersistedMailStoreValue(read.value) as unknown as Record<string, unknown> | null
+    const { merged, changes, differs, unseen } = mergeStoreFile({
+      baseline: thisCopy.storeBaseline ?? storeBaselineOf(null),
+      memory: value,
+      disk,
+      unseen: thisCopy.storeUnseen,
+    })
+    if (differs) {
+      const written = await writePlatformStorageJson({
+        appSlug: MAIL_APP_SLUG,
+        fileName: MAIL_STORE_FILE,
+        value: merged,
+        ...(read.version !== undefined ? { ifMatch: read.version } : {}),
+      })
+      if (written.conflict) continue
+    }
+    agreeWithStoreFile(merged)
+    thisCopy.storeUnseen = unseen
+    return changes
+  }
+  throw new Error('Other copies of Mail kept saving at the same moment. Your mail is safe here and will be saved on the next try.')
+}
+
+/** Take what other copies saved to mail-store.json, and write back anything the file lacks. */
+export async function syncStoreFile(store: MailStore): Promise<StoreFileChanges> {
+  return saveStoreFile(store, true)
+}
+
 /**
  * Read the file, merge this store into it record by record, and write only if
  * that changes it. The write applies only if the file is still as read: when
@@ -439,8 +530,8 @@ export function writeDraftsFileBeforeUnload(store: MailStore): void {
  * Persist the store. Drafts are written first and separately so a failure
  * writing the (much larger) mailbox cache cannot take the user's unsent mail
  * with it. Returns which halves failed rather than throwing, so the caller can
- * tell the user precisely what is at risk. The drafts file is merged, never
- * rewritten from this copy's memory: `draftChanges` is what other copies saved,
+ * tell the user precisely what is at risk. Neither file is rewritten from this
+ * copy's memory: `draftChanges` and `cacheChanges` are what other copies saved,
  * for the caller to take into memory.
  */
 export async function writePersistedMailStore(store: MailStore): Promise<{
@@ -448,9 +539,11 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
   cacheWritten: boolean
   error?: string
   draftChanges: DraftsFileChanges
+  /** What other copies saved to mail-store.json, for the caller to take into memory. */
+  cacheChanges: StoreFileChanges
 }> {
-  const persistable = persistableMailStore(store)
   let draftChanges = NO_CHANGES
+  let cacheChanges = NO_STORE_CHANGES
   let draftsWritten = false
   let cacheWritten = false
   let error: string | undefined
@@ -463,18 +556,12 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
   }
 
   try {
-    await writePlatformStorageJson({
-      appSlug: MAIL_APP_SLUG,
-      fileName: MAIL_STORE_FILE,
-      // Drafts live in their own file; keeping a second copy here would let
-      // the two disagree after a partial write.
-      value: { ...persistable, drafts: [], runs: [], scheduledSends: [] },
-    })
+    cacheChanges = await saveStoreFile(store)
     cacheWritten = true
   } catch (cause) {
     error = error ?? (cause instanceof Error ? cause.message : String(cause))
   }
 
   if (draftsWritten && cacheWritten) clearLegacyLocalStore()
-  return { draftsWritten, cacheWritten, draftChanges, ...(error ? { error } : {}) }
+  return { draftsWritten, cacheWritten, draftChanges, cacheChanges, ...(error ? { error } : {}) }
 }

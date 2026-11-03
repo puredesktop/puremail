@@ -4,7 +4,7 @@ import {updateTriageFile,withStoredTriage} from './triagePersistence'
 import {aiTriageFixture} from './aiTriageFixture'
 import {applyAiTriage} from './aiTriage'
 let disk:unknown=null
-vi.mock('../bridge/platformBridge',()=>({readPlatformStorageJson:async()=>({value:structuredClone(disk)}),writePlatformStorageJson:async({value}:{value:unknown})=>{disk=structuredClone(value)}}))
+vi.mock('../bridge/platformBridge',()=>({readPlatformStorageJson:async()=>({value:structuredClone(disk)}),writePlatformStorageJson:async({value}:{value:unknown})=>{disk=structuredClone(value);return {conflict:false}}}))
 beforeEach(()=>{disk=null;let tail=Promise.resolve();Object.defineProperty(navigator,'locks',{configurable:true,value:{request:(_key:string,fn:()=>Promise<void>)=>{const next=tail.then(fn);tail=next.catch(()=>{});return next}}})})
 it('merges independent decisions from stale Mail windows without losing either, and re-reads before answering',async()=>{
  const s=aiTriageFixture(new Date()).store

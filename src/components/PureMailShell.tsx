@@ -60,7 +60,9 @@ import {
 } from '../lib/contactFeed'
 import { PUREMAIL_LOCAL_SETTINGS_KEY } from '../hooks/usePureMailBoot'
 import { useDraftProviderSync } from '../hooks/useDraftProviderSync'
+import { useCompactInRoom, useRestoreWholeScroll, useRoomSlot } from '../hooks/useCompactInRoom'
 import { useExecutiveMailShare } from '../hooks/useExecutiveMailShare'
+import { CompactInbox, CompactInRoomStyle } from './CompactInRoom'
 import {
   addExecutiveDraft,
   buildExecutiveDraft,
@@ -69,8 +71,13 @@ import {
   existingExecutiveDraft,
 } from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
+import { isHeldCopy } from '../lib/heldCopy'
+import { heldCopyFetchDue, heldCopySendRefusal } from '../lib/heldCopySends'
+import { takeComposeIntents } from '../lib/composeIntents'
+import { applyStoreFileChanges } from '../lib/storeFileMerge'
 import { applyDraftsFileChanges } from '../lib/draftsFileMerge'
 import { draftHeldByAnotherCopy, recordDraftDiscard } from '../lib/mailPersistence'
+import { MailSendError } from '../lib/mailDelivery'
 import { composeSaveTarget, useComposeDraftAutosave } from '../hooks/useComposeDraftAutosave'
 import { replacementMailThread } from '../lib/mailReaderSelection'
 import { usePendingSend } from '../hooks/usePendingSend'
@@ -327,7 +334,7 @@ import {
   startRun,
 } from '../lib/mailRuns'
 import { answerSendOwnership, settleAbandonedSends } from '../lib/mailSendOwners'
-import { readPersistedMailStore } from '../lib/mailPersistence'
+import { readSavedMailStore } from '../lib/mailPersistence'
 
 type MailRailFilter = 'attachments'
 
@@ -372,6 +379,7 @@ export function PureMailShell({
   /** Called once the opened file has been taken, so it is not taken twice. */
   onOpenedFileHandled?: () => void
 }): React.ReactElement {
+  const compactInRoom = useCompactInRoom()
   const [store, setStoreState] = useState(initialStore)
   const [activeProvider] = useState(initialProvider ?? 'demo')
   // Provider-backed means "there is a real server behind this account" — any
@@ -491,7 +499,7 @@ export function PureMailShell({
   // fetch. Run markers make re-runs (StrictMode) no-ops.
   const filtersBootRanRef = useRef(false)
   useEffect(() => {
-    if (filtersBootRanRef.current) return
+    if (isHeldCopy() || filtersBootRanRef.current) return
     if (!selectedAccountIdRef.current) return
     filtersBootRanRef.current = true
     setStore(current => {
@@ -522,17 +530,24 @@ export function PureMailShell({
     () => readLayoutState(initialStore),
     [initialStore],
   )
-  const [selectedAccountId, setSelectedAccountId] = useState(
+  // The view the box works in is its own (useRoomSlot); the full app's stays as the person left it.
+  const [selectedAccountId, setSelectedAccountId] = useRoomSlot(
+    compactInRoom,
+    initialLayout.selectedAccountId,
     initialLayout.selectedAccountId,
   )
   // The query IS the view. Every thread list on screen is the result of
   // resolving this one string, so the sidebar, the search box, a saved view
   // and anything an agent asks for all address the same object.
-  const [currentQuery, setCurrentQuery] = useState(
+  const [currentQuery, setCurrentQuery] = useRoomSlot(
+    compactInRoom,
     initialLayout.query || 'in:inbox',
+    'in:inbox',
   )
-  const [selectedThreadId, setSelectedThreadId] = useState(
+  const [selectedThreadId, setSelectedThreadId] = useRoomSlot(
+    compactInRoom,
     initialLayout.selectedThreadId,
+    '',
   )
   /**
    * The index/reading split: false shows the full-width thread list, true
@@ -540,14 +555,14 @@ export function PureMailShell({
    * reading; Back and Escape return to the index. `selectedThreadId` is kept
    * either way — it is the reader's subject and the list's highlight.
    */
-  const [reading, setReading] = useState(initialLayout.reading)
-  const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null)
-  const [checkedThreadIds, setCheckedThreadIds] = useState<string[]>([])
+  const [reading, setReading] = useRoomSlot(compactInRoom, initialLayout.reading, false)
+  const [focusedMessageId, setFocusedMessageId] = useRoomSlot<string | null>(compactInRoom, null, null)
+  const [checkedThreadIds, setCheckedThreadIds] = useRoomSlot<string[]>(compactInRoom, [], [])
   const [mailSearchDrawerOpen, setMailSearchDrawerOpen] = useState(false)
   const [unsubscribeDrawerOpen, setUnsubscribeDrawerOpen] = useState(false)
   const [systemNoticeDismissed, setSystemNoticeDismissed] = useState(false)
   const [taskMode, setTaskMode] = useState<TaskMode>(initialLayout.taskMode)
-  const [listFilter, setListFilter] = useState<MailListFilterId>('all')
+  const [listFilter, setListFilter] = useRoomSlot<MailListFilterId>(compactInRoom, 'all', 'all')
   const [density, setDensity] = useState<MailDensity>(initialLayout.density)
   const taskDrawerBodyRef = useRef<HTMLDivElement | null>(null)
   /**
@@ -630,10 +645,10 @@ export function PureMailShell({
   }
   // Send runs: the index, a run's loop, or a run's setup — replacing the
   // list/reader in the content column while open.
-  const [runScreen, setRunScreen] = useState<RunScreenState | null>(null)
+  const [runScreen, setRunScreen] = useRoomSlot<RunScreenState | null>(compactInRoom, null, null)
   // The reading room and its Notes and Context boxes, which also replace
   // the list/reader while open.
-  const [roomScreen, setRoomScreen] = useState<RoomScreenState | null>(null)
+  const [roomScreen, setRoomScreen] = useRoomSlot<RoomScreenState | null>(compactInRoom, null, null)
   const readingRoom = useReadingRoom()
   const [attachmentPreview, setAttachmentPreview] =
     useState<AttachmentPreviewState | null>(null)
@@ -675,7 +690,11 @@ export function PureMailShell({
     setStore(current => markDraftSendFailed(current, draftId, error))
   }
   useEffect(() => {
-    const online = () => { setNetworkOnline(true); void refreshMail('auto') }
+    const online = () => {
+      setNetworkOnline(true)
+      if (isHeldCopy() && !heldCopyFetchDue(storeRef.current.lastSyncedAt, mailFetchIntervalMinutesForStore(storeRef.current))) return
+      void refreshMail('auto')
+    }
     const offline = () => setNetworkOnline(false)
     window.addEventListener('online', online)
     window.addEventListener('offline', offline)
@@ -950,6 +969,17 @@ export function PureMailShell({
     selectedMessageTabs,
     focusedMessageId,
   )
+  // The new thread resets the message on show; coming back from the box puts the person's message back.
+  useRestoreWholeScroll(compactInRoom)
+  const wholeMessageTabId = useRef(activeMessageTabId)
+  useEffect(() => {
+    if (!compactInRoom) wholeMessageTabId.current = activeMessageTabId
+  }, [activeMessageTabId])
+  const wasCompactForTab = useRef(compactInRoom)
+  useEffect(() => {
+    if (wasCompactForTab.current && !compactInRoom) setActiveMessageTabId(wholeMessageTabId.current)
+    wasCompactForTab.current = compactInRoom
+  }, [compactInRoom])
   const activeMessageTab =
     selectedMessageTabs.find(message => message.id === activeMessageTabId) ??
     selectedMessageTabs[0] ??
@@ -1120,10 +1150,21 @@ export function PureMailShell({
 
   // Multi-select is scoped to one thread list: switching account, view, or
   // tab drops the checked set instead of carrying invisible selections.
+  const wasCompactForChecks = useRef(compactInRoom)
   useEffect(() => {
+    // Moving between the box and the full app is not switching list.
+    if (wasCompactForChecks.current !== compactInRoom) {
+      wasCompactForChecks.current = compactInRoom
+      return
+    }
     setCheckedThreadIds([])
     selectionAnchorRef.current = null
-  }, [selectedAccountId, currentQuery])
+  }, [selectedAccountId, currentQuery, compactInRoom])
+
+  // Whatever an open draft or thread pointed the box at, Back returns to the Inbox.
+  useEffect(() => {
+    if (compactInRoom && !reading && currentQuery !== 'in:inbox') setCurrentQuery('in:inbox')
+  }, [compactInRoom, reading, currentQuery])
 
   const signatureValue = (store.settings?.signature ?? '').replace(
     /\\n/g,
@@ -1132,6 +1173,7 @@ export function PureMailShell({
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (compactInRoom || isHeldCopy()) return // the saved view is the normal tab's, never a held copy's, however large it has grown
     window.localStorage.setItem(
       MAIL_LAYOUT_STORAGE_KEY,
       JSON.stringify({
@@ -1152,6 +1194,7 @@ export function PureMailShell({
     taskMode,
     taskDrawerOpenByAccount,
     density,
+    compactInRoom,
   ])
 
   const mirroredSettings = useRef(store.settings)
@@ -1194,6 +1237,10 @@ export function PureMailShell({
           setReaderMode('email')
         }
       },
+      onStoreChanges: changes => {
+        const next = applyStoreFileChanges(storeRef.current, changes)
+        if (next !== storeRef.current) setStore(next)
+      },
     })
 
   const composeLastDraft = useComposeDraftAutosave({
@@ -1221,7 +1268,7 @@ export function PureMailShell({
   // never re-writes its intent.
   const inviteMirrorBusyRef = useRef(false)
   useEffect(() => {
-    if (activeProvider !== 'imap') return
+    if (isHeldCopy() || activeProvider !== 'imap') return
     if (inviteMirrorBusyRef.current) return
     const { intents, keys } = selectInviteMirrorCandidates(store)
     if (intents.length === 0) return
@@ -1274,7 +1321,7 @@ export function PureMailShell({
   // re-synced message from re-feeding forever.
   const contactFeedBusyRef = useRef(false)
   useEffect(() => {
-    if (activeProvider === 'demo') return
+    if (isHeldCopy() || activeProvider === 'demo') return
     if (contactFeedBusyRef.current) return
     const { entries, keys } = selectContactFeedCandidates(store)
     if (entries.length === 0) return
@@ -1297,7 +1344,7 @@ export function PureMailShell({
   // the user's own addresses); a thread is re-sent only when it changes.
   const encounterFeedBusyRef = useRef(false)
   useEffect(() => {
-    if (activeProvider === 'demo') return
+    if (isHeldCopy() || activeProvider === 'demo') return
     if (encounterFeedBusyRef.current) return
     const { entries, marks } = selectEncounterCandidates(store)
     if (entries.length === 0) return
@@ -1322,38 +1369,12 @@ export function PureMailShell({
   // draft in progress — unapplied intents stay queued for the next sweep.
   const composeIntentsQueueRef = useRef<Promise<void>>(Promise.resolve())
   useEffect(() => {
+    // A request to start an email opens in Mail's own tab, not in a mini app elsewhere on the desk.
+    if (isHeldCopy()) return
     const sweep = async (): Promise<void> => {
       try {
-        const result = (await bridge.call(
-          PLATFORM_BRIDGE_METHODS.STORAGE_READ_JSON,
-          [{ appSlug: 'mail', fileName: 'compose-intents.json' }],
-        )) as {
-          value?: {
-            entries?: Record<
-              string,
-              { to?: { name?: string; email?: string }[] }
-            >
-          }
-        } | null
-        const entries = Object.values(result?.value?.entries ?? {})
-        if (entries.length === 0) return
         if (composeOpenRef.current) return
-        await bridge.call(PLATFORM_BRIDGE_METHODS.STORAGE_WRITE_JSON, [
-          {
-            appSlug: 'mail',
-            fileName: 'compose-intents.json',
-            value: { entries: {} },
-          },
-        ])
-        const addresses = [
-          ...new Set(
-            entries.flatMap(entry =>
-              (entry.to ?? [])
-                .map(recipient => (recipient.email ?? '').trim())
-                .filter(Boolean),
-            ),
-          ),
-        ]
+        const addresses = await takeComposeIntents()
         if (addresses.length === 0) return
         composeOpenRef.current = true
         setComposeTo(addresses.join(', '))
@@ -1382,7 +1403,8 @@ export function PureMailShell({
   const googleDisconnectAnnouncedRef = useRef(false)
   const [googleRebootPending, setGoogleRebootPending] = useState(false)
   useEffect(() => {
-    if (activeProvider !== 'gmail') return
+    // Mail's own tab strips the account, and a held copy takes that from the file.
+    if (isHeldCopy() || activeProvider !== 'gmail') return
     if (!googleStatus) return
     if (googleStatus.connected || googleStatus.needsReconnect) return
     if (googleDisconnectAnnouncedRef.current) return
@@ -1406,14 +1428,16 @@ export function PureMailShell({
     provider: providerBacked,
     onError: setCommandNotice,
     onNotice: setCommandNotice,
-    heldElsewhere: draftHeldByAnotherCopy,
+    // A held copy leaves every background push to Mail's own tab; sending still prepares the one draft it sends.
+    heldElsewhere: isHeldCopy() ? () => true : draftHeldByAnotherCopy,
   })
   // The executive team's mail share (ps-suite #1013): when the Executive
   // app has shared this account, new mail goes to its digest after each
   // sync, and the drafts it leaves become ordinary DRAFTS here — saved by
   // the draft sync above like any other, and never sent.
   const executiveShare = useExecutiveMailShare({
-    enabled: activeProvider !== 'demo',
+    // A copy held in a page never takes or reports the team's drafts, never writes the digest: only Mail's own tab does.
+    enabled: activeProvider !== 'demo' && !isHeldCopy(),
     readStore: () => storeRef.current,
     syncDrafts,
     saveDraft: (account, request) => {
@@ -1471,7 +1495,11 @@ export function PureMailShell({
     release: id => deliveryInputs.current.releaseSend(id),
     online: () => navigator.onLine !== false,
   })
-  const sendDraftThroughProvider = (provider: MailProvider, draft: Draft, attempt?: { id: string }) => deliveryController.current!(provider, draft, attempt)
+  const sendDraftThroughProvider = (provider: MailProvider, draft: Draft, attempt?: { id: string }) => {
+    const refusal = isHeldCopy() ? heldCopySendRefusal(storeRef.current, draft) : null
+    if (refusal) return Promise.reject(new MailSendError(refusal, 'not_sent'))
+    return deliveryController.current!(provider, draft, attempt)
+  }
 
   useEffect(() => {
     if (mailFetching || !selectedThreadId || !providerBacked?.fetchThreadById) return
@@ -1566,6 +1594,8 @@ export function PureMailShell({
           )
           // New-mail notifications: computed on the merge boundary; the
           // notified-keys ref makes re-runs (StrictMode) idempotent.
+          // A held copy only brings the mail in: notices, triage and filters are the normal tab's to run, once.
+          if (isHeldCopy()) return { ...next, lastSyncedAt: new Date().toISOString() }
           const arrived = newlyArrivedThreads(current, next)
           if (arrived.length > 0) {
             window.setTimeout(() => {
@@ -1589,14 +1619,16 @@ export function PureMailShell({
               0,
             )
           }
-          return filtered.store
+          return { ...filtered.store, lastSyncedAt: new Date().toISOString() }
         })
-        // The executive team's digest reads the merged store, after the merge.
-        executiveShareRef.current.afterSync(nextStore.accounts)
-        // A successful sync means we are online: drain the offline queue.
-        window.setTimeout(() => {
-          void replayQueuedActionsNowRef.current()
-        }, 0)
+        if (!isHeldCopy()) {
+          // The executive team's digest reads the merged store, after the merge.
+          executiveShareRef.current.afterSync(nextStore.accounts)
+          // A successful sync means we are online: drain the offline queue.
+          window.setTimeout(() => {
+            void replayQueuedActionsNowRef.current()
+          }, 0)
+        }
         setConnectionError(null)
         const fetchedAt = new Date().toISOString()
         setLastMailFetchAt(fetchedAt)
@@ -1642,6 +1674,8 @@ export function PureMailShell({
   useEffect(() => {
     if (activeProvider === 'demo' || bootFetchRanRef.current) return
     bootFetchRanRef.current = true
+    // A tab is syncing: a held copy reads what that tab saves rather than fetching the same mail again.
+    if (isHeldCopy() && !heldCopyFetchDue(storeRef.current.lastSyncedAt, mailFetchIntervalMinutes)) return
     void refreshMail('boot')
   }, [initialSyncPending, activeProvider, refreshMail])
 
@@ -1649,6 +1683,7 @@ export function PureMailShell({
     if (!autoFetchEnabled) return
     const intervalMs = mailFetchIntervalMinutes * 60 * 1000
     const interval = window.setInterval(() => {
+      if (isHeldCopy() && !heldCopyFetchDue(storeRef.current.lastSyncedAt, mailFetchIntervalMinutes)) return
       void refreshMail('auto')
     }, intervalMs)
     return () => window.clearInterval(interval)
@@ -2797,6 +2832,12 @@ export function PureMailShell({
       return next === run ? current : replaceRun(current, next)
     })
   }
+  /** Send runs belong to Mail's own tab: a held copy says so rather than opening one. */
+  const refusedSendRunsHere = (): boolean => {
+    if (!isHeldCopy()) return false
+    setCommandNotice('Send runs open in Mail itself. Open Mail in its own tab to run one.')
+    return true
+  }
   /** A run surface takes the content column; an open compose is kept, not clobbered. */
   const closeComposeForRun = (): void => {
     if (!composeHoldsDraft(composeMode)) return
@@ -2814,6 +2855,7 @@ export function PureMailShell({
     setComposeSession(session => session + 1)
   }
   const openRunsIndex = (): void => {
+    if (refusedSendRunsHere()) return
     setReading(false)
     setRoomScreen(null)
     setRunScreen({ kind: 'index' })
@@ -2863,12 +2905,14 @@ export function PureMailShell({
     }
   }
   const openRunSetup = (runId: string): void => {
+    if (refusedSendRunsHere()) return
     closeComposeForRun()
     setReading(false)
     setRunScreen({ kind: 'setup', runId })
   }
   /** The loop itself, at the first open item — no setup detour. */
   const openRunLoop = (runId: string): void => {
+    if (refusedSendRunsHere()) return
     closeComposeForRun()
     setReading(false)
     updateRun(runId, (run, current) => startRun(reconcileRun(current, run)))
@@ -3466,6 +3510,7 @@ export function PureMailShell({
 
   // Snooze wake: boot catch-up plus a minute timer while the app is open.
   useEffect(() => {
+    if (isHeldCopy()) return
     const wake = (): void => {
       const result = wakeDueSnoozes(storeRef.current)
       if (result.wokenThreadIds.length === 0) return
@@ -3512,13 +3557,15 @@ export function PureMailShell({
   notifyNewMailThreadsRef.current = notifyNewMailThreads
 
   // Boot catch-up, then a timer. Each pass first settles attempts no window can
-  // still be running, so a schedule never fires over an abandoned one.
+  // still be running, so a schedule never fires over an abandoned one. Never in a
+  // held copy: this is what actually sends, and a due message would go out once
+  // from each copy running. A held copy still answers for a person's own send.
   const sendingHere = (draftId: string): boolean => Boolean(holdForDraft(draftId) || isDraftSending(draftId))
   useEffect(() => answerSendOwnership(draftId => sendingHere(draftId)), [])
   useScheduledSendTimer(() => {
-    void settleAbandonedSends({ read: () => storeRef.current, update: setStore, mine: sendingHere, readSaved: async () => (await readPersistedMailStore()).store })
+    void settleAbandonedSends({ read: () => storeRef.current, update: setStore, mine: sendingHere, readSaved: readSavedMailStore })
     return storeRef.current
-  }, id => dispatchScheduledSendRef.current(id))
+  }, id => dispatchScheduledSendRef.current(id), !isHeldCopy())
 
   const cancelScheduledSendsForThreads = (threadIds: string[]): void => {
     const active = (storeRef.current.scheduledSends ?? []).filter(
@@ -4225,7 +4272,8 @@ export function PureMailShell({
   }, [store.drafts, store.messages, store.threads, store.tasks, selectedAccountId, sendingDraftIds, connectionError, networkOnline, activeProvider, persistFailure])
 
   return (
-    <MailFrame data-app="mail">
+    <MailFrame data-app="mail" data-compact-in-room={compactInRoom ? '' : undefined}>
+      {compactInRoom && <CompactInRoomStyle />}
       {!readerHoldsTopBar && mailTopBar}
 
       <MailBodyRow>
@@ -4272,6 +4320,14 @@ export function PureMailShell({
         <ContentColumn>
           {composeMode === 'full' || runScreen || roomScreen ? null : readingActive && selectedThread ? null : (
             <>
+        {compactInRoom && (
+          <CompactInbox
+            store={store}
+            accountId={selectedAccount?.id}
+            onOpen={threadId => openThread(threadId)}
+            onNewMessage={openCompose}
+          />
+        )}
         <ThreadListToolbar
           store={store}
           filteredThreads={filteredThreads}
@@ -4333,7 +4389,7 @@ export function PureMailShell({
             </AgentSearchDismiss>
           </AgentSearchRow>
         )}
-        <PaneScroll data-mail-scroll>
+        <PaneScroll data-mail-scroll data-compact-keep={compactInRoom && syncReviewOpen ? '' : undefined}>
         {syncReviewOpen && (
           <Section aria-live="polite">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -4425,6 +4481,7 @@ export function PureMailShell({
               teamReads={executiveShare.teamReads}
             store={store}
             density={density}
+            hiddenInRoom={compactInRoom}
             filteredThreads={filteredThreads}
             filteredThreadEntries={filteredThreadEntries}
             selectedThreadId={selectedThreadId}
@@ -4738,7 +4795,7 @@ export function PureMailShell({
             key={`compose-${composeSession}`}
             {...composeEditorSharedProps}
             variant="full"
-            onDock={() => setComposeMode('docked')}
+            onDock={compactInRoom ? undefined : () => setComposeMode('docked')}
           />
         ) : roomScreen?.kind === 'reading' ? (
           (() => {
@@ -4940,7 +4997,7 @@ export function PureMailShell({
         )}
       </MailBodyRow>
 
-      <MailStatusBar>
+      <MailStatusBar data-compact-keep={compactInRoom && activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider) ? '' : undefined}>
         {activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider) ? 'Mail disconnected · showing saved mail' : syncStatusLine(lastMailFetchAt, store.accounts.length)}
       </MailStatusBar>
 

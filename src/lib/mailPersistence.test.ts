@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  forgetStoreFileForTest,
   LEGACY_LOCAL_STORE_KEY,
   MAIL_DRAFTS_FILE,
   MAIL_STORE_FILE,
@@ -89,6 +90,7 @@ function storeWith(drafts: Draft[]): MailStore {
 
 describe('mail persistence', () => {
   beforeEach(() => {
+    forgetStoreFileForTest()
     files.clear()
     failing.clear()
     unreadable.clear()

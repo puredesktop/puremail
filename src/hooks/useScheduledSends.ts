@@ -116,12 +116,13 @@ export function createScheduledSendDispatcher(input: {
 /**
  * Boot catch-up (sends due while the window was closed dispatch on launch, a
  * renderer-timer limitation) plus a timer while open. `pass` prepares and
- * returns the store to read due entries from.
+ * returns the store to read due entries from. `enabled` is read once at mount.
  */
-export function useScheduledSendTimer(pass: () => MailStore, dispatch: (scheduledSendId: string) => void): void {
+export function useScheduledSendTimer(pass: () => MailStore, dispatch: (scheduledSendId: string) => void, enabled = true): void {
   const latest = useRef({ pass, dispatch })
   latest.current = { pass, dispatch }
   useEffect(() => {
+    if (!enabled) return
     const tick = (): void => {
       for (const entry of dueScheduledSends(latest.current.pass())) latest.current.dispatch(entry.id)
     }

@@ -482,6 +482,50 @@ These drafts are ordinary drafts: read them with `getDraft`, change them with
 send one for the team; the person sends. Rules and tests live in
 `src/lib/executiveShare.ts`; nothing about the share is kept in the mail store.
 
+## Several running copies
+
+A mini app (held in the Executive room or the Personal agent's page) is a second
+live copy of Mail, alongside any normal tab, in its own JavaScript realm with its
+own memory, over the same files. `lib/twoCopies.test.ts` proves the file rules with
+two loads of the real modules on one fake file; `components/heldCopyShell.test.tsx`
+mounts the shell with a recording provider and proves what a held copy leaves alone.
+
+Every whole-file store is safe with two copies:
+
+- `mail-drafts.json`: `lib/draftsFileMerge.ts`, per record, with tombstones. Scheduled
+  sends live here, with the drafts they would send, and keep the status furthest along.
+- `mail-store.json`: `lib/storeFileMerge.ts`, three ways against what this copy last
+  agreed with the file on: records by id, strings by value, objects by key. A record
+  one side changed takes that side; both changed keeps the later `updatedAt`;
+  deleted stays deleted. A save with
+  nothing changed reads and writes nothing. A copy takes what others saved on each
+  save, every minute and on focus.
+- `mail-annotations.json`, `mail-triage.json`: the lock as before, plus a conditional
+  write, since a frame nested in another app's frame may not share that lock.
+- `compose-intents.json`: cleared with a conditional write, so a request left in
+  between stays queued.
+
+`lib/heldCopy.ts` says which copy this is. The app waits for that answer before the
+shell mounts, because on the Personal agent's page the frame looks exactly like a
+tab, and once held always held: growing to Full app is the same copy, and a tab may
+be open too. A held copy does none of this, and Mail's own tab does all of it:
+
+- the scheduled-send dispatcher (this is what actually sends; two copies would send
+  a due message twice) and the snooze wake
+- the executive share: taking and discarding team drafts, reporting their states, the digest
+- filters, on boot and after a sync, and automatic triage and new-mail notices
+- replaying queued provider actions, and pushing drafts to the provider
+- the calendar invite mirror, the PurePeople contact and encounter feeds, compose requests
+- removing a disconnected Google account, and saving the view the person left
+
+A held copy does not fetch while a tab keeps the mailbox fresh (`lastSyncedAt`). When
+nothing has synced for the fetch interval and more, it brings mail in and does nothing
+else with it (`heldCopyFetchDue`), so its inbox never goes stale with no tab open.
+
+A held copy will not send a team draft or a send run's draft, by any route, and no
+sending tool answers an agent in it (`heldCopySendRefusal`, `refusingSendsWhenHeld`).
+A person's own message, by their own click on Send, goes out once through the one send path.
+
 ## Output Style
 
 Return compact results. For reads, answer in prose from the data —
