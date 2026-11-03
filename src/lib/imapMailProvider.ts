@@ -1341,7 +1341,8 @@ export class ImapMailProvider implements MailProvider {
    * folder. Drafts, trash and spam are not part of the archive.
    */
   private walkFolders(folders: ImapFolder[]): ImapFolder[] {
-    const mirror = folders.find(folder => folder.virtual)
+    // Proton's Bridge does not mark its All Mail with the special-use flag, so the name counts too.
+    const mirror = folders.find(folder => folder.virtual) ?? folders.find(folder => /(^|\/)all mail$/i.test(folder.path))
     if (mirror) return [mirror]
     return folders.filter(folder =>
       folder.role !== 'drafts' && folder.role !== 'trash' && !/(^|\/)(spam|junk)$/i.test(folder.path))
@@ -1375,7 +1376,8 @@ export class ImapMailProvider implements MailProvider {
       items,
       // A short page can still have older mail behind it; only an empty one ends a folder.
       cursor: { folder: folder.path, beforeUid: lowest },
-      ...(!cursor ? { approxTotal: Math.max(...envelopes.map(envelope => envelope.uid)) } : {}),
+      // A folder's highest UID says roughly how much is in it; across several folders it would say too little.
+      ...(!cursor && folders.length === 1 ? { approxTotal: Math.max(...envelopes.map(envelope => envelope.uid)) } : {}),
     }
   }
 
