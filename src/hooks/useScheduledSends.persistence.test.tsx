@@ -91,7 +91,7 @@ it('the recovered draft saved and the cache write failed: the old schedule stays
   oldCacheHoldsTheSchedule()
   const first = await open()
   expect(send).not.toHaveBeenCalled()
-  expect(draftDelivery(first.store(), draftId)).toMatchObject({ state: 'not_submitted', reason: LOST_HOLD_REASON })
+  expect(draftDelivery(first.store(), draftId)).toMatchObject({ state: 'unconfirmed', reason: LOST_HOLD_REASON })
   disk.failCache = true
   await first.save()
   first.close()
@@ -101,8 +101,8 @@ it('the recovered draft saved and the cache write failed: the old schedule stays
     const again = await open()
     await pass(120_000)
     expect(send).not.toHaveBeenCalled()
-    expect(again.store().scheduledSends![0]).toMatchObject({ status: 'failed', lastError: LOST_HOLD_REASON })
-    expect(draftDelivery(again.store(), draftId).state).toBe('not_submitted')
+    expect(again.store().scheduledSends![0]).toMatchObject({ status: 'unconfirmed', lastError: LOST_HOLD_REASON })
+    expect(draftDelivery(again.store(), draftId).state).toBe('unconfirmed')
     await again.save()
     again.close()
   }
@@ -114,7 +114,8 @@ it('a Send later made after that is the person\'s new decision, and goes once', 
   oldCacheHoldsTheSchedule()
   const first = await open()
   disk.failCache = true
-  await writePersistedMailStore(scheduleSend(first.store(), { draftId, threadId, sendAt: new Date(Date.parse(NOW) + 60_000).toISOString() }))
+  const checked = { ...first.store(), drafts: first.store().drafts.map(draft => (draft.id === draftId ? { ...draft, sendState: 'failed' as const, sendError: 'You checked Sent and allowed another attempt.' } : draft)) }
+  await writePersistedMailStore(scheduleSend(checked, { draftId, threadId, sendAt: new Date(Date.parse(NOW) + 60_000).toISOString() }))
   first.close()
   const again = await open()
   await pass(0)
@@ -136,7 +137,7 @@ it('a cache-only record from before schedules moved still loads and is still rec
   const desk = await open()
   await pass(120_000)
   expect(send).not.toHaveBeenCalled()
-  expect(desk.store().scheduledSends![0]!.status).toBe('failed')
-  expect(draftDelivery(desk.store(), draftId).state).toBe('not_submitted')
+  expect(desk.store().scheduledSends![0]!.status).toBe('unconfirmed')
+  expect(draftDelivery(desk.store(), draftId).state).toBe('unconfirmed')
   desk.close()
 })

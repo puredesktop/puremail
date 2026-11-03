@@ -3,7 +3,7 @@ import { recoverInterruptedSends } from './mailRuns'
 import type { MailStore } from '../types'
 
 const CHANNEL = 'puremail-send-attempts'
-/** Long enough for an open Mail window to answer; a window that is frozen cannot, which is why the age rule stays too. */
+/** Long enough for an open Mail window to answer. Silence proves nothing: a frozen window cannot answer, and a closed channel reaches nobody. */
 const ANSWER_WAIT_MS = 250
 
 type OwnershipMessage = { type: 'who'; ask: string; draftIds: string[] } | { type: 'mine'; ask: string; draftIds: string[] }
@@ -29,7 +29,7 @@ export function answerSendOwnership(mine: (draftId: string) => boolean): () => v
   return () => channel.close()
 }
 
-/** Which of these drafts another open Mail window says it is sending now. No answer proves nothing about a frozen window. */
+/** Which of these drafts another open Mail window says it is sending now. A claim is evidence of a live send; no claim is evidence of nothing. */
 export async function draftsSendingElsewhere(draftIds: string[]): Promise<Set<string>> {
   const claimed = new Set<string>()
   const channel = draftIds.length ? openChannel() : null
@@ -75,10 +75,11 @@ function withSavedOutcome(store: MailStore, saved: MailStore, draftIds: string[]
 }
 
 /**
- * Settles sends no window is carrying out any more. Asks the other open Mail
- * windows first and leaves alone what one claims, and reads the saved record
- * afresh, since this window's copy of another's send can be out of date. A
- * failed read settles nothing.
+ * Settles sends no window claims. Asks the other open Mail windows first and
+ * leaves alone what one claims, and reads the saved record afresh, since this
+ * window's copy of another's send can be out of date. What nobody claims and no
+ * saved outcome settles reads as unconfirmed, never as not sent: its window may
+ * only be suspended. A failed read settles nothing.
  */
 export async function settleAbandonedSends(input: {
   read: () => MailStore

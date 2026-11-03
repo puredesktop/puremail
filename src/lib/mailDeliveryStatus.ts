@@ -39,6 +39,8 @@ export function markDraftPreparing(store: MailStore, draftId: string, attemptId:
 
 /** Send failures belong to the draft, independently of incoming-mail sync. */
 export function markDraftSendFailed(store: MailStore, draftId: string, error: unknown): MailStore {
+  // A failure of an attempt the draft has moved on from says nothing about what the draft holds now.
+  if ((error as { superseded?: boolean } | null)?.superseded) return store
   const reason = error instanceof Error ? error.message : String(error || 'Send failed.')
   return {
     ...store,
@@ -79,9 +81,10 @@ type DeliveryStore = Pick<MailStore, 'drafts' | 'messages'>
 export const UNCONFIRMED_REASON = 'The previous send was not confirmed. Check Sent before allowing another attempt.'
 export const CONFLICT_REASON = 'This draft has conflicting edits from another mail app. Resolve them before sending.'
 export const CHANGED_REASON = 'It changed after it was approved, so it was not sent. Approve it again.'
-export const LOST_HOLD_REASON = 'Mail closed before it left. Nothing was sent.'
-export const LOST_SUBMISSION_REASON = 'Mail closed while sending, so this may have gone. Check Sent before allowing another attempt.'
+export const LOST_HOLD_REASON = 'Mail lost touch with this send before it reached the mail service, and cannot show that it stopped. Check Sent before allowing another attempt.'
+export const LOST_SUBMISSION_REASON = 'Mail lost touch with this send while it was going, so this may have gone. Check Sent before allowing another attempt.'
 export const NO_EVIDENCE_REASON = 'Mail has no record of whether this left. Check Sent before allowing another attempt.'
+export const SUPERSEDED_REASON = 'This attempt stopped before it left, because another attempt or Mail window took over. Nothing went from this attempt.'
 
 /**
  * The stored copy that proves the service took it: a receipt or a synced Sent
@@ -164,10 +167,13 @@ export function stopDraftSchedules(store: MailStore, draftId: string, reason: st
   return { ...store, scheduledSends: store.scheduledSends.map(entry => (entry.draftId === draftId && entry.status === 'scheduled' ? { ...entry, status: 'failed' as const, lastError: reason } : entry)) }
 }
 
-/** This attempt ended before anything left. A later or different attempt is left alone. */
+/**
+ * This attempt ended before anything left. A later or different attempt is left
+ * alone, and so is an uncertainty an earlier attempt left beneath it.
+ */
 export function settleDraftNotSent(store: MailStore, draftId: string, attemptId: string, reason: string): MailStore {
   if (!store.drafts.some(draft => draft.id === draftId && draft.sendAttempt?.id === attemptId)) return store
-  return stopDraftSchedules(patchDraft(store, draftId, draft => (draft.sendAttempt?.id === attemptId ? { ...draft, sendAttempt: undefined, sendState: 'failed', sendError: reason, sendSettledAttemptId: attemptId } : draft)), draftId, reason)
+  return stopDraftSchedules(patchDraft(store, draftId, draft => (draft.sendAttempt?.id !== attemptId ? draft : draft.sendState === 'uncertain' ? { ...draft, sendAttempt: undefined, sendSettledAttemptId: attemptId } : { ...draft, sendAttempt: undefined, sendState: 'failed', sendError: reason, sendSettledAttemptId: attemptId })), draftId, reason)
 }
 
 export function undoDraftHold(store: MailStore, draftId: string, attemptId: string, at: string): MailStore {

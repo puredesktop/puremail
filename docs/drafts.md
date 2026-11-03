@@ -202,3 +202,11 @@ lost APPEND acknowledgement searches again before writing.
 | Agent tools | `agents/handlers.ts`, `agents/catalog.ts` |
 | Regressions from the audit | `lib/draftLifecycle.test.ts` |
 | Provider contract | `lib/providerDraftContract.test.ts` |
+
+## Sends and the merge
+
+A tombstone never ends a record that is held, preparing, submitting or unconfirmed unless a confirmed copy shows it went (`recordConfirmedSent`: a receipt or Sent copy naming the draft, or carrying the Message-ID it was submitted under). This holds whether or not the attempt had reached the saving copy's baseline, because a removal can come from a copy with an old view. The record then returns to the copy that removed it, and a real discard of a free draft still removes it everywhere. The cost is on the safe side: a window frozen with an old attempt can bring back a draft another window really discarded, and it reads unconfirmed until someone looks.
+
+An unconditional write made without knowing of an attempt (the page going away) does not end it either: the copy holding the attempt writes it back on its next save.
+
+Failures are tied to attempts in `mailDelivery.ts`: `sendSettledAttemptId` names the attempt a not-sent or uncertain record belongs to, and a rejection from any other attempt leaves it alone (`MailSendError.superseded`), which `markDraftSendFailed` and `sendFailure` both respect.

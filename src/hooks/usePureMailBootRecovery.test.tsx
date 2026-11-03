@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { LOST_HOLD_REASON } from '../lib/mailDeliveryStatus'
+import * as heldCopy from '../lib/heldCopy'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
@@ -66,7 +68,7 @@ it('recovers interrupted sends only after a successful load, and reopening sends
     await act(async () => api.rebootMail())
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
     const booted = api.boot!.store
-    expect(booted.drafts.find(item => item.id === 'held')).toMatchObject({ sendState: 'failed', sendError: 'Mail closed before it left. Nothing was sent.' })
+    expect(booted.drafts.find(item => item.id === 'held')).toMatchObject({ sendState: 'uncertain', sendError: LOST_HOLD_REASON })
     expect(booted.drafts.find(item => item.id === 'held')!.sendAttempt).toBeUndefined()
     expect(booted.drafts.find(item => item.id === 'gone')).toMatchObject({ sendState: 'uncertain' })
     expect(booted.drafts.find(item => item.id === 'gone')!.sendAttempt).toBeUndefined()
@@ -77,6 +79,32 @@ it('recovers interrupted sends only after a successful load, and reopening sends
     for (const send of sends) expect(send).not.toHaveBeenCalled()
   } finally {
     for (const send of sends) send.mockRestore()
+    await act(async () => root.unmount())
+    read.mockReset()
+  }
+})
+
+it('a held copy leaves another copy\'s send alone on opening: Mail\'s own tab settles it', async () => {
+  const held = vi.spyOn(heldCopy, 'isHeldCopy').mockReturnValue(true)
+  const read = vi.mocked(readPersistedMailStore)
+  let api!: ReturnType<typeof usePureMailBoot>
+  function Harness() {
+    api = usePureMailBoot(true)
+    return null
+  }
+  const root = createRoot(document.createElement('div'))
+  try {
+    const store = emptyMailStore()
+    const attempt = { id: 'h1', phase: 'held' as const, approved: 'x', at: '2026-01-01T00:00:00Z' }
+    store.threads = [{ id: 'thread' }] as unknown as typeof store.threads
+    store.drafts = [{ id: 'held', threadId: 'thread', subject: 'Held', body: 'Text', to: [], attachments: [], updatedAt: '2026-01-01T00:00:00Z', sendAttempt: attempt }] as unknown as typeof store.drafts
+    read.mockResolvedValueOnce({ store, migratedFromLocalStorage: false })
+    await act(async () => root.render(<Harness />))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
+    expect(api.boot!.store.drafts[0]).toMatchObject({ sendAttempt: attempt })
+    expect(api.boot!.store.drafts[0]!.sendState).toBeUndefined()
+  } finally {
+    held.mockRestore()
     await act(async () => root.unmount())
     read.mockReset()
   }

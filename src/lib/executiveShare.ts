@@ -926,6 +926,10 @@ export function parseDraftState(raw: string | null): ExecutiveDraftState | null 
   }
 }
 
+/** A discard made from a stale view yields to the send it did not know of, so the team must not keep reading it as discarded. */
+const staleDiscardOfLiveSend = (state: ExecutiveDraftState | null, store: Pick<MailStore, 'drafts' | 'messages'>): boolean =>
+  state?.state === 'discarded' && ['held', 'submitting', 'unconfirmed'].includes(draftDelivery(store, state.draftId).state)
+
 /** Discarded without saying why was inferred from absence by an older build: looked at again. */
 const isFinal = (state: ExecutiveDraftState | null): boolean => state?.state === 'sent' || (state?.state === 'discarded' && Boolean(state.discardedBy))
 
@@ -1058,8 +1062,8 @@ export async function reportExecutiveDraftStates(input: {
     }
     const path = `${stateDir}/${key}.json`
     const previous = parseDraftState(await files.read(path))
-    if (isFinal(previous)) {
-      finalKeys.add(key)
+    if (isFinal(previous) && !staleDiscardOfLiveSend(previous, store)) {
+      if (previous?.state === 'sent') finalKeys.add(key)
       continue
     }
     const takenBy = typeof taken.takenBy === 'string' ? taken.takenBy : undefined
@@ -1067,7 +1071,7 @@ export async function reportExecutiveDraftStates(input: {
     if (!next || sameState(previous, next)) continue
     await files.write(path, `${JSON.stringify(next, null, 2)}\n`)
     written.push(key)
-    if (isFinal(next)) finalKeys.add(key)
+    if (next.state === 'sent') finalKeys.add(key)
   }
   return { written }
 }

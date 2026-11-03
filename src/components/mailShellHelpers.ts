@@ -404,7 +404,7 @@ export function threadStatusLabel(
 /** What a status chip means, for its tooltip, where the two words alone do not say. */
 export function threadStatusExplanation(label: string | null): string | undefined {
   switch (label) {
-    case 'send unconfirmed': return 'A reply was sent, but the mail server never confirmed it went. Look in your Sent folder before sending it again, or it may go twice.'
+    case 'send unconfirmed': return 'A reply may have gone: the mail server never confirmed it. Look in your Sent folder before sending it again, or it may go twice.'
     case 'not sent': return 'A reply could not be sent. Open it to try again.'
     case 'draft ready': return 'A reply the assistant drafted is waiting for you.'
     case 'reply open': return 'You have an unsent reply here.'

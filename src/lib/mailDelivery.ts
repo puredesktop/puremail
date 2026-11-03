@@ -1,11 +1,12 @@
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
-import { CHANGED_REASON, CONFLICT_REASON, UNCONFIRMED_REASON, settleDraftNotSent, stopDraftSchedules } from './mailDeliveryStatus'
+import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, UNCONFIRMED_REASON, settleDraftNotSent, stopDraftSchedules } from './mailDeliveryStatus'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
 import { finalizeRunDraftForSend } from './mailRuns'
 
 export class MailSendError extends Error {
-  constructor(message: string, readonly outcome: 'not_sent' | 'uncertain') { super(message) }
+  /** `superseded`: this is about an attempt the draft has moved on from, not about what the draft holds now. */
+  constructor(message: string, readonly outcome: 'not_sent' | 'uncertain', readonly superseded = false) { super(message) }
 }
 
 /**
@@ -35,7 +36,7 @@ export function createMailDeliveryController(input: {
   const sending = new Set<string>()
   /** `attempt` names the approved hold this send carries out, and the content it approved. */
   return async (provider: MailProvider, draft: Draft, attempt?: { id: string; approved?: string }): Promise<MailMessage> => {
-    if (sending.has(draft.id)) throw new MailSendError('This message is already being sent.', 'not_sent')
+    if (sending.has(draft.id)) throw new MailSendError('This message is already being sent.', 'not_sent', true)
     const attemptId = attempt?.id ?? crypto.randomUUID()
     const approved = attempt?.approved ?? draftSendFingerprint(finalizeRunDraftForSend(draft))
     const changed = (): boolean => {
@@ -58,20 +59,31 @@ export function createMailDeliveryController(input: {
     if (changed()) throw refuse(CHANGED_REASON)
     sending.add(draft.id)
     let submitted = false
+    let marked = false
+    // A newer attempt under way or ended: the record is no longer this send's to carry on or settle.
+    const settledAtStart = saved.sendSettledAttemptId
+    const heldByOther = (item: Draft): boolean => (item.sendAttempt ? item.sendAttempt.id !== attemptId : item.sendSettledAttemptId !== settledAtStart && item.sendSettledAttemptId !== attemptId)
+    const currentRecord = (): Draft | undefined => input.read().drafts.find(item => item.id === draft.id)
     try {
       const prepared = await input.prepare(draft)
       // Provider saves finish during prepare; an edit that landed meanwhile stops it here.
       if (changed()) throw new MailSendError(CHANGED_REASON, 'not_sent')
+      const beforeMarker = currentRecord()
+      if (beforeMarker && (heldByOther(beforeMarker) || beforeMarker.sendState === 'uncertain')) throw new MailSendError(SUPERSEDED_REASON, 'not_sent')
       prepared.sendMessageId = `<puremail-${crypto.randomUUID()}@puremail.local>`
       const at = new Date().toISOString()
       input.update(store => ({ ...store, drafts: store.drafts.map(item => item.id === draft.id ? {
         ...item, providerDraftId: prepared.providerDraftId, sendMessageId: prepared.sendMessageId, sendState: 'uncertain', sendError: 'Send confirmation pending. Check Sent before retrying.', sendUndoneAt: undefined,
         sendAttempt: { id: attemptId, phase: 'submitting', approved, at },
       } : item) }))
+      marked = true
       // If the process stops after submission, this durable marker blocks an
       // automatic retry instead of quietly turning the message into a draft.
       await input.persist(input.read())
       if (!input.online()) throw new MailSendError('Offline — message not sent. Your draft is saved.', 'not_sent')
+      // Saving takes in what other copies saved: one that took this send over stops it here.
+      const afterMarker = currentRecord()
+      if (afterMarker && afterMarker.sendAttempt?.id !== attemptId) throw new MailSendError(SUPERSEDED_REASON, 'not_sent')
       submitted = true
       const message = await provider.send({ draft: prepared, threadId: prepared.threadId })
       if (!message.id) throw new MailSendError('The server returned no send confirmation. Check Sent before retrying.', 'uncertain')
@@ -90,14 +102,24 @@ export function createMailDeliveryController(input: {
       const reason = error instanceof Error ? error.message : 'Send failed.'
       // Only this attempt's own record. A Sent copy a sync found in the
       // meantime has already removed the draft and stays the answer.
+      const record = currentRecord()
+      const superseded = Boolean(record && heldByOther(record))
+      // What was reported uncertain beneath this attempt before its own marker, it cannot clear.
+      const staysUncertain = uncertain || (!marked && record?.sendState === 'uncertain' && !superseded && record.sendSettledAttemptId !== attemptId)
       input.update(store => {
-        const settled = { ...store, drafts: store.drafts.map(item => item.id === draft.id && (!item.sendAttempt || item.sendAttempt.id === attemptId) ? {
-          ...item, sendAttempt: undefined, sendState: uncertain ? 'uncertain' as const : 'failed' as const, sendError: reason, sendSettledAttemptId: uncertain ? undefined : attemptId,
-        } : item) }
+        const settled = { ...store, drafts: store.drafts.map(item => {
+          if (item.id !== draft.id) return item
+          if (!heldByOther(item)) return { ...item, sendAttempt: undefined, sendState: staysUncertain ? 'uncertain' as const : 'failed' as const, sendError: staysUncertain && !uncertain ? item.sendError : reason, sendSettledAttemptId: attemptId }
+          // It may have gone, and that outlives a newer attempt: this one's identity
+          // and phase stand, and what lies beneath it now stops it leaving as well.
+          if (!uncertain) return item
+          return item.sendAttempt ? (item.sendAttempt.phase === 'submitting' ? item : { ...item, sendState: 'uncertain' as const, sendError: reason }) : { ...item, sendState: 'uncertain' as const, sendError: reason, sendSettledAttemptId: attemptId }
+        }) }
         // A schedule's own dispatch names no attempt, and is settled by the scheduler.
-        return attempt && !uncertain ? stopDraftSchedules(settled, draft.id, reason) : settled
+        return attempt && !uncertain && !superseded ? stopDraftSchedules(settled, draft.id, reason) : settled
       })
       await input.persist(input.read()).catch(() => {})
+      if (superseded) throw new MailSendError(reason, uncertain ? 'uncertain' : 'not_sent', true)
       throw error
     } finally {
       sending.delete(draft.id)

@@ -1,3 +1,4 @@
+import { confirmedSentCopy } from './mailDeliveryStatus'
 import type { Draft, MailMessage, MailRun, MailStore, ScheduledSend, ScheduledSendStatus } from '../types'
 
 /**
@@ -17,9 +18,11 @@ import type { Draft, MailMessage, MailRun, MailStore, ScheduledSend, ScheduledSe
  *    edit, a draft's maker beats a copy imported from the account, then the
  *    later edit time. Provider bookkeeping and send attempts do not move
  *    `updatedAt`, which is why edit time alone cannot decide.
- * 4. A tombstone yields to a real edit made after it, to a send this copy has
- *    begun or left uncertain since, and to a record new to the copy holding it
- *    (a provider listing it again, an id made again).
+ * 4. A tombstone yields to a real edit made after it, to a send that is held,
+ *    preparing, submitting or unconfirmed unless a confirmed copy shows it went
+ *    (the delete may be a stale copy's, whether or not this copy's baseline has
+ *    the attempt yet), and to a record new to the copy holding it (a provider
+ *    listing it again, an id made again).
  */
 
 export interface Tombstone {
@@ -40,7 +43,16 @@ type Stamped = {
   importedFromProvider?: boolean
   sendAttempt?: { id: string }
   sendSettledAttemptId?: string
+  sendMessageId?: string
 }
+
+/** Whether this record went: a confirmed copy names it, or carries the Message-ID it was submitted under. */
+export function recordConfirmedSent(messages: MailMessage[], record: Pick<Stamped, 'id' | 'sendMessageId'>): boolean {
+  return Boolean(confirmedSentCopy({ messages }, record.id)) ||
+    Boolean(record.sendMessageId && messages.some(message => !message.isDraft && !message.optimistic && message.messageIdHeader === record.sendMessageId))
+}
+
+const inTheAir = (record: Stamped): boolean => Boolean(record.sendAttempt) || record.sendState === 'uncertain'
 
 const time = (value: string | undefined): number => {
   const parsed = Date.parse(value ?? '')
@@ -69,6 +81,10 @@ export const baselineOf = (records: ReadonlyArray<{ id: string }>): Map<string, 
 const settles = (record: Stamped, other: Stamped): boolean =>
   Boolean(other.sendAttempt) && record.sendSettledAttemptId === other.sendAttempt?.id
 
+/** `newer` shows nothing that ended the attempt `record` holds: it was saved without knowing of it. */
+const attemptStands = (record: Stamped, newer: Stamped): boolean =>
+  Boolean(record.sendAttempt) && !newer.sendAttempt && !newer.sentAt && newer.sendState !== 'uncertain' && !settles(newer, record)
+
 /** Both changed: which one stays. Ties keep memory, the copy doing the saving. */
 function winner<T extends Stamped>(memory: T, disk: T): T {
   if (Boolean(memory.sentAt) !== Boolean(disk.sentAt)) return memory.sentAt ? memory : disk
@@ -83,9 +99,10 @@ function winner<T extends Stamped>(memory: T, disk: T): T {
 }
 
 /** The tombstone covers this record unless it was really changed afterwards. */
-function outlives(record: Stamped, tombstone: Tombstone, baseline: string | undefined): boolean {
+function outlives(record: Stamped, tombstone: Tombstone, baseline: string | undefined, confirmed: (record: Stamped) => boolean = () => false): boolean {
+  if (inTheAir(record)) return !confirmed(record)
   if (baseline !== undefined && recordFingerprint(record) === baseline) return false
-  return Boolean(record.sentAt || record.sendAttempt) || record.sendState === 'uncertain' || time(record.updatedAt) > time(tombstone.deletedAt)
+  return Boolean(record.sentAt) || time(record.updatedAt) > time(tombstone.deletedAt)
 }
 
 /** On load: the file can carry a record an older build wrote back over a tombstone. */
@@ -113,9 +130,11 @@ export function mergeRecords<T extends Stamped>(input: {
   tombstones: readonly Tombstone[]
   /** Removals this copy knows were real discards, with when. */
   discards?: ReadonlyMap<string, string>
+  /** A send that a confirmed copy shows went: only then does a delete end it. */
+  confirmed?: (record: Stamped) => boolean
   now: string
 }): RecordMerge<T> {
-  const { baseline, memory, disk, discards, now } = input
+  const { baseline, memory, disk, discards, confirmed, now } = input
   const diskById = new Map(disk.map(record => [record.id, record]))
   const memoryIds = new Set(memory.map(record => record.id))
   const tombstones = new Map(input.tombstones.map(tombstone => [tombstone.id, tombstone]))
@@ -128,9 +147,9 @@ export function mergeRecords<T extends Stamped>(input: {
     const held = baseline.get(record.id)
     const tombstone = tombstones.get(record.id)
     if (tombstone && held !== undefined) {
-      if (outlives(record, tombstone, held)) {
+      if (outlives(record, tombstone, held, confirmed)) {
         tombstones.delete(record.id)
-      } else if (onDisk && outlives(onDisk, tombstone, held)) {
+      } else if (onDisk && outlives(onDisk, tombstone, held, confirmed)) {
         tombstones.delete(record.id)
         merged.push(onDisk)
         arrived.push(onDisk)
@@ -153,7 +172,8 @@ export function mergeRecords<T extends Stamped>(input: {
       merged.push(record)
       continue
     }
-    const kept = mine === held ? onDisk : winner(record, onDisk)
+    // A write made without knowing of an attempt this copy still holds does not end it.
+    const kept = mine === held && !attemptStands(record, onDisk) ? onDisk : winner(record, onDisk)
     merged.push(kept)
     if (kept === onDisk) arrived.push(onDisk)
   }
@@ -165,7 +185,7 @@ export function mergeRecords<T extends Stamped>(input: {
     const tombstone: Tombstone =
       tombstones.get(id) ?? { id, deletedAt: discardedAt ?? now, reason: discardedAt ? 'discarded' : 'removed' }
     const onDisk = diskById.get(id)
-    if (onDisk && outlives(onDisk, tombstone, held)) {
+    if (onDisk && outlives(onDisk, tombstone, held, confirmed)) {
       tombstones.delete(id)
       merged.push(onDisk)
       arrived.push(onDisk)
@@ -182,7 +202,7 @@ export function mergeRecords<T extends Stamped>(input: {
   for (const record of disk) {
     if (memoryIds.has(record.id) || baseline.has(record.id)) continue
     const tombstone = tombstones.get(record.id)
-    if (tombstone && !outlives(record, tombstone, undefined)) continue
+    if (tombstone && !outlives(record, tombstone, undefined, confirmed)) continue
     tombstones.delete(record.id)
     merged.push(record)
     arrived.push(record)
@@ -242,10 +262,6 @@ export interface DraftsFileChanges {
   recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'>
 }
 
-/** `newer` shows nothing that ended the attempt `record` holds: it was saved without knowing of it. */
-const attemptStands = (record: Stamped, newer: Stamped): boolean =>
-  Boolean(record.sendAttempt) && !newer.sendAttempt && !newer.sentAt && newer.sendState !== 'uncertain' && !settles(newer, record)
-
 const upsertNewer = <T extends Stamped>(current: T[], arrived: readonly T[]): T[] => {
   if (arrived.length === 0) return current
   const incoming = new Map(arrived.map(record => [record.id, record]))
@@ -260,12 +276,13 @@ const upsertNewer = <T extends Stamped>(current: T[], arrived: readonly T[]): T[
   return [...next, ...incoming.values()]
 }
 
-const withoutRemoved = <T extends Stamped>(current: T[], removed: readonly Tombstone[]): T[] => {
+const withoutRemoved = <T extends Stamped>(current: T[], removed: readonly Tombstone[], confirmed: (record: Stamped) => boolean = () => false): T[] => {
   if (removed.length === 0) return current
   const byId = new Map(removed.map(tombstone => [tombstone.id, tombstone]))
   return current.filter(record => {
     const tombstone = byId.get(record.id)
-    return !tombstone || time(record.updatedAt) > time(tombstone.deletedAt)
+    // A send begun here since that merge's snapshot stands, unless it went.
+    return !tombstone || (inTheAir(record) && !confirmed(record)) || time(record.updatedAt) > time(tombstone.deletedAt)
   })
 }
 
@@ -284,7 +301,7 @@ export function applyDraftsFileChanges(store: MailStore, changes: DraftsFileChan
     accounts: recoverMissing(store.accounts, changes.recovery?.accounts),
     mailboxes: recoverMissing(store.mailboxes, changes.recovery?.mailboxes),
     threads: recoverMissing(store.threads, changes.recovery?.threads),
-    drafts: withoutRemoved(upsertNewer(store.drafts, changes.drafts), changes.removedDrafts),
+    drafts: withoutRemoved(upsertNewer(store.drafts, changes.drafts), changes.removedDrafts, record => recordConfirmedSent([...store.messages, ...changes.sentReceipts], record)),
     runs: withoutRemoved(upsertNewer(store.runs ?? [], changes.runs), changes.removedRuns),
     scheduledSends: schedules.merged,
     messages: [...store.messages, ...changes.sentReceipts.filter(message => !heldMessages.has(message.id))],

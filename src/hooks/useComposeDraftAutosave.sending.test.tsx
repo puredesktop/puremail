@@ -18,7 +18,7 @@ const APPROVED = 'Approved words'
 const TYPED = 'Approved words, and later ones'
 
 /** The real autosave, hold, sender and delivery controller, with a window open on the draft and a fake mail service. */
-function desk(options: { prepare?: (draft: Draft) => Promise<Draft> } = {}) {
+function desk(options: { prepare?: (draft: Draft) => Promise<Draft>; openOnUnseen?: boolean } = {}) {
   const made = createComposedMessageDraft(emptyMailStore(), { to: parseComposeRecipients('ana@example.test'), subject: 'Letter', body: APPROVED, attachments: [] })
   let store: MailStore = made.store
   const storeRef = { current: store }
@@ -35,19 +35,22 @@ function desk(options: { prepare?: (draft: Draft) => Promise<Draft> } = {}) {
   const onKept = vi.fn()
   let hold!: ReturnType<typeof usePendingSend>
   let type!: (body: string) => void
+  let setFields!: (fields: { subject?: string; to?: string; html?: string }) => void
   let context!: ComposeReplyContext | null
   function Window() {
     const [, force] = useState(0)
     rerender = () => force(value => value + 1)
     const [body, setBody] = useState(APPROVED)
-    const [currentContext, setContext] = useState<ComposeReplyContext | null>({ threadId: made.threadId, draftId: made.draftId, messageId: null, kind: 'draft' })
+    const [currentContext, setContext] = useState<ComposeReplyContext | null>({ threadId: made.threadId, draftId: options.openOnUnseen ? 'never-seen-here' : made.draftId, messageId: null, kind: 'draft' })
     type = setBody
+    const [fields, setFieldsState] = useState<{ subject?: string; to?: string; html?: string }>({})
+    setFields = setFieldsState
     context = currentContext
     hold = usePendingSend({ undoSendDelaySeconds: 10, setCommandNotice: () => {}, onUndone: pending => { if (pending.draftId) update(current => settleUndoneHold(current, pending.draftId!, pending.id)) } })
     const id = currentContext?.draftId
     useComposeDraftAutosave({
       active: true, pending: hold.pendingSend?.target === 'compose', session: 1, signature: '', context: currentContext, quote: null,
-      snapshot: { to: 'ana@example.test', cc: '', bcc: '', subject: 'Letter', body, bodyHtml: '', attachments: [] },
+      snapshot: { to: fields.to ?? 'ana@example.test', cc: '', bcc: '', subject: fields.subject ?? 'Letter', body, bodyHtml: fields.html ?? '', attachments: [] },
       storeRef, setStore: value => update(typeof value === 'function' ? value : () => value), setContext,
       editBlock: id ? draftEditBlock(store, id) : null,
       sentAway: id ? draftDelivery(store, id).state === 'submitted' : false,
@@ -74,6 +77,7 @@ function desk(options: { prepare?: (draft: Draft) => Promise<Draft> } = {}) {
     approve: (id = made.draftId) => { let out!: ReturnType<typeof sender>; act(() => { out = sender(store.drafts.find(draft => draft.id === id)!, {}) }); return out },
     undo: () => act(() => { hold.undoPendingSend(hold.pendingSends[0]!.id) }),
     type: (body: string) => act(() => type(body)),
+    fields: (next: { subject?: string; to?: string; html?: string }) => act(() => setFields(next)),
     pass: async (ms = 400) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) },
     close: () => act(() => root.unmount()),
   }
@@ -203,6 +207,37 @@ describe('typing in a window already open on a draft that is leaving', () => {
     expect(d.read().drafts).toEqual([])
     expect(d.onLocked).not.toHaveBeenCalled()
     expect(d.onKept).not.toHaveBeenCalled()
+    d.close()
+  })
+
+  it.each<[string, { subject?: string; to?: string; html?: string }]>([
+    ['subject', { subject: 'Retitled' }],
+    ['recipient', { to: 'bo@example.test' }],
+    ['format alone, with the same plain words', { html: '<p><strong>Approved words</strong></p>' }],
+  ])('a later change of %s after it went becomes its own draft, and the approved copy keeps what was approved', async (_name, next) => {
+    const d = desk()
+    d.approve()
+    await d.pass(10000)
+    expect(d.send.mock.calls[0]![0].body).toBe(APPROVED)
+    d.fields(next)
+    await d.pass()
+    expect(d.read().drafts).toHaveLength(1)
+    const kept = d.read().drafts[0]!
+    expect(kept.id).not.toBe(d.draftId)
+    if (next.subject) expect(kept.subject).toBe(next.subject)
+    if (next.to) expect(kept.to[0]!.email).toBe(next.to)
+    if (next.html) expect(kept.bodyHtml).toBe(next.html)
+    expect(d.read().messages.find(message => message.sentDraftId === d.draftId)!.subject).toBe('Letter')
+    expect(d.send).toHaveBeenCalledTimes(1)
+    d.close()
+  })
+
+  it('confirmed sent with no last words to compare: the window\'s words are kept, not dropped', async () => {
+    const d = desk({ openOnUnseen: true })
+    d.update(store => ({ ...store, drafts: [], messages: [...store.messages, { id: 'msg_sent_never-seen-here_1', threadId: 't', from: { name: 'Me', email: 'me@example.test' }, to: [], subject: 'Other', body: 'Other', attachments: [], receivedAt: '2026-11-02T10:00:00Z', read: true, deliveryAccepted: true, sentDraftId: 'never-seen-here' }] }))
+    await d.pass()
+    expect(d.read().drafts.map(draft => draft.body)).toEqual([APPROVED])
+    expect(d.onKept).toHaveBeenCalledTimes(1)
     d.close()
   })
 

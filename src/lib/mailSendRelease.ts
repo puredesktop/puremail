@@ -31,6 +31,12 @@ export interface SendStoreDraftOptions {
  */
 export function sendFailure(store: Pick<MailStore, 'drafts' | 'messages'>, draftId: string, error: unknown, home: string, kept: string): { outcome: 'not_sent' | 'uncertain' | 'submitted'; reason: string; notice: string } {
   const reason = error instanceof Error ? error.message : 'Send failed.'
+  // About an attempt the draft has moved on from: what the draft holds now is not this answer.
+  if (error instanceof MailSendError && error.superseded) {
+    return error.outcome === 'uncertain'
+      ? { outcome: 'uncertain', reason, notice: `${home} did not confirm an earlier send of this draft. Check Sent before allowing another attempt. (${reason})` }
+      : { outcome: 'not_sent', reason, notice: `This send of the draft did not go, and what the draft holds now stands. (${reason})` }
+  }
   const state = draftDelivery(store, draftId).state
   if (state === 'submitted') return { outcome: 'submitted', reason, notice: '' }
   if (state === 'unconfirmed' || (error instanceof MailSendError && error.outcome === 'uncertain')) {
@@ -126,7 +132,6 @@ export function createStoreDraftSender(input: {
       }
       // Undo cancels the timer, so an attempt missing here was lost to something else: refuse, and say so.
       if (current.sendAttempt?.id !== attemptId) {
-        input.reportFailure(finalized.id, CHANGED_REASON)
         notSent(CHANGED_REASON)
         return
       }

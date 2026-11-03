@@ -168,8 +168,8 @@ export function useComposeDraftAutosave(input: {
         return
       }
       if (context.draftId && current.sentAway) {
-        const went = lastDraft.current
-        if (!went || !composeWordsDiffer(went, fields)) return
+        // With nothing to compare against the words are kept: an extra draft can be thrown away, lost words cannot.
+        if (composeSaveTarget(storeRef.current, context.draftId, fields, lastDraft.current) === 'nothing') return
         const keptId = `draft_compose_${crypto.randomUUID()}`
         const kept = { ...context, draftId: null }
         setStore(store => upsertReplyDraft(store, { context: kept, ...fields, newDraftId: keptId }).store)

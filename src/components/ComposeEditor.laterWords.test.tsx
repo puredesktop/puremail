@@ -25,10 +25,10 @@ async function open(options: { offline?: boolean } = {}) {
   const setComposeOpen = vi.fn()
   const provider = { send: ({ draft }: { draft: Draft }) => send(draft), capabilities: { compose: true } }
   let typeBody!: (body: string) => void
-  let setWindow!: (next: { body?: string; subject?: string; to?: string; threadId?: string; attachments?: unknown[] }) => void
+  let setWindow!: (next: { body?: string; subject?: string; to?: string; threadId?: string; attachments?: unknown[]; html?: string }) => void
   function Host() {
     const [composeBody, setComposeBody] = useState('Text')
-    const [rest, setRest] = useState<{ subject?: string; to?: string; threadId?: string; attachments?: unknown[] }>({})
+    const [rest, setRest] = useState<{ subject?: string; to?: string; threadId?: string; attachments?: unknown[]; html?: string }>({})
     typeBody = setComposeBody
     setWindow = ({ body, ...others }) => { if (body !== undefined) setComposeBody(body); setRest(others) }
     const noop = () => {}
@@ -36,7 +36,7 @@ async function open(options: { offline?: boolean } = {}) {
     const props = {
       store: storeRef.current, setStore, storeRef, activeProvider: 'gmail', mailProviderRef: { current: options.offline ? undefined : provider },
       selectedAccount: { id: 'account', provider: 'gmail', name: 'Me', email: 'me@example.test', syncState: 'online' },
-      composeTo: rest.to ?? 'Ana <ana@example.test>', composeCc: '', composeBcc: '', composeCcBccOpen: false, composeSubject: rest.subject ?? 'Letter', composeBody, composeBodyHtml: '', composeAttachments: rest.attachments ?? ATTACHED, composeDropActive: false, variant: 'docked',
+      composeTo: rest.to ?? 'Ana <ana@example.test>', composeCc: '', composeBcc: '', composeCcBccOpen: false, composeSubject: rest.subject ?? 'Letter', composeBody, composeBodyHtml: rest.html ?? '', composeAttachments: rest.attachments ?? ATTACHED, composeDropActive: false, variant: 'docked',
       setComposeTo: noop, setComposeCc: noop, setComposeBcc: noop, setComposeCcBccOpen: noop, setComposeSubject: noop, setComposeBody: noop, setComposeBodyHtml: noop, setComposeAttachments: noop, setComposeDropActive: noop, setComposeOpen,
       composeContext: { threadId: rest.threadId ?? made.threadId, messageId: null, kind: 'draft', draftId: made.draftId }, composeQuote: null, setComposeQuote: noop, switchComposeReplyKind: noop, onResetComposeContext: noop, discardContextDraft: noop,
       composeToRef: { current: null }, pendingSend: hold.pendingSend, schedulePendingSend: hold.schedulePendingSend, undoPendingSend: hold.undoPendingSend, sendDraftThroughProvider: deliver, markDraftSending: hold.markDraftSending, setCommandNotice: noop,
@@ -53,7 +53,7 @@ async function open(options: { offline?: boolean } = {}) {
     clear: () => act(() => setWindow({ body: '', subject: '', to: '', attachments: [] })),
     other: () => act(() => setWindow({ body: 'Words for someone else', threadId: 'another-thread' })),
     attachmentsFetched: () => act(() => setWindow({ attachments: [] })),
-    edit: (next: { subject?: string; to?: string; attachments?: unknown[] }) => act(() => setWindow(next)),
+    edit: (next: { subject?: string; to?: string; attachments?: unknown[]; html?: string }) => act(() => setWindow(next)),
     close: () => act(() => root.unmount()),
     press: async (selector: string) => {
       const button = host.querySelector<HTMLButtonElement>(selector)
@@ -176,6 +176,7 @@ it.each([
   ['subject', { subject: 'Letter, retitled' }],
   ['recipient', { to: 'bo@example.test' }],
   ['attachment', { attachments: [{ id: 'f1', name: 'later.pdf', mimeType: 'application/pdf', size: 1 }] }],
+  ['format, with the same plain words', { html: '<p><strong>Text</strong></p>' }],
 ])('a %s changed after it went is kept when the window closes before autosave', async (_field, next) => {
   const w = await open()
   const draft = w.storeRef.current.drafts[0]!
@@ -189,5 +190,6 @@ it.each([
   if ('subject' in next) expect(kept.subject).toBe(next.subject)
   if ('to' in next) expect(kept.to.map(contact => contact.email)).toEqual([next.to])
   if ('attachments' in next) expect(kept.attachments.map(file => file.name)).toEqual(['later.pdf'])
+  if ('html' in next) { expect(kept.bodyHtml).toBe(next.html); expect(kept.body).toBe('Text') }
   w.close()
 })

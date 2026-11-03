@@ -13,6 +13,7 @@ import {
   mergeReceipts,
   mergeRecords,
   mergeScheduledSends,
+  recordConfirmedSent,
   withoutTombstoned,
   type DraftsFileChanges,
   type Tombstone,
@@ -348,6 +349,7 @@ function mergedDraftsFile(
     disk: disk?.drafts ?? [],
     tombstones: disk?.draftTombstones ?? [],
     discards: thisCopy.discards,
+    confirmed: record => recordConfirmedSent([...persistable.messages, ...(disk?.sentReceipts ?? [])], record),
     now,
   })
   const runs = mergeRecords<MailRun>({

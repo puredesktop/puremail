@@ -9,8 +9,8 @@ function draft(id: string, patch: Partial<Draft> = {}): Draft {
   return { id, threadId: 't', to: [], subject: '', body: id, attachments: [], updatedAt: '2026-11-02T10:00:00.000Z', syncState: 'pending', ...patch }
 }
 
-const merge = (input: { baseline?: Draft[]; memory?: Draft[]; disk?: Draft[]; tombstones?: Tombstone[]; discards?: Map<string, string> }) =>
-  mergeRecords<Draft>({ baseline: baselineOf(input.baseline ?? []), memory: input.memory ?? [], disk: input.disk ?? [], tombstones: input.tombstones ?? [], discards: input.discards, now: NOW })
+const merge = (input: { baseline?: Draft[]; memory?: Draft[]; disk?: Draft[]; tombstones?: Tombstone[]; discards?: Map<string, string>; confirmed?: () => boolean }) =>
+  mergeRecords<Draft>({ baseline: baselineOf(input.baseline ?? []), memory: input.memory ?? [], disk: input.disk ?? [], tombstones: input.tombstones ?? [], discards: input.discards, confirmed: input.confirmed, now: NOW })
 
 const ids = (drafts: Draft[]) => drafts.map(item => item.id).sort()
 
@@ -169,12 +169,26 @@ describe('sends and schedules in the merged file', () => {
     expect(result.tombstones).toEqual([])
   })
 
-  it('a send that ended elsewhere and removed its draft still removes it here', () => {
+  it('a removal with no confirmed copy does not erase a send, even one already agreed with the file', () => {
     const copied = draft('d', { sendAttempt: attempt })
     const tombstone: Tombstone = { id: 'd', deletedAt: NOW, reason: 'removed' }
     const result = merge({ baseline: [copied], memory: [copied], tombstones: [tombstone] })
+    expect(result.merged).toEqual([copied])
+    expect(result.removed).toEqual([])
+    expect(result.tombstones).toEqual([])
+  })
+
+  it('a confirmed copy is what ends it: then the removal stands', () => {
+    const copied = draft('d', { sendAttempt: attempt })
+    const tombstone: Tombstone = { id: 'd', deletedAt: NOW, reason: 'removed' }
+    const result = merge({ baseline: [copied], memory: [copied], tombstones: [tombstone], confirmed: () => true })
     expect(result.merged).toEqual([])
     expect(result.removed).toEqual([tombstone])
+  })
+
+  it('an unconditional write that knew nothing of an attempt this copy still holds does not end it', () => {
+    const mine = draft('d', { sendAttempt: attempt })
+    expect(merge({ baseline: [mine], memory: [mine], disk: [base] }).merged).toEqual([mine])
   })
 
   it('an arrival saved without knowing of the attempt leaves it in memory; one that settled it does not', () => {

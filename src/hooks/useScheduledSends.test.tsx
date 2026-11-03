@@ -96,6 +96,7 @@ function reopen(from: MailStore | Error, options: { prepare?: (draft: Draft) => 
     entry: (id: string): ScheduledSend | undefined => store?.scheduledSends?.find(item => item.id === id),
     approve: (draftId: string) => { let out!: ReturnType<typeof sender>; act(() => { out = sender(store!.drafts.find(draft => draft.id === draftId)!, {}) }); return out },
     undo: () => act(() => { hold.undoPendingSend(hold.pendingSends[0]!.id) }),
+    update,
     close: () => act(() => root.unmount()),
   }
 }
@@ -117,13 +118,16 @@ describe('reopening Mail with a schedule on an interrupted draft', () => {
     const first = await open(store)
     await pass(600_000)
     expect(send).not.toHaveBeenCalled()
-    expect(draftDelivery(first.store()!, draftId)).toMatchObject({ state: 'not_submitted', reason: LOST_HOLD_REASON })
-    expect(first.entry(entryId)).toMatchObject({ status: 'failed', lastError: LOST_HOLD_REASON })
+    expect(draftDelivery(first.store()!, draftId)).toMatchObject({ state: 'unconfirmed', reason: LOST_HOLD_REASON })
+    expect(first.entry(entryId)).toMatchObject({ status: 'unconfirmed', lastError: LOST_HOLD_REASON })
     const again = first.store()!
     first.close()
     const second = await open(again)
     await pass(600_000)
     expect(send).not.toHaveBeenCalled()
+    expect(second.approve(draftId)).toMatchObject({ ok: false })
+    // The recovery panel's "I checked Sent — allow retry", then a fresh approval.
+    second.update(current => ({ ...current, drafts: current.drafts.map(draft => (draft.id === draftId ? { ...draft, sendState: 'failed' as const, sendError: 'You checked Sent and allowed another attempt.' } : draft)) }))
     expect(second.approve(draftId)).toMatchObject({ ok: true })
     await pass(10_000)
     expect(send).toHaveBeenCalledTimes(1)
@@ -137,8 +141,8 @@ describe('reopening Mail with a schedule on an interrupted draft', () => {
     const desk = await open(store)
     await pass(120_000)
     expect(send).not.toHaveBeenCalled()
-    expect(draftDelivery(desk.store()!, draftId).state).toBe('not_submitted')
-    expect(desk.entry(entryId)!.status).toBe('failed')
+    expect(draftDelivery(desk.store()!, draftId).state).toBe('unconfirmed')
+    expect(desk.entry(entryId)!.status).toBe('unconfirmed')
     desk.close()
   })
 
@@ -175,19 +179,33 @@ describe('reopening Mail with a schedule on an interrupted draft', () => {
     desk.close()
   })
 
-  it('an attempt that may still be running in another Mail window: left alone, no service call, then settled once it cannot be', async () => {
-    const { store, draftId, entryId } = saved({ sendAttempt: { id: 'h1', phase: 'held', approved: 'x', at: new Date(Date.parse(NOW) - 5000).toISOString() } })
-    const desk = await open(store)
-    expect(draftDelivery(desk.store()!, draftId).state).toBe('held')
-    expect(desk.entry(entryId)!.status).toBe('scheduled')
-    await pass(30_000)
-    expect(draftDelivery(desk.store()!, draftId).state).toBe('held')
+  it.each([
+    ['moments old', () => new Date(Date.parse(NOW) - 5000).toISOString()],
+    ['ancient', () => LONG_AGO],
+    ['from a clock ahead', () => new Date(Date.parse(NOW) + 86_400_000).toISOString()],
+    ['with an unreadable time', () => 'not a time'],
+  ])('an attempt no window claims, %s: unconfirmed at once and through every reopening, with no service call', async (_name, at) => {
+    const { store, draftId, entryId } = saved({ sendAttempt: { id: 'h1', phase: 'held', approved: 'x', at: at() } })
+    let current = store
+    for (let opening = 0; opening < 3; opening += 1) {
+      const desk = await open(current)
+      expect(draftDelivery(desk.store()!, draftId).state).toBe('unconfirmed')
+      expect(desk.entry(entryId)!.status).toBe('unconfirmed')
+      expect(desk.approve(draftId)).toMatchObject({ ok: false })
+      await pass(600_000)
+      expect(send).not.toHaveBeenCalled()
+      current = desk.store()!
+      desk.close()
+    }
+  })
+
+  it('a dispatch cut off after an older failure: that failure is not this dispatch\'s, so it cannot read as not sent', async () => {
+    const made = saved({ sendState: 'failed', sendError: 'An older refusal', sendSettledAttemptId: 'older' })
+    const desk = await open({ ...made.store, scheduledSends: made.store.scheduledSends!.map(entry => ({ ...entry, status: 'sending' as const })) })
+    await pass(120_000)
     expect(send).not.toHaveBeenCalled()
-    await pass(61_000)
-    expect(draftDelivery(desk.store()!, draftId).state).toBe('not_submitted')
-    expect(desk.entry(entryId)!.status).toBe('failed')
-    await pass(600_000)
-    expect(send).not.toHaveBeenCalled()
+    expect(draftDelivery(desk.store()!, made.draftId).state).toBe('unconfirmed')
+    expect(desk.entry(made.entryId)!.status).toBe('unconfirmed')
     desk.close()
   })
 
@@ -243,11 +261,43 @@ describe('two Mail windows open on one store', () => {
 
   it('a failed read of the saved record settles nothing', async () => {
     const { store, draftId } = saved({ sendAttempt: { id: 'h1', phase: 'held', approved: 'x', at: new Date(Date.parse(NOW) - 5000).toISOString() } }, new Date(Date.parse(NOW) + 3_600_000).toISOString())
-    const desk = await open(store)
+    const clean = { ...store, drafts: store.drafts.map(draft => ({ ...draft, sendAttempt: undefined })) }
+    const desk = await open(clean)
+    // What this window learned of another's send since it opened.
+    desk.update(current => ({ ...current, drafts: store.drafts }))
     onDisk = null
     await pass(120_000)
     expect(draftDelivery(desk.store()!, draftId).state).toBe('held')
     desk.close()
+  })
+
+  describe.each([
+    ['a suspended window, silent on the channel', () => { for (const channel of [...FakeChannel.open]) channel.onmessage = null }],
+    ['no channel at all', () => { vi.stubGlobal('BroadcastChannel', undefined) }],
+    ['a channel that cannot be opened', () => { vi.stubGlobal('BroadcastChannel', class { constructor() { throw new Error('blocked') } }) }],
+  ])('%s', (_name, silence) => {
+    afterEach(() => { vi.stubGlobal('BroadcastChannel', FakeChannel) })
+
+    it('its possible send is never known not sent or resent, and when it wakes it goes once and the receipt stands', async () => {
+      const { store, draftId } = saved({}, new Date(Date.parse(NOW) + 3_600_000).toISOString())
+      let ready!: () => void
+      const asleep = await open(store, { prepare: draft => new Promise(resolve => { ready = () => resolve({ ...draft }) }) })
+      asleep.approve(draftId)
+      await pass(10_000)
+      expect(asleep.store()!.drafts[0]!.sendAttempt?.phase).toBe('preparing')
+      silence()
+      const other = await open(asleep.store()!)
+      expect(draftDelivery(other.store()!, draftId).state).toBe('unconfirmed')
+      expect(other.approve(draftId)).toMatchObject({ ok: false })
+      await pass(600_000)
+      expect(draftDelivery(other.store()!, draftId).state).toBe('unconfirmed')
+      expect(send).not.toHaveBeenCalled()
+      await act(async () => { ready(); await vi.advanceTimersByTimeAsync(0) })
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(draftDelivery(asleep.store()!, draftId).state).toBe('submitted')
+      asleep.close()
+      other.close()
+    })
   })
 })
 

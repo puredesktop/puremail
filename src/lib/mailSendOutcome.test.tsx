@@ -13,7 +13,7 @@ import { CHANGED_REASON, LOST_HOLD_REASON, LOST_SUBMISSION_REASON, NO_EVIDENCE_R
 import { draftEditVersion, draftSendFingerprint } from './mailDrawerDrafts'
 import { EXECUTIVE_TAKEN_DIR, executiveDraftIds, executiveDraftState, parseDraftState, reportExecutiveDraftStates, type ExecutiveShareFiles } from './executiveShare'
 import { createComposedMessageDraft, emptyMailStore, persistableMailStore } from './mailModel'
-import { SEND_ATTEMPT_LIVE_GRACE_MS, createRunFromDrafts, markRunItemCommitted, markRunItemUnconfirmed, markRunItemUnsent, reconcileRun, recoverInterruptedSends, replaceRun, runItemDelivery, runProgress, runSummaryLine, settleUndoneHold, startRun } from './mailRuns'
+import { createRunFromDrafts, markRunItemCommitted, markRunItemUnconfirmed, markRunItemUnsent, reconcileRun, recoverInterruptedSends, replaceRun, runItemDelivery, runProgress, runSummaryLine, settleUndoneHold, startRun } from './mailRuns'
 import { composeHoldBlock, composeHoldStillApproved, createStoreDraftSender, sendFailure } from './mailSendRelease'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -156,17 +156,17 @@ describe('reopening Mail', () => {
   const later = () => new Date(Date.now() + 600_000).toISOString()
   const reopen = (saved: MailStore) => recoverInterruptedSends(JSON.parse(JSON.stringify(persistableMailStore(saved))), later())
 
-  it('closed during the hold: known not sent, back on the list, and nothing is sent', async () => {
+  it('closed during the hold: its window cannot be shown to have stopped, so unconfirmed, and nothing is sent', async () => {
     const r = rig({ run: true })
     approveItem(r)
     const saved = r.read()
     r.unmount() // the hold's timer dies with the window
     await elapse(60000)
     const opened = reopen(saved)
-    expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'not_submitted', reason: LOST_HOLD_REASON })
-    expect(opened.runs![0]!.items[0]).toMatchObject({ status: 'pending', skipReason: LOST_HOLD_REASON })
+    expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'unconfirmed', reason: LOST_HOLD_REASON })
+    expect(opened.runs![0]!.items[0]).toMatchObject({ status: 'unconfirmed', skipReason: LOST_HOLD_REASON })
     expect(opened.runs![0]!.items[0]!.sentAt).toBeUndefined()
-    expect(runProgress(opened.runs![0]!)).toMatchObject({ sent: 0, toGo: 1 })
+    expect(runProgress(opened.runs![0]!)).toMatchObject({ sent: 0, unconfirmed: 1 })
     expect(r.send).not.toHaveBeenCalled()
   })
 
@@ -469,7 +469,7 @@ describe('what was approved is what leaves', () => {
 })
 
 describe('between the hold and the marker', () => {
-  it('reads as being sent, not as Undo still working; closing here is still known not sent', async () => {
+  it('reads as being sent, not as Undo still working; a saved snapshot of it is unconfirmed, whatever its age', async () => {
     let ready!: (draft: Draft) => void
     const r = rig({ run: true, prepare: () => new Promise(resolve => { ready = resolve }) })
     approveItem(r)
@@ -481,7 +481,7 @@ describe('between the hold and the marker', () => {
     expect(approve(r)).toMatchObject({ alreadyQueued: true, delivery: { state: 'submitting' } })
     expect(r.send).not.toHaveBeenCalled()
     const opened = recoverInterruptedSends(JSON.parse(JSON.stringify(persistableMailStore(r.read()))), new Date(Date.now() + 600_000).toISOString())
-    expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'not_submitted', reason: LOST_HOLD_REASON })
+    expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'unconfirmed', reason: LOST_HOLD_REASON })
     await act(async () => { ready({ ...draft }); await vi.advanceTimersByTimeAsync(0) })
     expect(r.send).toHaveBeenCalledTimes(1)
     expect(draftDelivery(r.read(), r.draftId).state).toBe('submitted')
@@ -594,6 +594,22 @@ describe('the team status file', () => {
     r.unmount()
   })
 
+  it('a discard from an old view that the merge took back stops reading as discarded; a real one stays final', async () => {
+    const r = rig()
+    const { disk, files } = memory()
+    disk.set(`/o/${EXECUTIVE_TAKEN_DIR}/cos-k-1.json`, JSON.stringify({ draftId: r.draftId, takenAt: new Date().toISOString() }))
+    const look = () => reportExecutiveDraftStates({ files, root: '/o', store: r.read(), account: { id: 'account' } })
+    const known = [...disk.keys()]
+    await look()
+    const statePath = [...disk.keys()].find(key => !known.includes(key) && key.includes('/state/'))!
+    disk.set(statePath, JSON.stringify({ ...parseDraftState(disk.get(statePath)!), state: 'discarded', discardedBy: 'request' }))
+    expect((await look()).written).toEqual([])
+    r.update(store => ({ ...store, drafts: store.drafts.map(item => ({ ...item, sendAttempt: { id: 'a1', phase: 'submitting' as const, approved: 'x', at: '2026-11-02T10:00:00Z' }, sendState: 'uncertain' as const })) }))
+    expect((await look()).written).toEqual(['cos-k-1'])
+    expect(parseDraftState(disk.get(statePath)!)).toMatchObject({ state: 'draft', delivery: { state: 'submitting' } })
+    r.unmount()
+  })
+
   it('reads a file from before this field', () => {
     const legacy = parseDraftState(JSON.stringify({ v: 1, key: 'k', draftId: 'd', state: 'draft', at: '', to: [], cc: [], subject: 's', body: 'b', version: 'v' }))!
     expect(legacy.state).toBe('draft')
@@ -641,6 +657,8 @@ describe('a saved record that cannot show what happened', () => {
     ['a not-sent record of a different attempt', { sendState: 'failed' as const, sendError: 'old', sendSettledAttemptId: 'older' }, { sendAttemptId: 'a1' }],
     ['a not-sent record naming no attempt', { sendState: 'failed' as const, sendError: 'old' }, { sendAttemptId: 'a1' }],
     ['an attempt with no identity', { sendAttempt: attempt('', 'held') }, { sendAttemptId: 'a1' }],
+    ['its own saved hold, whose window may only be suspended', { sendAttempt: attempt('a1', 'held') }, { sendAttemptId: 'a1' }],
+    ['its own saved preparation, whose window may only be suspended', { sendAttempt: attempt('a1', 'preparing') }, { sendAttemptId: 'a1' }],
   ])('%s stays unconfirmed in every view, and is not a resend', (_name, draftPatch, itemPatch) => {
     const r = saved(draftPatch, itemPatch)
     const opened = recoverInterruptedSends(r.read(), later)
@@ -653,8 +671,6 @@ describe('a saved record that cannot show what happened', () => {
   })
 
   it.each([
-    ['its own hold', { sendAttempt: attempt('a1', 'held') }],
-    ['its own preparation', { sendAttempt: attempt('a1', 'preparing') }],
     ['its own not-sent record', { sendState: 'failed' as const, sendError: 'Refused', sendSettledAttemptId: 'a1' }],
     ['its own Undo', { sendUndoneAt: '2026-11-02T09:59:00Z', sendSettledAttemptId: 'a1' }],
   ])('%s establishes that nothing left', (_name, draftPatch) => {
@@ -678,17 +694,25 @@ describe('a saved record that cannot show what happened', () => {
     r.unmount(); sent.unmount()
   })
 
-  it('an attempt young enough to be running in another Mail window is left alone until it cannot be', () => {
-    const r = saved({ sendAttempt: { ...attempt('a1', 'held'), at: '2026-11-02T10:00:00Z' } }, { sendAttemptId: 'a1' })
-    const soon = recoverInterruptedSends(r.read(), '2026-11-02T10:00:30Z')
-    expect(soon).toBe(r.read())
-    expect(draftDelivery(soon, r.draftId).state).toBe('held')
-    const past = new Date(Date.parse('2026-11-02T10:00:10Z') + SEND_ATTEMPT_LIVE_GRACE_MS + 1).toISOString()
-    expect(draftDelivery(recoverInterruptedSends(r.read(), past), r.draftId).state).toBe('not_submitted')
-    // This window's own send is never settled from under it, however long it takes.
-    expect(recoverInterruptedSends(r.read(), later, { scope: () => false })).toBe(r.read())
+  it.each([
+    ['moments old', '2026-11-02T11:59:59Z'],
+    ['ancient', '2020-01-01T00:00:00Z'],
+    ['from a clock ahead of this one', '2030-01-01T00:00:00Z'],
+    ['with an unreadable time', 'not a time'],
+  ])('no age settles an attempt nobody claims: %s reads the same', (_name, at) => {
+    const r = saved({ sendAttempt: { ...attempt('a1', 'held'), at } }, { sendAttemptId: 'a1' })
+    const opened = recoverInterruptedSends(r.read(), later)
+    expect(draftDelivery(opened, r.draftId)).toMatchObject({ state: 'unconfirmed', reason: LOST_HOLD_REASON })
+    expect(recoverInterruptedSends(opened, '2031-01-01T00:00:00Z')).toBe(opened)
     r.unmount()
   })
+
+  it('a send a window answers for is never settled from under it, however long it takes', () => {
+    const r = saved({ sendAttempt: attempt('a1', 'held') }, { sendAttemptId: 'a1' })
+    expect(recoverInterruptedSends(r.read(), '2031-01-01T00:00:00Z', { scope: () => false })).toBe(r.read())
+    r.unmount()
+  })
+
   it('has the reason a person can act on', () => {
     const r = saved({}, { sendAttemptId: 'a1' })
     expect(draftDelivery(recoverInterruptedSends(r.read(), later), r.draftId).reason).toBe(NO_EVIDENCE_REASON)

@@ -2,7 +2,8 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { demoMailStore } from '../test/mailFixtures'
-import type { MailStore, MailTask, ScheduledSend, QueuedMailAction } from '../types'
+import { draftDelivery } from './mailDeliveryStatus'
+import type { Draft, MailStore, MailTask, ScheduledSend, QueuedMailAction } from '../types'
 
 /**
  * Two running copies of Mail (a tab and a mini app) over the same files. Each copy is its own
@@ -311,5 +312,97 @@ describe('the other whole-file stores, across frames that may not share a lock',
     expect(await takeComposeIntents()).toEqual([])
     expect(await takeComposeIntents()).toEqual(['mira@example.com', 'sam@example.com'])
     expect(JSON.parse(files.get('compose-intents.json')!).entries).toEqual({})
+  })
+})
+
+describe('mail-drafts.json: a stale discard against a send', () => {
+  beforeEach(() => { files.clear(); writes = []; beforeWrite.run = null })
+  const draftsFile = () => JSON.parse(files.get('mail-drafts.json') ?? '{}') as { drafts: Draft[]; draftTombstones: Array<{ id: string }> }
+  const attempt = (phase: 'held' | 'preparing' | 'submitting') => ({ id: 'attempt-1', phase, approved: 'x', at: '2026-11-02T10:00:00.000Z' })
+  const threadId = () => demoMailStore().threads[0]!.id
+  const plain = (): Draft => ({ id: 'letter', threadId: threadId(), to: [{ name: 'Ana', email: 'ana@example.test' }], cc: [], bcc: [], subject: 'Letter', body: 'Approved', attachments: [], updatedAt: '2026-11-02T09:00:00.000Z', syncState: 'pending' } as unknown as Draft)
+  const onLetter = (copy: { edit: (update: (store: MailStore) => MailStore) => void }, patch: Partial<Draft>) => copy.edit(store => ({ ...store, drafts: store.drafts.map(item => (item.id === 'letter' ? { ...item, ...patch } : item)) }))
+  /** A copy throwing the draft away from its old view, as the shell does: record the discard, drop the record. */
+  const discard = async (persistence: Awaited<ReturnType<typeof openCopy>>) => {
+    recordDiscard('letter')
+    persistence.edit(store => ({ ...store, drafts: store.drafts.filter(item => item.id !== 'letter') }))
+    await persistence.save()
+  }
+  let recordDiscard: (id: string) => void = () => {}
+  const openOn = async () => {
+    const copy = await openCopy()
+    const { recordDraftDiscard } = await import('./mailPersistence')
+    return { copy, record: recordDraftDiscard }
+  }
+  const start = async () => {
+    await seeded()
+    const a = await openOn()
+    a.copy.edit(store => ({ ...store, drafts: [plain()] }))
+    await a.copy.save()
+    return a
+  }
+  const STATES: Array<[string, Partial<Draft>]> = [
+    ['held', { sendAttempt: attempt('held') }],
+    ['preparing', { sendAttempt: attempt('preparing') }],
+    ['submitting', { sendAttempt: attempt('submitting'), sendState: 'uncertain', sendError: 'pending' }],
+    ['unconfirmed', { sendState: 'uncertain', sendError: 'May have gone', sendSettledAttemptId: 'attempt-1' }],
+  ]
+
+  it.each(STATES)('%s, not yet saved when the other copy discarded: it stands in the file and in both copies', async (_name, patch) => {
+    const a = await start()
+    const b = await openOn()
+    onLetter(a.copy, patch)
+    recordDiscard = b.record
+    await discard(b.copy)
+    await a.copy.save()
+    expect(draftsFile().drafts.find(item => item.id === 'letter')).toMatchObject(patch)
+    expect(draftsFile().draftTombstones.map(item => item.id)).not.toContain('letter')
+    expect(a.copy.memory.drafts.find(item => item.id === 'letter')).toMatchObject(patch)
+    await b.copy.save()
+    expect(b.copy.memory.drafts.find(item => item.id === 'letter')).toMatchObject(patch)
+  })
+
+  it.each(STATES)('%s, already in both baselines when a copy removed it: the saving copy keeps it and the remover gets it back', async (_name, patch) => {
+    const a = await start()
+    onLetter(a.copy, patch)
+    await a.copy.save()
+    const b = await openOn()
+    expect(b.copy.memory.drafts.find(item => item.id === 'letter')).toMatchObject(patch)
+    // A removal from a path with no guard of its own, or a build older than this one.
+    b.copy.edit(store => ({ ...store, drafts: store.drafts.filter(item => item.id !== 'letter') }))
+    await b.copy.save()
+    await a.copy.save()
+    expect(draftsFile().drafts.find(item => item.id === 'letter')).toMatchObject(patch)
+    expect(draftsFile().draftTombstones.map(item => item.id)).not.toContain('letter')
+    expect(a.copy.memory.drafts.find(item => item.id === 'letter')).toMatchObject(patch)
+    await b.copy.save()
+    expect(b.copy.memory.drafts.find(item => item.id === 'letter')).toMatchObject(patch)
+    expect(draftDelivery(b.copy.memory, 'letter').state).not.toBe('none')
+  })
+
+  it('a confirmed send: the removal stands in every copy and the receipt is the answer', async () => {
+    const a = await start()
+    onLetter(a.copy, { sendAttempt: attempt('submitting'), sendState: 'uncertain', sendError: 'pending' })
+    await a.copy.save()
+    const b = await openOn()
+    const receipt = { id: 'accepted', threadId: threadId(), from: { name: 'Me', email: 'me@example.test' }, to: [], subject: 'Letter', body: 'Approved', attachments: [], receivedAt: '2026-11-02T10:00:01.000Z', read: true, deliveryAccepted: true, sentDraftId: 'letter' } as unknown as MailStore['messages'][number]
+    a.copy.edit(store => ({ ...store, drafts: store.drafts.filter(item => item.id !== 'letter'), messages: [...store.messages, receipt] }))
+    await a.copy.save()
+    await b.copy.save()
+    expect(b.copy.memory.drafts.some(item => item.id === 'letter')).toBe(false)
+    expect(draftDelivery(b.copy.memory, 'letter').state).toBe('submitted')
+    await a.copy.save()
+    expect(draftsFile().drafts.some(item => item.id === 'letter')).toBe(false)
+  })
+
+  it('a real discard of a free draft still removes it from the other copy, and says discarded', async () => {
+    const a = await start()
+    const b = await openOn()
+    recordDiscard = b.record
+    await discard(b.copy)
+    expect(draftsFile().draftTombstones).toMatchObject([{ id: 'letter', reason: 'discarded' }])
+    await a.copy.save()
+    expect(a.copy.memory.drafts.some(item => item.id === 'letter')).toBe(false)
+    expect(draftsFile().drafts.some(item => item.id === 'letter')).toBe(false)
   })
 })
