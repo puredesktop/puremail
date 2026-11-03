@@ -20,6 +20,7 @@ import {
   type ExecutiveDraftRequest,
   type ExecutiveShareFiles,
 } from '../lib/executiveShare'
+import { draftDiscardedAt, draftsStoreId } from '../lib/mailPersistence'
 import { mailShareRoots, readTeamMailReceipts, teamReadStatuses, type TeamMailReceipt, type TeamReadStatuses } from '../lib/teamMailReview'
 import type { MailAccount, MailStore } from '../types'
 
@@ -49,6 +50,8 @@ export function useExecutiveMailShare(input: {
   /** False for the demo mailbox: no connected account, nothing shared. */
   enabled: boolean
   readStore: () => MailStore
+  /** Take what other running copies of Mail saved, so a look never decides from an old view. */
+  syncDrafts: () => Promise<void>
   saveDraft: (account: MailAccount, request: ExecutiveDraftRequest) => { draftId: string }
   /** Throw away a draft the team made, here and at the provider (the person said No in the Executive app). */
   discardDraft: (draftId: string) => { ok: true } | { ok: false; reason: string }
@@ -74,6 +77,7 @@ export function useExecutiveMailShare(input: {
       const current = inputRef.current
       if (!current.enabled) return
       try {
+        await current.syncDrafts()
         const root = (await getPlatformPreferences()).workspaceRoot?.trim()
         const settings = await readPlatformStorageJson({ appSlug: 'executive', fileName: 'executive.json' }).catch(() => ({ value: null }))
         const allReceipts: TeamMailReceipt[] = []
@@ -90,11 +94,11 @@ export function useExecutiveMailShare(input: {
             // The person's No first, so a draft withdrawn before it was made is never made.
             const discards = await takeExecutiveDiscards({ files: shellFiles, root: folder, store: current.readStore(), instanceId: instanceId.current, discard: draftId => inputRef.current.discardDraft(draftId) })
             if (discards.discarded.length || discards.refused.length) inputRef.current.onDraftsDiscarded?.(discards)
-            const result = await takeExecutiveDrafts({ files: shellFiles, root: folder, share, instanceId: instanceId.current, save: request => inputRef.current.saveDraft(account, request) })
+            const result = await takeExecutiveDrafts({ files: shellFiles, root: folder, share, instanceId: instanceId.current, storeId: draftsStoreId(), save: request => inputRef.current.saveDraft(account, request) })
             if (result.taken.length || result.refused.length) inputRef.current.onDraftsTaken?.(result)
             const finals = finalKeys.current.get(folder) ?? new Set<string>()
             finalKeys.current.set(folder, finals)
-            await reportExecutiveDraftStates({ files: shellFiles, root: folder, store: current.readStore(), account, finalKeys: finals })
+            await reportExecutiveDraftStates({ files: shellFiles, root: folder, store: current.readStore(), account, finalKeys: finals, storeId: draftsStoreId(), discardedAt: draftDiscardedAt })
           } catch { console.warn('[puremail] An organisation mail share could not be refreshed; it will retry.') }
         }
         setReceipts(previous => JSON.stringify(previous) === JSON.stringify(allReceipts) ? previous : allReceipts)

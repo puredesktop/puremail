@@ -8,6 +8,15 @@ import {
   parsePersistedMailStoreValue,
   persistableMailStore,
 } from './mailStoreData'
+import {
+  baselineOf,
+  mergeReceipts,
+  mergeRecords,
+  mergeScheduledSends,
+  withoutTombstoned,
+  type DraftsFileChanges,
+  type Tombstone,
+} from './draftsFileMerge'
 import type { Draft, MailRun, MailStore, MailMessage, ScheduledSend } from '../types'
 
 export const MAIL_APP_SLUG = 'mail'
@@ -49,27 +58,51 @@ interface PersistedDraftsFile {
   /** Delivery confirmations survive a failed mailbox-cache write. */
   sentReceipts?: MailMessage[]
   recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'>
+  /** Real deletes (draftsFileMerge.ts). Absence alone never means a delete. */
+  draftTombstones?: Tombstone[]
+  runTombstones?: Tombstone[]
+  /** Names this store, so a shared folder can tell which desktop holds a draft. */
+  storeId?: string
 }
 
-function parseDraftsFile(
-  value: unknown,
-): { drafts: Draft[]; runs: MailRun[] | null; scheduledSends: ScheduledSend[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null {
+interface ParsedDraftsFile {
+  drafts: Draft[]
+  runs: MailRun[] | null
+  scheduledSends: ScheduledSend[] | null
+  sentReceipts: MailMessage[]
+  recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'>
+  draftTombstones: Tombstone[]
+  runTombstones: Tombstone[]
+  storeId?: string
+}
+
+const parseTombstones = (value: unknown): Tombstone[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is Tombstone => Boolean(item) && typeof item.id === 'string' && typeof item.deletedAt === 'string')
+    : []
+
+function parseDraftsFile(value: unknown): ParsedDraftsFile | null {
   if (!value || typeof value !== 'object') return null
   const file = value as PersistedDraftsFile
   const drafts = file.drafts
   if (!Array.isArray(drafts)) return null
   if (drafts.some(draft => !draft || typeof draft !== 'object' || typeof draft.id !== 'string')) return null
+  const draftTombstones = parseTombstones(file.draftTombstones)
+  const runTombstones = parseTombstones(file.runTombstones)
   return {
-    drafts: drafts.filter(
+    drafts: withoutTombstoned(drafts.filter(
       (draft): draft is Draft =>
         typeof draft === 'object' &&
         draft !== null &&
         typeof (draft as Draft).id === 'string',
     ).map(draft => draft.sendState === 'uncertain' && draft.sendError?.includes("shell:mailTransport:fetchAttachment")
       ? { ...draft, sendState: 'failed' as const, sendError: `Message not sent. An attachment could not be downloaded from its old Drafts copy. Open the draft and reattach the missing file. (${draft.sendError})` }
-      : draft),
-    runs: Array.isArray(file.runs) ? file.runs : null,
+      : draft), draftTombstones),
+    runs: Array.isArray(file.runs) ? withoutTombstoned(file.runs, runTombstones) : null,
     scheduledSends: Array.isArray(file.scheduledSends) ? file.scheduledSends : null,
+    draftTombstones,
+    runTombstones,
+    ...(typeof file.storeId === 'string' ? { storeId: file.storeId } : {}),
     recovery: file.recovery && Array.isArray(file.recovery.accounts) && Array.isArray(file.recovery.mailboxes) && Array.isArray(file.recovery.threads) ? file.recovery : undefined,
     sentReceipts: Array.isArray(file.sentReceipts) ? file.sentReceipts.filter(message => message && typeof message.id === 'string' && message.deliveryAccepted === true) : [],
   }
@@ -78,7 +111,7 @@ function parseDraftsFile(
 /** Drafts (and runs, when the drafts file carries them) over the cache. */
 function withDraftsFile(
   store: MailStore,
-  draftsFile: { drafts: Draft[]; runs: MailRun[] | null; scheduledSends: ScheduledSend[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null,
+  draftsFile: ParsedDraftsFile | null,
 ): MailStore {
   if (!draftsFile) return store
   const receipts = draftsFile.sentReceipts
@@ -146,7 +179,7 @@ export async function readPersistedMailStore(): Promise<{
   migratedFromLocalStorage: boolean
 }> {
   let cached: MailStore | null = null
-  let drafts: { drafts: Draft[]; runs: MailRun[] | null; scheduledSends: ScheduledSend[] | null; sentReceipts: MailMessage[]; recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'> } | null = null
+  let drafts: ParsedDraftsFile | null = null
 
   const [storeFile, draftsFile] = await Promise.allSettled([
     readPlatformStorageJson({
@@ -172,6 +205,7 @@ export async function readPersistedMailStore(): Promise<{
   if (draftsFile.value.value !== null && !drafts) {
     throw new Error('Your saved drafts file could not be understood. It has not been changed. Restore a readable copy, then try again.')
   }
+  agreeWithFile(drafts)
 
   if (cached) {
     return {
@@ -192,39 +226,237 @@ export async function readPersistedMailStore(): Promise<{
   }
 }
 
+// ---------------------------------------------------------------- this copy
+
+/**
+ * What this running copy last agreed with the file on. A module holds it
+ * because each running copy of Mail is its own JavaScript realm.
+ */
+const thisCopy = {
+  storeId: '',
+  file: null as ParsedDraftsFile | null,
+  draftBaseline: new Map<string, string>(),
+  runBaseline: new Map<string, string>(),
+  scheduleBaseline: new Set<string>(),
+  receiptBaseline: new Set<string>(),
+  /** Discards not yet in the file, with when. */
+  discards: new Map<string, string>(),
+  /** Drafts that arrived from another copy moments ago, which may be pushing them to the provider itself. */
+  arrivedUntil: new Map<string, number>(),
+}
+
+/** How long a draft from another copy is left for that copy to push to the provider. */
+const ARRIVED_HOLD_MS = 60_000
+
+function agreeWithFile(file: ParsedDraftsFile | null): void {
+  thisCopy.file = file
+  thisCopy.storeId = file?.storeId || thisCopy.storeId
+  thisCopy.draftBaseline = baselineOf(file?.drafts ?? [])
+  thisCopy.runBaseline = baselineOf(file?.runs ?? [])
+  thisCopy.scheduleBaseline = new Set((file?.scheduledSends ?? []).map(entry => entry.id))
+  thisCopy.receiptBaseline = new Set((file?.sentReceipts ?? []).map(message => message.id))
+}
+
+/** Names this mail store (the file's, once written): which desktop holds a draft. */
+export function draftsStoreId(): string {
+  if (!thisCopy.storeId) thisCopy.storeId = crypto.randomUUID()
+  return thisCopy.storeId
+}
+
+/** The person (or a discard request through Mail) threw this draft away. */
+export function recordDraftDiscard(draftId: string, at: string = new Date().toISOString()): void {
+  thisCopy.discards.set(draftId, at)
+}
+
+/** When this draft was really discarded in this store, if it was. */
+export function draftDiscardedAt(draftId: string): string | undefined {
+  const pending = thisCopy.discards.get(draftId)
+  if (pending) return pending
+  const tombstone = thisCopy.file?.draftTombstones.find(item => item.id === draftId)
+  return tombstone?.reason === 'discarded' ? tombstone.deletedAt : undefined
+}
+
+/** Saved by another copy moments ago: that copy pushes it to the provider, or two account copies appear. */
+export function draftHeldByAnotherCopy(draftId: string, now: number = Date.now()): boolean {
+  const until = thisCopy.arrivedUntil.get(draftId)
+  if (until === undefined) return false
+  if (until > now) return true
+  thisCopy.arrivedUntil.delete(draftId)
+  return false
+}
+
+const NO_CHANGES: DraftsFileChanges = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], scheduledSends: [], sentReceipts: [] }
+
+/** The file's value for this store merged with what is on disk, and what arrived from other copies. */
+function mergedDraftsFile(
+  store: MailStore,
+  disk: ParsedDraftsFile | null,
+  now: string,
+): { value: PersistedDraftsFile; changes: DraftsFileChanges } {
+  const persistable = persistableMailStore(store)
+  // A provider listing started before another copy pushed a draft does not
+  // list it, and that drops the draft from this copy's memory moments after it
+  // arrived. That is not this copy deleting it.
+  const draftBaseline = new Map(thisCopy.draftBaseline)
+  const nowMs = Date.parse(now)
+  for (const id of draftBaseline.keys()) {
+    if (draftHeldByAnotherCopy(id, nowMs) && !thisCopy.discards.has(id)) draftBaseline.delete(id)
+  }
+  const drafts = mergeRecords<Draft>({
+    baseline: draftBaseline,
+    memory: persistable.drafts,
+    disk: disk?.drafts ?? [],
+    tombstones: disk?.draftTombstones ?? [],
+    discards: thisCopy.discards,
+    now,
+  })
+  const runs = mergeRecords<MailRun>({
+    baseline: thisCopy.runBaseline,
+    memory: persistable.runs ?? [],
+    disk: disk?.runs ?? [],
+    tombstones: disk?.runTombstones ?? [],
+    now,
+  })
+  const schedules = mergeScheduledSends({
+    baseline: thisCopy.scheduleBaseline,
+    memory: persistable.scheduledSends ?? [],
+    disk: disk?.scheduledSends ?? [],
+  })
+  const receipts = mergeReceipts({
+    baseline: thisCopy.receiptBaseline,
+    memory: persistable.messages.filter(message => message.deliveryAccepted),
+    disk: disk?.sentReceipts ?? [],
+  })
+  // A home for each kept draft and receipt: this copy's when it has one, else
+  // the one the saving copy recorded. Other accounts in the file are not
+  // carried forward, so a removed account does not come back through here.
+  const homeIds = new Set([...drafts.merged.map(draft => draft.threadId), ...receipts.merged.map(message => message.threadId)])
+  const heldThreadIds = new Set(persistable.threads.map(thread => thread.id))
+  const borrowed = (disk?.recovery?.threads ?? []).filter(thread => homeIds.has(thread.id) && !heldThreadIds.has(thread.id))
+  const borrowedAccountIds = new Set(borrowed.map(thread => thread.accountId))
+  const heldAccountIds = new Set(persistable.accounts.map(account => account.id))
+  const heldMailboxIds = new Set(persistable.mailboxes.map(mailbox => mailbox.id))
+  const borrowedAccounts = (disk?.recovery?.accounts ?? []).filter(account => borrowedAccountIds.has(account.id) && !heldAccountIds.has(account.id))
+  const borrowedMailboxes = (disk?.recovery?.mailboxes ?? []).filter(mailbox => borrowedAccountIds.has(mailbox.accountId) && !heldMailboxIds.has(mailbox.id))
+  return {
+    value: {
+      drafts: drafts.merged,
+      runs: runs.merged,
+      scheduledSends: schedules.merged,
+      recovery: {
+        accounts: [...persistable.accounts, ...borrowedAccounts],
+        mailboxes: [...persistable.mailboxes, ...borrowedMailboxes],
+        threads: [...persistable.threads.filter(thread => homeIds.has(thread.id)), ...borrowed],
+      },
+      sentReceipts: receipts.merged.map(message => ({ ...message, attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) })),
+      draftTombstones: drafts.tombstones,
+      runTombstones: runs.tombstones,
+      storeId: disk?.storeId || draftsStoreId(),
+    },
+    changes: {
+      drafts: drafts.arrived,
+      removedDrafts: drafts.removed,
+      runs: runs.arrived,
+      removedRuns: runs.removed,
+      scheduledSends: schedules.arrived,
+      sentReceipts: receipts.arrived,
+      ...(borrowed.length ? { recovery: { accounts: borrowedAccounts, mailboxes: borrowedMailboxes, threads: borrowed } } : {}),
+    },
+  }
+}
+
+/** Homes differ between copies with no draft changed, so a look alone does not rewrite the file for them. */
+const sameContent = (value: PersistedDraftsFile, raw: unknown, ignoreHomes: boolean): boolean => {
+  if (!raw || typeof raw !== 'object') return false
+  const { recovery: myHomes, ...mine } = value
+  const { recovery: theirHomes, ...theirs } = raw as PersistedDraftsFile
+  return JSON.stringify(mine) === JSON.stringify(theirs) && (ignoreHomes || JSON.stringify(myHomes) === JSON.stringify(theirHomes))
+}
+
+async function readDraftsFile(): Promise<{ raw: unknown; file: ParsedDraftsFile | null; version?: string | null }> {
+  const { value, version } = await readPlatformStorageJson({ appSlug: MAIL_APP_SLUG, fileName: MAIL_DRAFTS_FILE })
+  const file = parseDraftsFile(value)
+  if (value !== null && !file) throw new Error('Your saved drafts file could not be understood. It has not been changed.')
+  return { raw: value, file, ...(version !== undefined ? { version } : {}) }
+}
+
+const MAX_MERGE_TRIES = 5
+
+/**
+ * Read the file, merge this store into it record by record, and write only if
+ * that changes it. The write applies only if the file is still as read: when
+ * another copy saved in between, nothing is written and the merge runs again.
+ */
+async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<DraftsFileChanges> {
+  const now = new Date().toISOString()
+  for (let attempt = 0; attempt < MAX_MERGE_TRIES; attempt++) {
+    const { raw, file, version } = await readDraftsFile()
+    const { value, changes } = mergedDraftsFile(store, file, now)
+    if (sameContent(value, raw, ignoreHomes)) {
+      agreeWithFile(file)
+      thisCopy.discards.clear()
+      return holdArrivals(changes)
+    }
+    const written = await writePlatformStorageJson({
+      appSlug: MAIL_APP_SLUG,
+      fileName: MAIL_DRAFTS_FILE,
+      value,
+      ...(version !== undefined ? { ifMatch: version } : {}),
+    })
+    if (written.conflict) continue
+    agreeWithFile(parseDraftsFile(JSON.parse(JSON.stringify(value))))
+    thisCopy.discards.clear()
+    return holdArrivals(changes)
+  }
+  throw new Error('Other copies of Mail kept saving at the same moment. Your drafts are safe here and will be saved on the next try.')
+}
+
+function holdArrivals(changes: DraftsFileChanges): DraftsFileChanges {
+  const until = Date.now() + ARRIVED_HOLD_MS
+  for (const draft of changes.drafts) thisCopy.arrivedUntil.set(draft.id, until)
+  return changes
+}
+
+/**
+ * Take what other copies saved and write back anything the file lost. Runs on a
+ * timer and before the executive share looks, so a copy left open never decides
+ * anything from an old view. The mailbox cache is not touched.
+ */
+export async function syncDraftsFile(store: MailStore): Promise<DraftsFileChanges> {
+  return saveDraftsFile(store, true)
+}
+
+/**
+ * The page is going away: an awaited read may never come back, so merge with
+ * the file as last read and write at once.
+ */
+export function writeDraftsFileBeforeUnload(store: MailStore): void {
+  const { value } = mergedDraftsFile(store, thisCopy.file, new Date().toISOString())
+  void writePlatformStorageJson({ appSlug: MAIL_APP_SLUG, fileName: MAIL_DRAFTS_FILE, value }).catch(() => {})
+}
+
 /**
  * Persist the store. Drafts are written first and separately so a failure
  * writing the (much larger) mailbox cache cannot take the user's unsent mail
  * with it. Returns which halves failed rather than throwing, so the caller can
- * tell the user precisely what is at risk.
+ * tell the user precisely what is at risk. The drafts file is merged, never
+ * rewritten from this copy's memory: `draftChanges` is what other copies saved,
+ * for the caller to take into memory.
  */
 export async function writePersistedMailStore(store: MailStore): Promise<{
   draftsWritten: boolean
   cacheWritten: boolean
   error?: string
+  draftChanges: DraftsFileChanges
 }> {
   const persistable = persistableMailStore(store)
-  const sentReceipts = persistable.messages.filter(message => message.deliveryAccepted)
-  const recoveryThreadIds = new Set([
-    ...persistable.drafts.map(draft => draft.threadId),
-    ...sentReceipts.map(message => message.threadId),
-  ])
+  let draftChanges = NO_CHANGES
   let draftsWritten = false
   let cacheWritten = false
   let error: string | undefined
 
   try {
-    await writePlatformStorageJson({
-      appSlug: MAIL_APP_SLUG,
-      fileName: MAIL_DRAFTS_FILE,
-      value: {
-        drafts: persistable.drafts,
-        runs: persistable.runs ?? [],
-        scheduledSends: persistable.scheduledSends ?? [],
-        recovery: { accounts: persistable.accounts, mailboxes: persistable.mailboxes, threads: persistable.threads.filter(thread => recoveryThreadIds.has(thread.id)) },
-        sentReceipts: sentReceipts.map(message => ({ ...message, attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) })),
-      },
-    })
+    draftChanges = await saveDraftsFile(store)
     draftsWritten = true
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause)
@@ -244,5 +476,5 @@ export async function writePersistedMailStore(store: MailStore): Promise<{
   }
 
   if (draftsWritten && cacheWritten) clearLegacyLocalStore()
-  return { draftsWritten, cacheWritten, ...(error ? { error } : {}) }
+  return { draftsWritten, cacheWritten, draftChanges, ...(error ? { error } : {}) }
 }

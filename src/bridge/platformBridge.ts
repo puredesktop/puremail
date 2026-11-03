@@ -268,6 +268,8 @@ export async function fetchGoogleAccessToken(rejectedAccessToken?: string): Prom
 export interface PlatformStorageReadResult {
   path?: string
   value: unknown
+  /** The file's version token, for `ifMatch` on write. Null when the file does not exist. */
+  version?: string | null
 }
 
 /**
@@ -293,7 +295,11 @@ export async function readPlatformStorageJson(input: {
   const result = (await bridge.call(PLATFORM_BRIDGE_METHODS.STORAGE_READ_JSON, [
     input,
   ])) as PlatformStorageReadResult | null
-  return { value: result?.value ?? null, ...(result?.path ? { path: result.path } : {}) }
+  return {
+    value: result?.value ?? null,
+    ...(result?.path ? { path: result.path } : {}),
+    ...(result?.version !== undefined ? { version: result.version } : {}),
+  }
 }
 
 /** Write one of this app's JSON store files. See readPlatformStorageJson. */
@@ -301,15 +307,18 @@ export async function writePlatformStorageJson(input: {
   appSlug: string
   fileName: string
   value: unknown
-}): Promise<void> {
+  /** Apply only if the file is still at this version (the read's); null: only if it does not exist. */
+  ifMatch?: string | null
+}): Promise<{ conflict: boolean; version?: string | null }> {
   if (isStandaloneDevMode()) {
     window.localStorage.setItem(
       `purescience:${input.appSlug}:${input.fileName}`,
       JSON.stringify(input.value),
     )
-    return
+    return { conflict: false }
   }
-  await bridge.call(PLATFORM_BRIDGE_METHODS.STORAGE_WRITE_JSON, [input])
+  const result = (await bridge.call(PLATFORM_BRIDGE_METHODS.STORAGE_WRITE_JSON, [input])) as { conflict?: boolean; version?: string | null } | null
+  return { conflict: result?.conflict === true, ...(result?.version !== undefined ? { version: result.version } : {}) }
 }
 
 export async function networkFetch(

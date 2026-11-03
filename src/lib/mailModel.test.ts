@@ -3442,7 +3442,8 @@ describe('merging provider drafts', () => {
   it('never correlates ambiguous or cross-account IMAP Message-IDs', () => {
     const original = local({ providerDraftId: 'imap_draft_1', providerDraftMessageIdHeader: '<draft@example.test>', syncState: 'pending' })
     const other = remote({ providerDraftId: 'imap_draft_2', providerDraftMessageIdHeader: '<draft@example.test>' })
-    const ambiguous = mergeMailDrafts([original], [other, { ...other, id: 'duplicate', providerDraftId: 'imap_draft_3' }], true, () => 'account-a')
+    const listed = [other, { ...other, id: 'duplicate', providerDraftId: 'imap_draft_3' }]
+    const ambiguous = mergeMailDrafts(mergeMailDrafts([original], listed, true, () => 'account-a').filter(item => item.id === original.id), listed, true, () => 'account-a')
     expect(ambiguous).toHaveLength(3)
     expect(ambiguous[0]).toMatchObject({ providerDraftId: 'imap_draft_1', body: 'Local text.', providerSaveUncertain: true })
     const separate = mergeMailDrafts([original], [other], true, item => item.id === original.id ? 'account-a' : 'account-b')
@@ -3547,8 +3548,10 @@ describe('merging provider drafts', () => {
   })
 
   it('drops a synced draft the provider no longer has', () => {
-    const merged = mergeMailDrafts([local({ providerDraftId: 'r1' })], [], true)
-    expect(merged).toEqual([])
+    // One listing proves nothing: it may have begun before the save.
+    const once = mergeMailDrafts([local({ providerDraftId: 'r1' })], [], true)
+    expect(once).toEqual([local({ providerDraftId: 'r1', providerAbsentOnce: true })])
+    expect(mergeMailDrafts(once, [], true)).toEqual([])
   })
 
   it('keeps everything when the fetch did not list drafts', () => {

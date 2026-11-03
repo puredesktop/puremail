@@ -156,13 +156,15 @@ it('removes a synced draft sent or discarded in another client after full draft 
   const f = fixture()
   const synced = { ...f.draft, providerDraftId: 'stored-draft', syncState: 'synced' as const }
   expect(mergeMailDrafts([synced], [], false)).toHaveLength(1)
-  expect(mergeMailDrafts([synced], [], true)).toHaveLength(0)
+  // Gone means two complete listings in a row: one may have begun before the save.
+  expect(mergeMailDrafts([synced], [], true)).toHaveLength(1)
+  expect(mergeMailDrafts(mergeMailDrafts([synced], [], true), [], true)).toHaveLength(0)
 })
 
 it.each(['pending', 'failed', 'conflict'] as const)('keeps %s local draft edits when the provider copy disappears', syncState => {
   const f = fixture()
   const local = { ...f.draft, providerDraftId: 'account-draft', body: 'Unpushed edits', syncState }
-  const merged = mergeMailDrafts([local], [], true)
+  const merged = mergeMailDrafts(mergeMailDrafts([local], [], true), [], true)
   expect(merged).toHaveLength(1)
   expect(merged[0]).toMatchObject({ id: local.id, body: 'Unpushed edits', providerSaveUncertain: true })
 })

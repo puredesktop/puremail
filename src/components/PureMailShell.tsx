@@ -69,6 +69,8 @@ import {
   existingExecutiveDraft,
 } from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
+import { applyDraftsFileChanges } from '../lib/draftsFileMerge'
+import { draftHeldByAnotherCopy, recordDraftDiscard } from '../lib/mailPersistence'
 import { composeSaveTarget, useComposeDraftAutosave } from '../hooks/useComposeDraftAutosave'
 import { replacementMailThread } from '../lib/mailReaderSelection'
 import { usePendingSend } from '../hooks/usePendingSend'
@@ -584,6 +586,8 @@ export function PureMailShell({
   const [activeReplyDraftId, setActiveReplyDraftId] = useState<string | null>(
     null,
   )
+  const activeReplyDraftIdRef = useRef(activeReplyDraftId)
+  activeReplyDraftIdRef.current = activeReplyDraftId
   const [expandedQuotedMessageIds, setExpandedQuotedMessageIds] = useState<
     string[]
   >([])
@@ -1177,8 +1181,20 @@ export function PureMailShell({
   // The store is written to the shell's filesystem JSON store, debounced and
   // off the render path, with drafts in their own file. See
   // useMailStorePersistence for why localStorage could not do this job.
-  const { persistFailure, flush: flushStorePersistence, flushForSend } =
-    useMailStorePersistence(store)
+  const { persistFailure, flush: flushStorePersistence, flushForSend, syncDrafts } =
+    useMailStorePersistence(store, {
+      readStore: () => storeRef.current,
+      onDraftChanges: changes => {
+        const next = applyDraftsFileChanges(storeRef.current, changes)
+        if (next === storeRef.current) return
+        setStore(changes.removedDrafts.length ? pruneOrphanedDraftThreads(next) : next)
+        // Another copy threw away the draft open here; its screen follows.
+        if (changes.removedDrafts.some(item => item.id === activeReplyDraftIdRef.current)) {
+          setActiveReplyDraftId(null)
+          setReaderMode('email')
+        }
+      },
+    })
 
   const composeLastDraft = useComposeDraftAutosave({
     active: composeHoldsDraft(composeMode), pending: pendingSend?.target === 'compose',
@@ -1390,6 +1406,7 @@ export function PureMailShell({
     provider: providerBacked,
     onError: setCommandNotice,
     onNotice: setCommandNotice,
+    heldElsewhere: draftHeldByAnotherCopy,
   })
   // The executive team's mail share (ps-suite #1013): when the Executive
   // app has shared this account, new mail goes to its digest after each
@@ -1398,6 +1415,7 @@ export function PureMailShell({
   const executiveShare = useExecutiveMailShare({
     enabled: activeProvider !== 'demo',
     readStore: () => storeRef.current,
+    syncDrafts,
     saveDraft: (account, request) => {
       const existing = existingExecutiveDraft(storeRef.current, request.key)
       if (existing) return { draftId: existing.id }
@@ -2278,6 +2296,7 @@ export function PureMailShell({
       showToast(discardBlock)
       return
     }
+    recordDraftDiscard(draftId)
     // Prune by what the remaining drafts reference rather than rebuilding
     // the thread id from this draft's id: a regenerated draft carries a new
     // id while its filed thread keeps the old one, and that mismatch left

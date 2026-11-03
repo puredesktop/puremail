@@ -301,6 +301,13 @@ export interface Draft {
   /** Definite account-save failure, retained until a save succeeds. */
   providerSaveError?: string
   providerRevision?: string
+  /**
+   * One complete listing did not show this draft. A listing begun before the
+   * save cannot show it, so only a second one in a row means it is gone there.
+   */
+  providerAbsentOnce?: boolean
+  /** Known here only from the account's listing: the store that made the draft speaks for it. */
+  importedFromProvider?: boolean
   /** Stable IMAP draft Message-ID across APPEND/delete replacements. */
   providerDraftMessageIdHeader?: string
   sendMessageId?: string

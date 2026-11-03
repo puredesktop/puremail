@@ -82,6 +82,45 @@ from the mailbox cache. They are the only mail state a user cannot get back: a
 message can be re-fetched, an unsent reply cannot. A cache write that fails must
 never take unsent mail with it.
 
+Several copies of Mail can run over one file (a window and a split), each with
+its own memory, so saving merges record by record (`lib/draftsFileMerge.ts`) and
+never rewrites the list from what one copy holds:
+
+- Absence never means deleted. A draft on disk and not in memory arrived from
+  another copy; a draft in memory and not on disk is written back.
+- A delete is a tombstone in the file, written by the copy that deleted it: it
+  held the draft when it last agreed with the file and now does not. A
+  tombstone yields to a real edit made after it, to a send this copy has begun
+  or left uncertain since, and to a draft new to the copy holding it (a provider
+  listing it again). Tombstones expire after 90 days.
+- A draft only one side changed takes that side. Both changed: sent beats unsent,
+  an uncertain send beats an edit, the record settling an attempt beats that
+  attempt, an attempt under way beats an edit, a draft's maker beats a copy
+  imported from the account, then the later `updatedAt`. Provider bookkeeping and
+  send attempts do not move `updatedAt`, so edit time alone cannot decide.
+- A schedule only moves forward, so each keeps its furthest status: a copy with
+  an older view cannot restart one another copy stopped.
+
+Send runs merge the same way; delivery receipts only accumulate. A save re-reads
+the file, writes only if the merge changes it, and writes conditionally (the
+shell's `ifMatch`), so a copy saving in between makes it merge again. What arrives goes into this copy's store. A copy also syncs
+every 15 seconds, on focus, and before the executive share looks, so it never
+decides from an old view. A draft that just arrived is left to the copy that
+saved it to push to the provider, or two account copies would appear.
+
+A draft keeps its identity across provider sync. A listing begun before a save
+cannot show that draft, so it is treated as gone at the account only after two
+complete listings in a row without it (`providerAbsentOnce`); dropping it on the
+first made the next listing bring the same message back as a new record, under
+`imap_draft_<uid>` and on a made-up thread. A listing that lands before the save
+is acknowledged links to the draft by the Message-ID PureMail gave it. A store
+that never held the draft imports it under the id that Message-ID names and marks
+it `importedFromProvider`; the store that made it speaks for it.
+
+The mailbox cache (`mail-store.json`) is still written whole from memory. Its
+messages can be re-fetched; its settings and local workflow state follow the
+last copy to save.
+
 Nothing goes in `localStorage`. A normal Gmail window serialises to about 6.4MB
 against a ~5MB origin quota, and past it every write throws silently — which is
 what made drafts an agent really did create come back "never written".

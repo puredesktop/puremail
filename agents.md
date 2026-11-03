@@ -396,7 +396,7 @@ Every view (run progress, `getDraft`, `listDrafts`, `getRun`, the team's status 
 
 A held or unconfirmed draft or run item is not sent, and its content cannot be changed: Undo stops a hold, and the changed draft then needs a fresh approval. A second approval of the same draft reports the attempt under way. Words typed in a window open on such a draft stay in that window and are not saved over it. They reach the draft if Undo or a known failure frees it, and become a new unsent draft if it went or if the window closes first.
 
-Reopening Mail settles interrupted sends from the record and never starts or retries one. Only a hold or preparation recorded under the run item's own attempt, or a not-sent record of that attempt, counts as known not sent; a record that cannot show that reads `unconfirmed` everywhere. An old schedule on an interrupted draft does not fire. Undo cancels the draft's schedule too, and an approved attempt known not to have left marks it failed: another attempt is the person's new decision. A schedule on a draft with no interrupted send still goes at its time. Another open Mail window may be carrying out the send (two conversations can each have a Mail tab, and PureCloud tabs share one store), so before settling anything Mail asks the open windows over a same-origin channel and leaves alone what one claims, reading the saved record afresh when it ends. A frozen window cannot answer, so an attempt saved within the undo delay plus a minute also keeps its state, with no Undo offered in this window. This does not reach another device, and two windows keep separate copies of the store: a send one starts after the other opened is not visible to the other.
+Reopening Mail settles interrupted sends from the record and never starts or retries one. Only a hold or preparation recorded under the run item's own attempt, or a not-sent record of that attempt, counts as known not sent; a record that cannot show that reads `unconfirmed` everywhere. An old schedule on an interrupted draft does not fire. Undo cancels the draft's schedule too, and an approved attempt known not to have left marks it failed: another attempt is the person's new decision. A schedule on a draft with no interrupted send still goes at its time. Another open Mail window may be carrying out the send (two conversations can each have a Mail tab, and PureCloud tabs share one store), so before settling anything Mail asks the open windows over a same-origin channel and leaves alone what one claims, reading the saved record afresh when it ends. A frozen window cannot answer, so an attempt saved within the undo delay plus a minute also keeps its state, with no Undo offered in this window. This does not reach another device, and two windows keep separate copies of the store: a send one starts after the other opened reaches the other only when it next reads the drafts file, on focus or within 15 seconds.
 
 ## The reading room
 
@@ -456,9 +456,17 @@ model and no network call of its own:
   edited it, `version`, getDraft's token, and additive `delivery`: `state`,
   `reason`, `at`, as under Sent and not sent), `sent` (`sentAt`,
   `sentMessageId`; found by the kept draft's `sentAt`, the receipt's
-  `sentDraftId` or the local `msg_sent_<draftId>_` copy) or `discarded` (the
-  draft is gone and the account is loaded). Sent and discarded are final;
-  drafts taken more than 30 days ago are not reported.
+  `sentDraftId` or the local `msg_sent_<draftId>_` copy), `discarded` (only
+  after a real discard, a request or the person's action in Mail, named in
+  `discardedBy`) or `missing` (not in this store and nobody is known to have
+  discarded it; the account must be loaded). Absence alone is never discarded,
+  and a draft is found whatever its id: by key, by the Message-ID PureMail gave
+  it, or by `providerDraftId`, so `draftId` can change and the latest one reported is the one to use.
+  `heldBy` / `takenBy` name the mail store holding it (`draftsStoreId`): a
+  store without that draft leaves it to the store that has it, since one shared
+  folder is read by every desktop of the organisation. Sent and discarded are
+  final (a `discarded` with no `discardedBy` was inferred by an older build and
+  is looked at again); drafts taken more than 30 days ago are not reported.
 - takes each `drafts/discard/<key>.json` (`{ v: 1, key, draftId }`, the
   person's No in the Executive app) first: the draft made for that key is
   discarded here and at the provider when still unsent (a request not made
