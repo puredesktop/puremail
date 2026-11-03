@@ -314,6 +314,9 @@ import {
   type SendStoreDraftResult,
 } from './RunScreen'
 import { RunsIndex } from './RunsIndex'
+import { ArchiveSweepsScreen } from './ArchiveSweepsScreen'
+import { sweepProviderOf } from '../lib/archiveSweepRun'
+import { saveSweepItem } from '../agents/archiveSweepHandlers'
 import { ReadingRoom } from './ReadingRoom'
 import { identityOf } from '../lib/readingRoomIdentity'
 import { ContextIndex, NotesIndex } from './ReadingLibrary'
@@ -343,6 +346,7 @@ type RoomScreenState =
   | { kind: 'reading'; messageId: string; threadId?: string; back: 'thread' | 'notes' | 'context' }
   | { kind: 'notes' }
   | { kind: 'context' }
+  | { kind: 'sweeps' }
 
 /** Which send-run surface holds the content column, if any. */
 type RunScreenState =
@@ -388,6 +392,7 @@ export function PureMailShell({
   // Gmail?" when the question is "is there a remote provider, and does it
   // support this?" — the question mailProviderSupports exists to answer.
   const providerBacked = activeProvider !== 'demo' ? mailProvider : undefined
+  const sweepProvider = sweepProviderOf(providerBacked)
   const mailProviderRef = useRef<MailProvider | undefined>(mailProvider)
   const storeRef = useRef(store)
   // Publish the same current snapshot to tools before returning a mutation receipt.
@@ -3834,7 +3839,7 @@ export function PureMailShell({
     Array<{ id: string; query: string; total: number }>
   >([])
 
-  usePureMailAgentTools(Boolean(selectedAccount), {
+  const agentContextRef = usePureMailAgentTools(Boolean(selectedAccount), {
     store,
     readingRoom,
     getStore: () => storeRef.current,
@@ -3894,6 +3899,9 @@ export function PureMailShell({
     },
     ...(searchAllMail ? { searchAllMail } : {}),
     ...(importRemoteThread ? { importRemoteThread } : {}),
+    ...(sweepProvider
+      ? { sweepProvider, readWalkedMessage: (id: string) => sweepProvider.readWalkedMessage(id) }
+      : {}),
     noteAgentSearch: search => {
       setAgentSearches(current => {
         // Newest first, deduped by query, capped: a probing agent runs
@@ -4445,6 +4453,12 @@ export function PureMailShell({
           openRun={openRun}
           notesCount={Object.values(readingRoom.file.byMessageId).filter(record => record.notes.length).length}
           contextCount={Object.values(readingRoom.file.byMessageId).filter(record => record.context).length}
+          sweepsActive={roomScreen?.kind === 'sweeps'}
+          openSweeps={sweepProvider && !compactInRoom ? () => {
+            setReading(false)
+            setRunScreen(null)
+            setRoomScreen({ kind: 'sweeps' })
+          } : undefined}
           notesActive={roomScreen?.kind === 'notes' || (roomScreen?.kind === 'reading' && roomScreen.back === 'notes')}
           contextActive={roomScreen?.kind === 'context' || (roomScreen?.kind === 'reading' && roomScreen.back === 'context')}
           openNotes={() => openRoomBox('notes')}
@@ -4952,6 +4966,13 @@ export function PureMailShell({
               />
             )
           })()
+        ) : roomScreen?.kind === 'sweeps' ? (
+          <ArchiveSweepsScreen
+            provider={sweepProvider}
+            onBack={() => setRoomScreen(null)}
+            save={decision => saveSweepItem(agentContextRef.current, decision)}
+            onReveal={path => void osReveal(path)}
+          />
         ) : roomScreen?.kind === 'notes' ? (
           <NotesIndex
             file={readingRoom.file}

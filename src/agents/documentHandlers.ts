@@ -38,6 +38,28 @@ async function requireSaveFolder(context: MailAgentToolContext): Promise<string>
   }
 }
 
+/** A thread, or with `archiveItem` one message an archive sweep read, which no local thread holds. */
+async function requireSource(
+  context: MailAgentToolContext,
+  args: Record<string, unknown>,
+): Promise<{ threadId: string; thread: Pick<MailThread, 'subject'>; messages: MailMessage[] }> {
+  const archiveItem = optionalString(args, 'archiveItem')
+  if (!archiveItem) {
+    const threadId = requireString(args, 'threadId')
+    return { threadId, ...(await requireThread(context, threadId)) }
+  }
+  if (!context.readWalkedMessage) {
+    throw new AgentMailToolError('This account cannot read mail outside the synced window.')
+  }
+  const found = await context.readWalkedMessage(archiveItem)
+  if (!found) throw new AgentMailToolError(`"${archiveItem}" is no longer on the mail server.`)
+  return {
+    threadId: found.message.threadId,
+    thread: { subject: found.message.subject ?? '(no subject)' },
+    messages: [found.message],
+  }
+}
+
 async function requireThread(
   context: MailAgentToolContext,
   threadId: string,
@@ -116,7 +138,6 @@ export async function saveAttachmentsHandler(
   if (!context.writeBinaryFile) {
     throw new AgentMailToolError('Saving files is unavailable in this session.')
   }
-  const threadId = requireString(args, 'threadId')
   const messageId = optionalString(args, 'messageId')
   const wanted = stringList(args, 'names')
   const only = optionalString(args, 'only') ?? (wanted.length ? 'all' : 'documents')
@@ -124,7 +145,7 @@ export async function saveAttachmentsHandler(
     throw new AgentMailToolError('"only" is "documents" (PDF, Word, Excel, PowerPoint, CSV, XML and the like) or "all".')
   }
 
-  const { thread, messages } = await requireThread(context, threadId)
+  const { threadId, thread, messages } = await requireSource(context, args)
   const folder = await requireSaveFolder(context)
   const candidates = attachmentCandidates(pickMessages(messages, messageId))
   if (candidates.length === 0) {
@@ -219,9 +240,8 @@ export async function saveMessageAsPdfHandler(
   if (!context.saveMailPdf) {
     throw new AgentMailToolError('Saving PDFs is unavailable in this session.')
   }
-  const threadId = requireString(args, 'threadId')
   const messageId = optionalString(args, 'messageId')
-  const { thread, messages } = await requireThread(context, threadId)
+  const { threadId, thread, messages } = await requireSource(context, args)
   const folder = await requireSaveFolder(context)
   const chosen = pickMessages(messages, messageId)
   if (chosen.length === 0) throw new AgentMailToolError('This thread has no messages to save.')

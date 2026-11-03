@@ -852,6 +852,16 @@ export interface MailProviderCapabilities {
   bulkActions?: boolean
 }
 
+/** Where a walk of the whole mailbox stands; the provider's own shape, kept as plain JSON. */
+export type MailWalkCursor = Record<string, string | number>
+
+export interface MailWalkPage {
+  items: Array<{ id: string; message: MailMessage }>
+  cursor: MailWalkCursor | null
+  /** A rough count of what the walk will see, when the server can say. */
+  approxTotal?: number
+}
+
 export interface MailProvider {
   /**
    * Declares what this provider supports. Optional so existing/third-party
@@ -874,6 +884,16 @@ export interface MailProvider {
     cachedMessages?: MailMessage[],
     signal?: AbortSignal,
   ): Promise<{ threads: MailThread[]; messages: MailMessage[] } | null>
+  /**
+   * One page of every message on the server, past the sync window, without
+   * touching the local store. Pass back the cursor it returns; null means the
+   * walk has ended. An item's id is what readWalkedMessage takes.
+   */
+  walkMailbox?(
+    cursor: MailWalkCursor | null,
+    options: { pageSize: number; since?: string; before?: string },
+  ): Promise<MailWalkPage>
+  readWalkedMessage?(id: string): Promise<{ message: MailMessage } | null>
   searchThreadSummaries?(
     query: string,
     limit?: number,
