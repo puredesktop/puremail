@@ -516,6 +516,8 @@ export interface ThreadRailProps {
   canSnoozeThreads: boolean
   toggleThreadStarred: (threadId: string) => void
   density: MailDensity
+  /** The box in the Executive room lists the Inbox itself; this stays mounted, out of sight. */
+  hiddenInRoom?: boolean
 }
 
 /**
@@ -538,6 +540,7 @@ export function ThreadRail({
   canSnoozeThreads,
   toggleThreadStarred,
   density,
+  hiddenInRoom,
 }: ThreadRailProps): React.ReactElement {
   const rowHeight = THREAD_ROW_HEIGHTS[density]
   const filteredThreadSortTimes = useMemo(
@@ -748,7 +751,7 @@ export function ThreadRail({
 
   return (
     <>
-    <div ref={railRef} style={{ paddingTop: padTop, paddingBottom: padBottom }}>
+    <div ref={railRef} style={{ paddingTop: padTop, paddingBottom: padBottom, display: hiddenInRoom ? 'none' : undefined }}>
       {windowed.map(thread => {
         const unread = unreadThreadIds.has(thread.id)
         const checked = checkedSet.has(thread.id)

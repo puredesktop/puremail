@@ -57,7 +57,9 @@ import {
 } from '../lib/contactFeed'
 import { PUREMAIL_LOCAL_SETTINGS_KEY } from '../hooks/usePureMailBoot'
 import { useDraftProviderSync } from '../hooks/useDraftProviderSync'
+import { useCompactInRoom, useRestoreWholeScroll, useRoomSlot } from '../hooks/useCompactInRoom'
 import { useExecutiveMailShare } from '../hooks/useExecutiveMailShare'
+import { CompactInbox, CompactInRoomStyle } from './CompactInRoom'
 import {
   addExecutiveDraft,
   buildExecutiveDraft,
@@ -372,6 +374,7 @@ export function PureMailShell({
   /** Called once the opened file has been taken, so it is not taken twice. */
   onOpenedFileHandled?: () => void
 }): React.ReactElement {
+  const compactInRoom = useCompactInRoom()
   const [store, setStoreState] = useState(initialStore)
   const [activeProvider] = useState(initialProvider ?? 'demo')
   // Provider-backed means "there is a real server behind this account" — any
@@ -522,17 +525,24 @@ export function PureMailShell({
     () => readLayoutState(initialStore),
     [initialStore],
   )
-  const [selectedAccountId, setSelectedAccountId] = useState(
+  // The view the box works in is its own (useRoomSlot); the full app's stays as the person left it.
+  const [selectedAccountId, setSelectedAccountId] = useRoomSlot(
+    compactInRoom,
+    initialLayout.selectedAccountId,
     initialLayout.selectedAccountId,
   )
   // The query IS the view. Every thread list on screen is the result of
   // resolving this one string, so the sidebar, the search box, a saved view
   // and anything an agent asks for all address the same object.
-  const [currentQuery, setCurrentQuery] = useState(
+  const [currentQuery, setCurrentQuery] = useRoomSlot(
+    compactInRoom,
     initialLayout.query || 'in:inbox',
+    'in:inbox',
   )
-  const [selectedThreadId, setSelectedThreadId] = useState(
+  const [selectedThreadId, setSelectedThreadId] = useRoomSlot(
+    compactInRoom,
     initialLayout.selectedThreadId,
+    '',
   )
   /**
    * The index/reading split: false shows the full-width thread list, true
@@ -540,14 +550,14 @@ export function PureMailShell({
    * reading; Back and Escape return to the index. `selectedThreadId` is kept
    * either way — it is the reader's subject and the list's highlight.
    */
-  const [reading, setReading] = useState(initialLayout.reading)
-  const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null)
-  const [checkedThreadIds, setCheckedThreadIds] = useState<string[]>([])
+  const [reading, setReading] = useRoomSlot(compactInRoom, initialLayout.reading, false)
+  const [focusedMessageId, setFocusedMessageId] = useRoomSlot<string | null>(compactInRoom, null, null)
+  const [checkedThreadIds, setCheckedThreadIds] = useRoomSlot<string[]>(compactInRoom, [], [])
   const [mailSearchDrawerOpen, setMailSearchDrawerOpen] = useState(false)
   const [unsubscribeDrawerOpen, setUnsubscribeDrawerOpen] = useState(false)
   const [systemNoticeDismissed, setSystemNoticeDismissed] = useState(false)
   const [taskMode, setTaskMode] = useState<TaskMode>(initialLayout.taskMode)
-  const [listFilter, setListFilter] = useState<MailListFilterId>('all')
+  const [listFilter, setListFilter] = useRoomSlot<MailListFilterId>(compactInRoom, 'all', 'all')
   const [density, setDensity] = useState<MailDensity>(initialLayout.density)
   const taskDrawerBodyRef = useRef<HTMLDivElement | null>(null)
   /**
@@ -630,10 +640,10 @@ export function PureMailShell({
   }
   // Send runs: the index, a run's loop, or a run's setup — replacing the
   // list/reader in the content column while open.
-  const [runScreen, setRunScreen] = useState<RunScreenState | null>(null)
+  const [runScreen, setRunScreen] = useRoomSlot<RunScreenState | null>(compactInRoom, null, null)
   // The reading room and its Notes and Context boxes, which also replace
   // the list/reader while open.
-  const [roomScreen, setRoomScreen] = useState<RoomScreenState | null>(null)
+  const [roomScreen, setRoomScreen] = useRoomSlot<RoomScreenState | null>(compactInRoom, null, null)
   const readingRoom = useReadingRoom()
   const [attachmentPreview, setAttachmentPreview] =
     useState<AttachmentPreviewState | null>(null)
@@ -944,6 +954,17 @@ export function PureMailShell({
     selectedMessageTabs,
     focusedMessageId,
   )
+  // The new thread resets the message on show; coming back from the box puts the person's message back.
+  useRestoreWholeScroll(compactInRoom)
+  const wholeMessageTabId = useRef(activeMessageTabId)
+  useEffect(() => {
+    if (!compactInRoom) wholeMessageTabId.current = activeMessageTabId
+  }, [activeMessageTabId])
+  const wasCompactForTab = useRef(compactInRoom)
+  useEffect(() => {
+    if (wasCompactForTab.current && !compactInRoom) setActiveMessageTabId(wholeMessageTabId.current)
+    wasCompactForTab.current = compactInRoom
+  }, [compactInRoom])
   const activeMessageTab =
     selectedMessageTabs.find(message => message.id === activeMessageTabId) ??
     selectedMessageTabs[0] ??
@@ -1114,10 +1135,21 @@ export function PureMailShell({
 
   // Multi-select is scoped to one thread list: switching account, view, or
   // tab drops the checked set instead of carrying invisible selections.
+  const wasCompactForChecks = useRef(compactInRoom)
   useEffect(() => {
+    // Moving between the box and the full app is not switching list.
+    if (wasCompactForChecks.current !== compactInRoom) {
+      wasCompactForChecks.current = compactInRoom
+      return
+    }
     setCheckedThreadIds([])
     selectionAnchorRef.current = null
-  }, [selectedAccountId, currentQuery])
+  }, [selectedAccountId, currentQuery, compactInRoom])
+
+  // Whatever an open draft or thread pointed the box at, Back returns to the Inbox.
+  useEffect(() => {
+    if (compactInRoom && !reading && currentQuery !== 'in:inbox') setCurrentQuery('in:inbox')
+  }, [compactInRoom, reading, currentQuery])
 
   const signatureValue = (store.settings?.signature ?? '').replace(
     /\\n/g,
@@ -1126,6 +1158,7 @@ export function PureMailShell({
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (compactInRoom) return // the saved view is the full app's, never the box's
     window.localStorage.setItem(
       MAIL_LAYOUT_STORAGE_KEY,
       JSON.stringify({
@@ -1146,6 +1179,7 @@ export function PureMailShell({
     taskMode,
     taskDrawerOpenByAccount,
     density,
+    compactInRoom,
   ])
 
   const mirroredSettings = useRef(store.settings)
@@ -1400,7 +1434,8 @@ export function PureMailShell({
   // sync, and the drafts it leaves become ordinary DRAFTS here — saved by
   // the draft sync above like any other, and never sent.
   const executiveShare = useExecutiveMailShare({
-    enabled: activeProvider !== 'demo',
+    // a copy of Mail held inside another app's page never takes or reports the team's drafts: only the real one does
+    enabled: activeProvider !== 'demo' && window.parent === window.top,
     readStore: () => storeRef.current,
     syncDrafts,
     saveDraft: (account, request) => {
@@ -4361,7 +4396,8 @@ export function PureMailShell({
   }, [store.drafts, store.messages, store.threads, store.tasks, selectedAccountId, sendingDraftIds, connectionError, networkOnline, activeProvider, persistFailure])
 
   return (
-    <MailFrame data-app="mail">
+    <MailFrame data-app="mail" data-compact-in-room={compactInRoom ? '' : undefined}>
+      {compactInRoom && <CompactInRoomStyle />}
       {!readerHoldsTopBar && mailTopBar}
 
       <MailBodyRow>
@@ -4408,6 +4444,14 @@ export function PureMailShell({
         <ContentColumn>
           {composeMode === 'full' || runScreen || roomScreen ? null : readingActive && selectedThread ? null : (
             <>
+        {compactInRoom && (
+          <CompactInbox
+            store={store}
+            accountId={selectedAccount?.id}
+            onOpen={threadId => openThread(threadId)}
+            onNewMessage={openCompose}
+          />
+        )}
         <ThreadListToolbar
           store={store}
           filteredThreads={filteredThreads}
@@ -4469,7 +4513,7 @@ export function PureMailShell({
             </AgentSearchDismiss>
           </AgentSearchRow>
         )}
-        <PaneScroll data-mail-scroll>
+        <PaneScroll data-mail-scroll data-compact-keep={compactInRoom && syncReviewOpen ? '' : undefined}>
         {syncReviewOpen && (
           <Section aria-live="polite">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -4561,6 +4605,7 @@ export function PureMailShell({
               teamReads={executiveShare.teamReads}
             store={store}
             density={density}
+            hiddenInRoom={compactInRoom}
             filteredThreads={filteredThreads}
             filteredThreadEntries={filteredThreadEntries}
             selectedThreadId={selectedThreadId}
@@ -4874,7 +4919,7 @@ export function PureMailShell({
             key={`compose-${composeSession}`}
             {...composeEditorSharedProps}
             variant="full"
-            onDock={() => setComposeMode('docked')}
+            onDock={compactInRoom ? undefined : () => setComposeMode('docked')}
           />
         ) : roomScreen?.kind === 'reading' ? (
           (() => {
@@ -5076,7 +5121,7 @@ export function PureMailShell({
         )}
       </MailBodyRow>
 
-      <MailStatusBar>
+      <MailStatusBar data-compact-keep={compactInRoom && activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider) ? '' : undefined}>
         {activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider) ? 'Mail disconnected · showing saved mail' : syncStatusLine(lastMailFetchAt, store.accounts.length)}
       </MailStatusBar>
 
