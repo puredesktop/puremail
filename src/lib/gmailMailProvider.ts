@@ -33,6 +33,8 @@ import type {
   MailMessage,
   MailPriority,
   MailProvider,
+  MailWalkCursor,
+  MailWalkPage,
   MailProviderCapabilities,
   MailSettings,
   MailStore,
@@ -1164,6 +1166,45 @@ export class GmailMailProvider implements MailProvider {
       profile.emailAddress || this.options.email || 'gmail',
     )
     return { threads: fragment.threads, messages: fragment.messages }
+  }
+
+  /** Every thread in the account a page at a time, its messages unmerged with the local store. */
+  async walkMailbox(
+    cursor: MailWalkCursor | null,
+    options: { pageSize: number; since?: string; before?: string },
+  ): Promise<MailWalkPage> {
+    const params = new URLSearchParams({ maxResults: String(Math.min(options.pageSize, 100)) })
+    const day = (iso: string): string => iso.slice(0, 10).replace(/-/g, '/')
+    const query = [
+      options.since ? `after:${day(options.since)}` : '',
+      options.before ? `before:${day(options.before)}` : '',
+    ].filter(Boolean).join(' ')
+    if (query) params.set('q', query)
+    if (typeof cursor?.pageToken === 'string') params.set('pageToken', cursor.pageToken)
+    const list = await this.request<{
+      threads?: Array<{ id: string }>
+      nextPageToken?: string
+      resultSizeEstimate?: number
+    }>(`/threads?${params.toString()}`)
+    const items: MailWalkPage['items'] = []
+    for (const { id } of list.threads ?? []) {
+      const fragment = await this.fetchThreadById(id)
+      for (const message of fragment?.messages ?? []) {
+        items.push({ id: `${id}#${message.id}`, message })
+      }
+    }
+    return {
+      items,
+      cursor: list.nextPageToken ? { pageToken: list.nextPageToken } : null,
+      ...(!cursor && list.resultSizeEstimate ? { approxTotal: list.resultSizeEstimate } : {}),
+    }
+  }
+
+  async readWalkedMessage(id: string): Promise<{ message: MailMessage } | null> {
+    const [threadId, messageId] = id.split('#')
+    if (!threadId || !messageId) return null
+    const message = (await this.fetchThreadById(threadId))?.messages.find(item => item.id === messageId)
+    return message ? { message } : null
   }
 
   /**

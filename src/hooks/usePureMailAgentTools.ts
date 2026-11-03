@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, type RefObject } from 'react'
 import { isHeldCopy } from '../lib/heldCopy'
 import { usePlatformAgentTools } from '@purescience/platform-ui/bridge/react/usePlatformAgentTools'
 import {
@@ -44,6 +44,15 @@ import {
   saveAttachmentsHandler,
   saveMessageAsPdfHandler,
 } from '../agents/documentHandlers'
+import {
+  getArchiveSweepHandler,
+  listArchiveSweepsHandler,
+  nextArchiveBatchHandler,
+  readArchiveItemHandler,
+  recordArchiveBatchHandler,
+  startArchiveSweepHandler,
+  stopArchiveSweepHandler,
+} from '../agents/archiveSweepHandlers'
 import {
   getTriageReportHandler,
   nextTriageBatchHandler,
@@ -117,7 +126,7 @@ export function refusingSendsWhenHeld<T extends Record<string, (...args: never[]
 export function usePureMailAgentTools(
   hasAccount: boolean,
   context: MailAgentToolContext,
-): void {
+): RefObject<MailAgentToolContext> {
   // Handlers close over a ref so a tool invoked mid-render always sees the
   // current store and query rather than the values from registration time.
   const contextRef = useRef(context)
@@ -153,6 +162,19 @@ export function usePureMailAgentTools(
         applyMailActionHandler(contextRef.current, invoke.arguments),
       markThreadsRead: async invoke =>
         markThreadsReadHandler(contextRef.current, invoke.arguments),
+      startArchiveSweep: async invoke =>
+        startArchiveSweepHandler(contextRef.current, invoke.arguments ?? {}),
+      nextArchiveBatch: async invoke =>
+        nextArchiveBatchHandler(contextRef.current, invoke.arguments ?? {}),
+      recordArchiveBatch: async invoke =>
+        recordArchiveBatchHandler(contextRef.current, invoke.arguments ?? {}),
+      readArchiveItem: async invoke =>
+        readArchiveItemHandler(contextRef.current, invoke.arguments ?? {}),
+      getArchiveSweep: async invoke =>
+        getArchiveSweepHandler(contextRef.current, invoke.arguments ?? {}),
+      listArchiveSweeps: async () => listArchiveSweepsHandler(),
+      stopArchiveSweep: async invoke =>
+        stopArchiveSweepHandler(contextRef.current, invoke.arguments ?? {}),
       nextTriageBatch: async invoke =>
         nextTriageBatchHandler(contextRef.current, invoke.arguments ?? {}),
       recordTriage: async invoke =>
@@ -239,4 +261,5 @@ export function usePureMailAgentTools(
         archiveRunHandler(contextRef.current, invoke.arguments),
     })),
   })
+  return contextRef
 }

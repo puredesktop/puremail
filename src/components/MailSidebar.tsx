@@ -16,6 +16,7 @@ import {
   Star,
   Timer,
   Trash2,
+  SearchCheck,
 } from 'lucide-react'
 import {
   countThreadQuery,
@@ -66,6 +67,9 @@ export interface MailSidebarProps {
   /** The Runs index is on screen. */
   runsIndexActive: boolean
   openRunsIndex: () => void
+  /** Going through the whole mailbox on the server. Absent when the account cannot. */
+  openSweeps?: () => void
+  sweepsActive?: boolean
   /** The reading room's boxes: messages with notes, and messages kept as context. */
   notesCount?: number
   contextCount?: number
@@ -125,6 +129,8 @@ export function MailSidebar({
   notesActive = false,
   contextActive = false,
   openNotes,
+  openSweeps,
+  sweepsActive,
   openContext,
   openRun,
 }: MailSidebarProps): React.ReactElement {
@@ -317,6 +323,18 @@ export function MailSidebar({
           </NavRailItem>
         )
       })()}
+      {openSweeps ? (
+        <NavRailItem
+          type="button"
+          $active={sweepsActive}
+          aria-current={sweepsActive ? 'true' : undefined}
+          onClick={openSweeps}
+          title="Go through all your mail on the server, however old"
+        >
+          <SearchCheck aria-hidden="true" />
+          Archive sweeps
+        </NavRailItem>
+      ) : null}
       {openNotes ? (
         <NavRailItem
           type="button"

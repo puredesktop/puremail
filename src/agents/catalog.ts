@@ -1,6 +1,7 @@
 import type { PreparedReply } from '../lib/mailDrawerDrafts'
 import type { Attachment, Draft, MailMessage, MailStore, MailThread } from '../types'
 import type { MailProposal } from '../lib/mailProposal'
+import type { SweepProvider } from '../lib/archiveSweepRun'
 
 /** Keep in sync with `plugin.json` -> `app.agents.tools[].name`. */
 export const PUREMAIL_AGENT_TOOL_NAMES = [
@@ -19,6 +20,14 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   'nextTriageBatch',
   'recordTriage',
   'getTriageReport',
+  // An archive sweep: every message on the server, once, keeping its place.
+  'startArchiveSweep',
+  'nextArchiveBatch',
+  'recordArchiveBatch',
+  'readArchiveItem',
+  'getArchiveSweep',
+  'listArchiveSweeps',
+  'stopArchiveSweep',
   'listMailChanges',
   'draftReply',
   'commitReplyDraft',
@@ -259,6 +268,9 @@ export interface MailAgentToolContext {
   importRemoteThread?: (
     threadId: string,
   ) => Promise<{ threads: MailThread[]; messages: MailMessage[] } | null>
+  /** Present when the account can walk past the synced window. */
+  sweepProvider?: SweepProvider
+  readWalkedMessage?: (id: string) => Promise<{ message: MailMessage } | null>
   searchAllMail?: (
     query: string,
     limit: number,

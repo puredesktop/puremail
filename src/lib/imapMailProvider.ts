@@ -27,6 +27,8 @@ import type {
   Mailbox,
   MailMessage,
   MailProvider,
+  MailWalkCursor,
+  MailWalkPage,
   MailProviderCapabilities,
   MailStore,
   MailThread,
@@ -502,6 +504,47 @@ export interface ImapMailProviderOptions {
  * for drafts, SMTP for compose. No bulk provider actions — the M0
  * capability gates degrade the UI accordingly.
  */
+const WALK_FROM_THE_START = '1970-01-01T00:00:00.000Z'
+
+const walkId = (folderPath: string, uid: number): string => `imap_msg_${folderPath}_${uid}`
+
+function attachmentsOfEnvelope(folderPath: string, envelope: ImapEnvelope): Attachment[] {
+  return (envelope.attachments ?? []).map(attachment => ({
+    id: `imap_att_${envelope.uid}_${attachment.partId}`,
+    name: attachment.filename,
+    mimeType: attachment.contentType,
+    sizeLabel: formatAttachmentBytes(attachment.size),
+    size: attachment.size,
+    remote: {
+      provider: 'imap' as const,
+      folderPath,
+      uid: envelope.uid,
+      partId: attachment.partId,
+    },
+  }))
+}
+
+/** One message read on a walk: a message of its own, in no local thread. */
+function walkedMessage(folder: ImapFolder, envelope: ImapEnvelope): MailMessage {
+  const id = walkId(folder.path, envelope.uid)
+  return {
+    id,
+    threadId: `walked_${id}`,
+    ...(envelope.messageId ? { messageIdHeader: envelope.messageId } : {}),
+    from: envelope.from,
+    to: envelope.to,
+    ...(envelope.cc?.length ? { cc: envelope.cc } : {}),
+    subject: envelope.subject || '(no subject)',
+    ...(envelope.listUnsubscribe ? { listUnsubscribe: envelope.listUnsubscribe } : {}),
+    body: envelope.body,
+    ...(envelope.bodyHtml ? { bodyHtml: envelope.bodyHtml } : {}),
+    receivedAt: envelope.date,
+    attachments: attachmentsOfEnvelope(folder.path, envelope),
+    read: envelope.flags.includes('\\Seen'),
+    ...(folder.role === 'drafts' || envelope.flags.includes('\\Draft') ? { isDraft: true } : {}),
+  } as MailMessage
+}
+
 export class ImapMailProvider implements MailProvider {
   readonly capabilities: MailProviderCapabilities = {
     compose: true,
@@ -688,19 +731,7 @@ export class ImapMailProvider implements MailProvider {
         const calendarInvite = envelope.icsText
           ? parseCalendarInvite(envelope.icsText) ?? undefined
           : undefined
-        const attachments = (envelope.attachments ?? []).map(attachment => ({
-          id: `imap_att_${envelope.uid}_${attachment.partId}`,
-          name: attachment.filename,
-          mimeType: attachment.contentType,
-          sizeLabel: formatAttachmentBytes(attachment.size),
-          size: attachment.size,
-          remote: {
-            provider: 'imap' as const,
-            folderPath: folder.path,
-            uid: envelope.uid,
-            partId: attachment.partId,
-          },
-        }))
+        const attachments = attachmentsOfEnvelope(folder.path, envelope)
         messages.push({
           id: messageId,
           threadId,
@@ -1302,6 +1333,65 @@ export class ImapMailProvider implements MailProvider {
       } catch { warnings.push('The server accepted this message, but its old Drafts copy could not be removed. Do not resend the draft.') }
     }
     return { ...message, sentCopyPresent: true, sentCopyMime: undefined, deliveryWarnings: warnings.length ? [...new Set(warnings)] : undefined }
+  }
+
+  /**
+   * The folders a walk of the whole mailbox reads: the server's all-mail mirror
+   * alone when it has one, since every message is in it, otherwise every real
+   * folder. Drafts, trash and spam are not part of the archive.
+   */
+  private walkFolders(folders: ImapFolder[]): ImapFolder[] {
+    // Proton's Bridge does not mark its All Mail with the special-use flag, so the name counts too.
+    const mirror = folders.find(folder => folder.virtual) ?? folders.find(folder => /(^|\/)all mail$/i.test(folder.path))
+    if (mirror) return [mirror]
+    return folders.filter(folder =>
+      folder.role !== 'drafts' && folder.role !== 'trash' && !/(^|\/)(spam|junk)$/i.test(folder.path))
+  }
+
+  async walkMailbox(
+    cursor: MailWalkCursor | null,
+    options: { pageSize: number; since?: string; before?: string },
+  ): Promise<MailWalkPage> {
+    await this.options.imap.connect()
+    const folders = this.walkFolders(await this.options.imap.listFolders())
+    let index = cursor ? folders.findIndex(folder => folder.path === cursor.folder) : 0
+    // A folder renamed mid-walk: start over. Messages already seen count once.
+    if (index < 0) index = 0
+    const folder = folders[index]
+    if (!folder) return { items: [], cursor: null }
+    const beforeUid = typeof cursor?.beforeUid === 'number' ? cursor.beforeUid : undefined
+    // The transport honours a paging cursor only with a date window.
+    const since = options.since ?? WALK_FROM_THE_START
+    const envelopes = await this.options.imap.fetchMessages(folder.path, options.pageSize, since, beforeUid)
+    const next = folders[index + 1]
+    if (!envelopes.length) {
+      return { items: [], cursor: next ? { folder: next.path } : null }
+    }
+    const lowest = Math.min(...envelopes.map(envelope => envelope.uid))
+    const before = options.before ? new Date(options.before).toISOString() : null
+    const items = envelopes
+      .filter(envelope => !before || envelope.date < before)
+      .map(envelope => ({ id: walkId(folder.path, envelope.uid), message: walkedMessage(folder, envelope) }))
+    return {
+      items,
+      // A short page can still have older mail behind it; only an empty one ends a folder.
+      cursor: { folder: folder.path, beforeUid: lowest },
+      // A folder's highest UID says roughly how much is in it; across several folders it would say too little.
+      ...(!cursor && folders.length === 1 ? { approxTotal: Math.max(...envelopes.map(envelope => envelope.uid)) } : {}),
+    }
+  }
+
+  async readWalkedMessage(id: string): Promise<{ message: MailMessage } | null> {
+    const match = /^imap_msg_(.+)_(\d+)$/.exec(id)
+    if (!match) return null
+    const uid = Number(match[2])
+    await this.options.imap.connect()
+    const folders = await this.options.imap.listFolders()
+    const folder = folders.find(item => item.path === match[1])
+    if (!folder) return null
+    const envelope = (await this.options.imap.fetchMessages(folder.path, 1, undefined, undefined, undefined, [uid]))
+      .find(item => item.uid === uid)
+    return envelope ? { message: walkedMessage(folder, envelope) } : null
   }
 
   /**
