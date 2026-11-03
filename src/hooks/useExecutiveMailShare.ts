@@ -12,7 +12,9 @@ import {
   readMailShare,
   reportExecutiveDraftStates,
   sharedAccount,
+  executiveEditsWaiting,
   takeExecutiveDiscards,
+  takeExecutiveEdits,
   takeExecutiveDrafts,
   writeMailDigest,
   type DiscardResult,
@@ -55,6 +57,8 @@ export function useExecutiveMailShare(input: {
   saveDraft: (account: MailAccount, request: ExecutiveDraftRequest) => { draftId: string }
   /** Throw away a draft the team made, here and at the provider (the person said No in the Executive app). */
   discardDraft: (draftId: string) => { ok: true } | { ok: false; reason: string }
+  /** Replace a draft's words, at the version the person saw (they edited it on its card in the Executive app). */
+  editDraft: (draftId: string, body: string, expectedVersion?: string) => { ok: true } | { ok: false; reason: string }
   onDraftsTaken?: (result: DraftImportResult) => void
   onDraftsDiscarded?: (result: DiscardResult) => void
 }): {
@@ -92,6 +96,9 @@ export function useExecutiveMailShare(input: {
             // The person's No first, so a draft withdrawn before it was made is never made.
             const discards = await takeExecutiveDiscards({ files: shellFiles, root: folder, store: current.readStore(), instanceId: instanceId.current, discard: draftId => inputRef.current.discardDraft(draftId) })
             if (discards.discarded.length || discards.refused.length) inputRef.current.onDraftsDiscarded?.(discards)
+            const edits = await takeExecutiveEdits({ files: shellFiles, root: folder, store: current.readStore(), instanceId: instanceId.current, edit: (draftId, body, version) => inputRef.current.editDraft(draftId, body, version) })
+            // the new words reach the store on the next render: look again so the card sees them soon
+            if (edits.edited.length) window.setTimeout(() => look.current(null), 800)
             const result = await takeExecutiveDrafts({ files: shellFiles, root: folder, share, instanceId: instanceId.current, storeId: draftsStoreId(), save: request => inputRef.current.saveDraft(account, request) })
             if (result.taken.length || result.refused.length) inputRef.current.onDraftsTaken?.(result)
             const finals = finalKeys.current.get(folder) ?? new Set<string>()
@@ -113,7 +120,20 @@ export function useExecutiveMailShare(input: {
     if (!input.enabled) return
     const timer = window.setTimeout(() => look.current(null), 0)
     const poll = window.setInterval(() => look.current(null), 30_000)
-    return () => { window.clearTimeout(timer); window.clearInterval(poll) }
+    // an edit on a card should not wait half a minute: only asks whether one is there
+    const edits = window.setInterval(() => {
+      void (async () => {
+        const root = (await getPlatformPreferences()).workspaceRoot?.trim()
+        const settings = await readPlatformStorageJson({ appSlug: 'executive', fileName: 'executive.json' }).catch(() => ({ value: null }))
+        for (const folder of mailShareRoots(settings.value, root)) {
+          if (await executiveEditsWaiting(shellFiles, folder).catch(() => false)) {
+            look.current(null)
+            return
+          }
+        }
+      })().catch(() => undefined)
+    }, 4_000)
+    return () => { window.clearTimeout(timer); window.clearInterval(poll); window.clearInterval(edits) }
   }, [input.enabled])
 
   return { afterSync: syncedAccounts => look.current(syncedAccounts), teamReads: teamReadStatuses(input.readStore(), receipts) }

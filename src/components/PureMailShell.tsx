@@ -1462,6 +1462,16 @@ export function PureMailShell({
       discardReplyDraft(draftId)
       return { ok: true }
     },
+    editDraft: (draftId, body, expectedVersion) => {
+      const draft = storeRef.current.drafts.find(item => item.id === draftId)
+      if (!draft) return { ok: false, reason: 'It is not in PureMail any more.' }
+      if (draft.sentAt) return { ok: false, reason: 'It was sent already.' }
+      if (expectedVersion !== undefined && expectedVersion !== draftEditVersion(draft)) return { ok: false, reason: 'It changed in PureMail after you opened it. Look at it again, then redo your edit.' }
+      if (composeContext?.draftId === draftId && composeHoldsDraft(composeMode)) return { ok: false, reason: 'It is open in PureMail’s compose window. Close that, then save again.' }
+      setStore(current => ({ ...current, drafts: current.drafts.map(item => item.id === draftId ? { ...updateDraftFields(item, { body }), bodyHtml: plainTextToComposeHtml(body) } : item) }))
+      recordTriageOperation('mail.executive.edited', `Edited a draft from the executive team: "${draft.subject || '(no subject)'}". Not sent.`, 'user')
+      return { ok: true }
+    },
     onDraftsDiscarded: result => {
       for (const key of result.discarded) {
         recordTriageOperation('mail.executive.discarded', `Discarded a draft the executive team left (${key}): the person said no.`, 'agent')
