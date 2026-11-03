@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { PendingSendState } from '../components/mailShellHelpers'
 import { confirmedSentCopy, draftDelivery } from '../lib/mailDeliveryStatus'
+import { MailSendError } from '../lib/mailDelivery'
 import { sendDraft } from '../lib/mailModel'
 import { dueScheduledSends, markScheduledSend } from '../lib/mailScheduledSend'
 import { sendFailure } from '../lib/mailSendRelease'
@@ -83,6 +84,8 @@ export function createScheduledSendDispatcher(input: {
       void input.deliver(provider, draft)
         .then(() => finishLocal())
         .catch(error => {
+          // Another window's marker reached the file first: its send settles this entry, which moves only forward.
+          if (error instanceof MailSendError && error.superseded && input.read().drafts.find(item => item.id === draft.id)?.sendAttempt?.phase === 'submitting') return
           const failure = sendFailure(input.read(), draft.id, error, input.home(), 'the draft is still in Drafts')
           if (failure.outcome !== 'submitted') input.reportFailure(draft.id, error)
           input.update(current =>
@@ -117,17 +120,26 @@ export function createScheduledSendDispatcher(input: {
  * Boot catch-up (sends due while the window was closed dispatch on launch, a
  * renderer-timer limitation) plus a timer while open. `pass` prepares and
  * returns the store to read due entries from. `enabled` is read once at mount.
+ * `lookFirst` takes in what other copies saved, so a copy rarely starts what
+ * another has begun; the marker's conditional write is what makes that safe.
  */
-export function useScheduledSendTimer(pass: () => MailStore, dispatch: (scheduledSendId: string) => void, enabled = true): void {
-  const latest = useRef({ pass, dispatch })
-  latest.current = { pass, dispatch }
+export function useScheduledSendTimer(pass: () => MailStore, dispatch: (scheduledSendId: string) => void, enabled = true, lookFirst?: () => Promise<void>): void {
+  const latest = useRef({ pass, dispatch, lookFirst })
+  latest.current = { pass, dispatch, lookFirst }
   useEffect(() => {
     if (!enabled) return
-    const tick = (): void => {
+    let live = true
+    const dispatchDue = (): void => {
+      if (!live) return
       for (const entry of dueScheduledSends(latest.current.pass())) latest.current.dispatch(entry.id)
+    }
+    const tick = (): void => {
+      const looking = latest.current.lookFirst?.()
+      if (looking) void looking.then(dispatchDue, dispatchDue)
+      else dispatchDue()
     }
     tick()
     const interval = window.setInterval(tick, DISPATCH_INTERVAL_MS)
-    return () => window.clearInterval(interval)
+    return () => { live = false; window.clearInterval(interval) }
   }, [])
 }

@@ -209,4 +209,6 @@ A tombstone never ends a record that is held, preparing, submitting or unconfirm
 
 An unconditional write made without knowing of an attempt (the page going away) does not end it either: the copy holding the attempt writes it back on its next save.
 
+Two copies starting one send are ordered by the conditional write: `saveDraftsFile` merges against the file and retries on a conflict, a marker (`phase: 'submitting'`) already in the file beats another attempt's, and the controller calls the mail service only if the record is still its own after that save and no confirmed copy has arrived. A record read as unconfirmed with no attempt named beats a marker that did not know of it. This needs the shell's `ifMatch`; `writeDraftsFileBeforeUnload` is the one unconditional write left, and it can drop a marker only if a page goes away holding a stale view at that moment.
+
 Failures are tied to attempts in `mailDelivery.ts`: `sendSettledAttemptId` names the attempt a not-sent or uncertain record belongs to, and a rejection from any other attempt leaves it alone (`MailSendError.superseded`), which `markDraftSendFailed` and `sendFailure` both respect.

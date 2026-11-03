@@ -926,9 +926,13 @@ export function parseDraftState(raw: string | null): ExecutiveDraftState | null 
   }
 }
 
-/** A discard made from a stale view yields to the send it did not know of, so the team must not keep reading it as discarded. */
-const staleDiscardOfLiveSend = (state: ExecutiveDraftState | null, store: Pick<MailStore, 'drafts' | 'messages'>): boolean =>
-  state?.state === 'discarded' && ['held', 'submitting', 'unconfirmed'].includes(draftDelivery(store, state.draftId).state)
+/**
+ * A discard from a stale view yields to the send it did not know of: the draft is
+ * back carrying that send's record, with no real discard on record. A bare draft
+ * turning up (an account listing it again) shows nothing, and the discard stands.
+ */
+const discardTakenBack = (state: ExecutiveDraftState | null, store: Pick<MailStore, 'drafts' | 'messages'>, discardedAt?: (draftId: string) => string | undefined): boolean =>
+  state?.state === 'discarded' && ['held', 'submitting', 'unconfirmed', 'not_submitted'].includes(draftDelivery(store, state.draftId).state) && !discardedAt?.(state.draftId)
 
 /** Discarded without saying why was inferred from absence by an older build: looked at again. */
 const isFinal = (state: ExecutiveDraftState | null): boolean => state?.state === 'sent' || (state?.state === 'discarded' && Boolean(state.discardedBy))
@@ -1062,7 +1066,7 @@ export async function reportExecutiveDraftStates(input: {
     }
     const path = `${stateDir}/${key}.json`
     const previous = parseDraftState(await files.read(path))
-    if (isFinal(previous) && !staleDiscardOfLiveSend(previous, store)) {
+    if (isFinal(previous) && !discardTakenBack(previous, store, discardedAt)) {
       if (previous?.state === 'sent') finalKeys.add(key)
       continue
     }

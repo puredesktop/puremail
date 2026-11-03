@@ -13,7 +13,9 @@ import type { Draft, MailMessage, MailRun, MailStore, ScheduledSend, ScheduledSe
  * 2. A delete is a tombstone, written by the copy that deleted: it held the
  *    record when it last agreed with the file (the baseline) and now does not.
  * 3. A record only one side changed since the baseline takes that side. Both
- *    changed: sent beats unsent, an uncertain send beats an edit, the record
+ *    changed: sent beats unsent, a marker already in the file beats another
+ *    attempt's (the conditional write decided which got there first, and the
+ *    loser stops before the mail service), an uncertain send beats an edit, the record
  *    settling an attempt beats that attempt, an attempt under way beats an
  *    edit, a draft's maker beats a copy imported from the account, then the
  *    later edit time. Provider bookkeeping and send attempts do not move
@@ -41,7 +43,7 @@ type Stamped = {
   sentAt?: string
   sendState?: string
   importedFromProvider?: boolean
-  sendAttempt?: { id: string }
+  sendAttempt?: { id: string; phase?: string }
   sendSettledAttemptId?: string
   sendMessageId?: string
 }
@@ -85,12 +87,22 @@ const settles = (record: Stamped, other: Stamped): boolean =>
 const attemptStands = (record: Stamped, newer: Stamped): boolean =>
   Boolean(record.sendAttempt) && !newer.sendAttempt && !newer.sentAt && newer.sendState !== 'uncertain' && !settles(newer, record)
 
+/** `first` holds a marker for an attempt `other` is not, and `other` did not end: that send may be leaving. */
+const markedFirst = (first: Stamped, other: Stamped): boolean =>
+  first.sendAttempt?.phase === 'submitting' && other.sendAttempt?.id !== first.sendAttempt.id && !settles(other, first)
+
+/** Another copy read this send as may-have-gone, without naming an attempt this copy can match. */
+const readAsUnconfirmed = (attempt: Stamped, reading: Stamped): boolean =>
+  Boolean(attempt.sendAttempt) && !reading.sendAttempt && reading.sendState === 'uncertain'
+
 /** Both changed: which one stays. Ties keep memory, the copy doing the saving. */
 function winner<T extends Stamped>(memory: T, disk: T): T {
   if (Boolean(memory.sentAt) !== Boolean(disk.sentAt)) return memory.sentAt ? memory : disk
+  if (markedFirst(disk, memory)) return disk
   if ((memory.sendState === 'uncertain') !== (disk.sendState === 'uncertain')) return memory.sendState === 'uncertain' ? memory : disk
   if (settles(disk, memory)) return disk
   if (settles(memory, disk)) return memory
+  if (readAsUnconfirmed(memory, disk)) return disk
   // The record of a send that may be leaving outlives an edit made without knowing of it.
   if (Boolean(memory.sendAttempt) !== Boolean(disk.sendAttempt)) return memory.sendAttempt ? memory : disk
   // A copy that only knows a draft from the account's listing has it on a made-up thread.
@@ -158,6 +170,9 @@ export function mergeRecords<T extends Stamped>(input: {
         removed.push(tombstone)
         continue
       }
+    } else if (tombstone && inTheAir(record) && confirmed?.(record)) {
+      removed.push(tombstone)
+      continue
     } else if (tombstone) {
       // New to this copy: a provider listed it again, or the id was made again.
       tombstones.delete(record.id)
@@ -269,6 +284,8 @@ const upsertNewer = <T extends Stamped>(current: T[], arrived: readonly T[]): T[
     const newer = incoming.get(record.id)
     if (!newer) return record
     incoming.delete(record.id)
+    // What stops a send here holds whatever the times: its own marker's `updatedAt` proves nothing.
+    if (settles(newer, record) || markedFirst(newer, record) || readAsUnconfirmed(record, newer)) return newer
     // Edited here since the snapshot that merge was made from: this edit stays,
     // and the next save decides. Likewise a send begun here since.
     return time(record.updatedAt) > time(newer.updatedAt) || attemptStands(record, newer) ? record : newer
@@ -281,8 +298,10 @@ const withoutRemoved = <T extends Stamped>(current: T[], removed: readonly Tombs
   const byId = new Map(removed.map(tombstone => [tombstone.id, tombstone]))
   return current.filter(record => {
     const tombstone = byId.get(record.id)
+    if (!tombstone) return true
     // A send begun here since that merge's snapshot stands, unless it went.
-    return !tombstone || (inTheAir(record) && !confirmed(record)) || time(record.updatedAt) > time(tombstone.deletedAt)
+    if (confirmed(record)) return false
+    return inTheAir(record) || time(record.updatedAt) > time(tombstone.deletedAt)
   })
 }
 

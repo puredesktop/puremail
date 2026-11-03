@@ -3565,7 +3565,7 @@ export function PureMailShell({
   useScheduledSendTimer(() => {
     void settleAbandonedSends({ read: () => storeRef.current, update: setStore, mine: sendingHere, readSaved: readSavedMailStore })
     return storeRef.current
-  }, id => dispatchScheduledSendRef.current(id), !isHeldCopy())
+  }, id => dispatchScheduledSendRef.current(id), !isHeldCopy(), () => syncDrafts())
 
   const cancelScheduledSendsForThreads = (threadIds: string[]): void => {
     const active = (storeRef.current.scheduledSends ?? []).filter(

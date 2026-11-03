@@ -278,7 +278,7 @@ describe('two Mail windows open on one store', () => {
   ])('%s', (_name, silence) => {
     afterEach(() => { vi.stubGlobal('BroadcastChannel', FakeChannel) })
 
-    it('its possible send is never known not sent or resent, and when it wakes it goes once and the receipt stands', async () => {
+    it('its possible send is never known not sent or resent; waking before it has read the other\'s save, it goes once and the receipt stands (twoCopies.test.ts has it read that save)', async () => {
       const { store, draftId } = saved({}, new Date(Date.parse(NOW) + 3_600_000).toISOString())
       let ready!: () => void
       const asleep = await open(store, { prepare: draft => new Promise(resolve => { ready = () => resolve({ ...draft }) }) })

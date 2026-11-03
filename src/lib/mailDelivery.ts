@@ -1,5 +1,6 @@
 import type { Draft, MailMessage, MailProvider, MailStore } from '../types'
 import { CHANGED_REASON, CONFLICT_REASON, SUPERSEDED_REASON, UNCONFIRMED_REASON, settleDraftNotSent, stopDraftSchedules } from './mailDeliveryStatus'
+import { recordConfirmedSent } from './draftsFileMerge'
 import { draftSendFingerprint } from './mailDrawerDrafts'
 import { sendDraft } from './mailModel'
 import { finalizeRunDraftForSend } from './mailRuns'
@@ -64,8 +65,15 @@ export function createMailDeliveryController(input: {
     const settledAtStart = saved.sendSettledAttemptId
     const heldByOther = (item: Draft): boolean => (item.sendAttempt ? item.sendAttempt.id !== attemptId : item.sendSettledAttemptId !== settledAtStart && item.sendSettledAttemptId !== attemptId)
     const currentRecord = (): Draft | undefined => input.read().drafts.find(item => item.id === draft.id)
+    // What another copy saved can arrive at any await here: a copy of this draft already sent ends it.
+    const stopIfSent = (): void => {
+      if (!recordConfirmedSent(input.read().messages, draft)) return
+      input.update(store => ({ ...store, drafts: store.drafts.filter(item => item.id !== draft.id) }))
+      throw new MailSendError('This draft was already sent. No second copy was sent.', 'not_sent')
+    }
     try {
       const prepared = await input.prepare(draft)
+      stopIfSent()
       // Provider saves finish during prepare; an edit that landed meanwhile stops it here.
       if (changed()) throw new MailSendError(CHANGED_REASON, 'not_sent')
       const beforeMarker = currentRecord()
@@ -81,9 +89,10 @@ export function createMailDeliveryController(input: {
       // automatic retry instead of quietly turning the message into a draft.
       await input.persist(input.read())
       if (!input.online()) throw new MailSendError('Offline — message not sent. Your draft is saved.', 'not_sent')
-      // Saving takes in what other copies saved: one that took this send over stops it here.
-      const afterMarker = currentRecord()
-      if (afterMarker && afterMarker.sendAttempt?.id !== attemptId) throw new MailSendError(SUPERSEDED_REASON, 'not_sent')
+      // Saving takes in what other copies saved, and the file's conditional write
+      // decides whose marker came first: only the record still this attempt's may go.
+      stopIfSent()
+      if (currentRecord()?.sendAttempt?.id !== attemptId) throw new MailSendError(SUPERSEDED_REASON, 'not_sent')
       submitted = true
       const message = await provider.send({ draft: prepared, threadId: prepared.threadId })
       if (!message.id) throw new MailSendError('The server returned no send confirmation. Check Sent before retrying.', 'uncertain')

@@ -598,15 +598,23 @@ describe('the team status file', () => {
     const r = rig()
     const { disk, files } = memory()
     disk.set(`/o/${EXECUTIVE_TAKEN_DIR}/cos-k-1.json`, JSON.stringify({ draftId: r.draftId, takenAt: new Date().toISOString() }))
-    const look = () => reportExecutiveDraftStates({ files, root: '/o', store: r.read(), account: { id: 'account' } })
+    let onRecord: string | undefined = '2026-11-02T09:59:00Z'
+    const look = () => reportExecutiveDraftStates({ files, root: '/o', store: r.read(), account: { id: 'account' }, discardedAt: () => onRecord })
     const known = [...disk.keys()]
     await look()
     const statePath = [...disk.keys()].find(key => !known.includes(key) && key.includes('/state/'))!
-    disk.set(statePath, JSON.stringify({ ...parseDraftState(disk.get(statePath)!), state: 'discarded', discardedBy: 'request' }))
+    const discarded = JSON.stringify({ ...parseDraftState(disk.get(statePath)!), state: 'discarded', discardedBy: 'request' })
+    disk.set(statePath, discarded)
     expect((await look()).written).toEqual([])
+    onRecord = undefined
     r.update(store => ({ ...store, drafts: store.drafts.map(item => ({ ...item, sendAttempt: { id: 'a1', phase: 'submitting' as const, approved: 'x', at: '2026-11-02T10:00:00Z' }, sendState: 'uncertain' as const })) }))
     expect((await look()).written).toEqual(['cos-k-1'])
     expect(parseDraftState(disk.get(statePath)!)).toMatchObject({ state: 'draft', delivery: { state: 'submitting' } })
+    // Freed between two reports: no send left in the air, and still no discard to report.
+    disk.set(statePath, discarded)
+    r.update(store => ({ ...store, drafts: store.drafts.map(item => ({ ...item, sendAttempt: undefined, sendState: 'failed' as const, sendError: 'Undone elsewhere' })) }))
+    expect((await look()).written).toEqual(['cos-k-1'])
+    expect(parseDraftState(disk.get(statePath)!)).toMatchObject({ state: 'draft', delivery: { state: 'not_submitted' } })
     r.unmount()
   })
 

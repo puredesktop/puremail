@@ -3,7 +3,13 @@ import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { demoMailStore } from '../test/mailFixtures'
 import { draftDelivery } from './mailDeliveryStatus'
-import type { Draft, MailStore, MailTask, ScheduledSend, QueuedMailAction } from '../types'
+import { createScheduledSendDispatcher } from '../hooks/useScheduledSends'
+import { createMailDeliveryController } from './mailDelivery'
+import { draftSendFingerprint } from './mailDrawerDrafts'
+import { recoverInterruptedSends } from './mailRuns'
+import { markScheduledSend, scheduleSend } from './mailScheduledSend'
+import { createStoreDraftSender } from './mailSendRelease'
+import type { Draft, MailMessage, MailProvider, MailStore, MailTask, ScheduledSend, QueuedMailAction } from '../types'
 
 /**
  * Two running copies of Mail (a tab and a mini app) over the same files. Each copy is its own
@@ -404,5 +410,168 @@ describe('mail-drafts.json: a stale discard against a send', () => {
     await a.copy.save()
     expect(a.copy.memory.drafts.some(item => item.id === 'letter')).toBe(false)
     expect(draftsFile().drafts.some(item => item.id === 'letter')).toBe(false)
+  })
+})
+
+/**
+ * Two copies, each with the real delivery controller wired to its own real save and take-in, as
+ * the shell wires them, and one fake mail service between them: what reaches it is the only answer.
+ */
+describe('two copies sending over the real files', () => {
+  beforeEach(() => { files.clear(); writes = []; beforeWrite.run = null })
+  const threadId = () => demoMailStore().threads[0]!.id
+  const letter = (patch: Partial<Draft> = {}): Draft => ({ id: 'letter', threadId: threadId(), to: [{ name: 'Ana', email: 'ana@example.test' }], cc: [], bcc: [], subject: 'Letter', body: 'Approved', attachments: [], updatedAt: '2026-11-02T09:00:00.000Z', syncState: 'pending', ...patch } as unknown as Draft)
+  const accepted = (): MailMessage => ({ id: 'accepted', threadId: threadId(), from: { name: 'Me', email: 'me@example.test' }, to: [], subject: 'Letter', body: 'Approved', attachments: [], receivedAt: '2026-11-02T10:00:01.000Z', read: true } as unknown as MailMessage)
+  const service = () => {
+    const send = vi.fn(async (): Promise<MailMessage> => accepted())
+    return { send, provider: { send } as unknown as MailProvider }
+  }
+  type Copy = Awaited<ReturnType<typeof openCopy>>
+  const controller = (copy: Copy, prepare: (draft: Draft) => Promise<Draft> = async draft => ({ ...draft })) => createMailDeliveryController({ read: () => copy.memory, update: copy.edit, persist: async () => { await copy.save() }, prepare, release: () => {}, online: () => true })
+  const record = (copy: Copy) => copy.memory.drafts.find(item => item.id === 'letter')
+  /** Both copies open with the draft saved, and neither has anything the other lacks. */
+  const twoCopies = async (patch: Partial<MailStore> = {}) => {
+    await seeded()
+    const a = await openCopy()
+    a.edit(store => ({ ...store, drafts: [letter()], ...patch }))
+    await a.save()
+    const b = await openCopy()
+    return { a, b }
+  }
+  const dispatcher = (copy: Copy, mail: ReturnType<typeof service>, notices: string[]) => {
+    const going = new Set<string>()
+    return createScheduledSendDispatcher({
+      read: () => copy.memory, update: copy.edit, provider: () => mail.provider, online: () => true, localAccount: () => false, home: () => 'Fake',
+      holdForDraft: () => undefined, isDraftSending: id => going.has(id), markDraftSending: (id, on) => { if (on) going.add(id); else going.delete(id) },
+      deliver: (provider, draft) => controller(copy)(provider, draft), reportFailure: () => {}, notice: text => notices.push(text), record: () => {},
+    })
+  }
+  const settle = async () => { for (let turn = 0; turn < 40; turn += 1) await new Promise(resolve => setTimeout(resolve, 0)) }
+
+  it('both copies dispatch one due schedule from the same view: one call, and the loser says nothing false', async () => {
+    const store = scheduleSend({ ...demoMailStore(), drafts: [letter()] }, { draftId: 'letter', threadId: threadId(), sendAt: '2026-11-02T08:00:00.000Z' }, '2026-11-02T07:00:00.000Z')
+    const { a, b } = await twoCopies({ scheduledSends: store.scheduledSends })
+    const entry = a.memory.scheduledSends![0]!.id
+    expect(b.memory.scheduledSends![0]!.status).toBe('scheduled')
+    const mail = service()
+    const notices: string[] = []
+    dispatcher(a, mail, notices)(entry)
+    dispatcher(b, mail, notices)(entry)
+    await settle()
+    expect(mail.send).toHaveBeenCalledTimes(1)
+    await a.save(); await b.save(); await a.save()
+    expect(draftDelivery(a.memory, 'letter').state).toBe('submitted')
+    expect(draftDelivery(b.memory, 'letter').state).toBe('submitted')
+    expect(record(a)).toBeUndefined()
+    expect(record(b)).toBeUndefined()
+    expect(b.memory.scheduledSends![0]!.status).toBe('sent')
+    expect(notices.join()).not.toMatch(/failed/)
+    expect(mail.send).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['a schedule\'s own dispatch, which stamps nothing', {}, undefined],
+    ['a person\'s approved send, stamped later than the first copy\'s', { updatedAt: '2026-11-02T23:00:00.000Z' }, 'approved'],
+  ])('%s, starting while another copy\'s marker is on file, stops before the mail service', async (_name, patch, bound) => {
+    const { a, b } = await twoCopies()
+    const mail = service()
+    let finish!: (message: MailMessage) => void
+    mail.send.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const first = controller(a)(mail.provider, record(a)!)
+    await settle()
+    expect(mail.send).toHaveBeenCalledTimes(1)
+    const firstAttempt = JSON.parse(files.get('mail-drafts.json')!).drafts.find((item: Draft) => item.id === 'letter').sendAttempt
+    expect(firstAttempt.phase).toBe('submitting')
+    const attempt = bound ? { id: 'stale-window', approved: draftSendFingerprint(record(b)!) } : undefined
+    if (bound) b.edit(store => ({ ...store, drafts: store.drafts.map(item => (item.id === 'letter' ? { ...item, ...patch, sendAttempt: { id: 'stale-window', phase: 'preparing' as const, approved: attempt!.approved, at: '2026-11-02T10:00:00.000Z' } } : item)) }))
+    await expect(controller(b)(mail.provider, record(b)!, attempt)).rejects.toMatchObject({ superseded: true, outcome: 'not_sent' })
+    expect(mail.send).toHaveBeenCalledTimes(1)
+    expect(record(b)!.sendAttempt?.id).toBe(firstAttempt.id)
+    expect(draftDelivery(b.memory, 'letter').state).toBe('submitting')
+    finish(accepted())
+    await first
+    await b.save()
+    expect(draftDelivery(b.memory, 'letter').state).toBe('submitted')
+    expect(mail.send).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['unstamped', {}],
+    ['stamped later than the removal', { updatedAt: '2099-01-01T00:00:00.000Z' }],
+  ])('a stale copy sending a draft whose receipt is already on file, %s: no second call, and the draft goes', async (_name, patch) => {
+    const { a, b } = await twoCopies()
+    const mail = service()
+    await controller(a)(mail.provider, record(a)!)
+    expect(mail.send).toHaveBeenCalledTimes(1)
+    expect(record(b)).toBeTruthy()
+    b.edit(store => ({ ...store, drafts: store.drafts.map(item => (item.id === 'letter' ? { ...item, ...patch } : item)) }))
+    await expect(controller(b)(mail.provider, record(b)!)).rejects.toMatchObject({ outcome: 'not_sent' })
+    expect(mail.send).toHaveBeenCalledTimes(1)
+    expect(record(b)).toBeUndefined()
+    expect(draftDelivery(b.memory, 'letter').state).toBe('submitted')
+  })
+
+  it('a dispatch asleep in preparation, read as unconfirmed by the other copy: on waking it stops, and its own record shows nothing left', async () => {
+    const store = scheduleSend({ ...demoMailStore(), drafts: [letter()] }, { draftId: 'letter', threadId: threadId(), sendAt: '2026-11-02T08:00:00.000Z' }, '2026-11-02T07:00:00.000Z')
+    const { a, b } = await twoCopies({ scheduledSends: store.scheduledSends })
+    const mail = service()
+    const entry = b.memory.scheduledSends![0]!.id
+    b.edit(current => markScheduledSend(current, entry, 'sending'))
+    await b.save()
+    let wake!: () => void
+    const asleep = controller(b, draft => new Promise(resolve => { wake = () => resolve({ ...draft }) }))(mail.provider, record(b)!)
+    await settle()
+    await a.save()
+    a.edit(current => recoverInterruptedSends(current))
+    expect(draftDelivery(a.memory, 'letter').state).toBe('unconfirmed')
+    await a.save()
+    wake()
+    await expect(asleep).rejects.toMatchObject({ outcome: 'not_sent' })
+    expect(mail.send).not.toHaveBeenCalled()
+    expect(draftDelivery(b.memory, 'letter').state).toBe('not_submitted')
+    await a.save()
+    expect(draftDelivery(a.memory, 'letter').state).toBe('not_submitted')
+  })
+
+  it('an approved send asleep in preparation, stamped as the sender stamps it, read as unconfirmed by the other copy: same', async () => {
+    const { a, b } = await twoCopies()
+    const mail = service()
+    const approved = draftSendFingerprint(record(b)!)
+    b.edit(store => ({ ...store, drafts: store.drafts.map(item => (item.id === 'letter' ? { ...item, updatedAt: '2099-01-01T00:00:00.000Z', sendAttempt: { id: 'asleep', phase: 'preparing' as const, approved, at: '2026-11-02T10:00:00.000Z' } } : item)) }))
+    await b.save()
+    let wake!: () => void
+    const asleep = controller(b, draft => new Promise(resolve => { wake = () => resolve({ ...draft }) }))(mail.provider, record(b)!, { id: 'asleep', approved })
+    await settle()
+    await a.save()
+    a.edit(current => recoverInterruptedSends(current))
+    await a.save()
+    wake()
+    await expect(asleep).rejects.toMatchObject({ outcome: 'not_sent' })
+    expect(mail.send).not.toHaveBeenCalled()
+    expect(record(b)).toMatchObject({ sendState: 'failed', sendSettledAttemptId: 'asleep' })
+  })
+
+  it('a person\'s Send through the real sender, on a view with another copy\'s marker not yet read: one call', async () => {
+    const { a, b } = await twoCopies()
+    const mail = service()
+    let finish!: (message: MailMessage) => void
+    mail.send.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const first = controller(a)(mail.provider, record(a)!)
+    await settle()
+    const going = new Set<string>()
+    const failed: string[] = []
+    const send = createStoreDraftSender({
+      read: () => b.memory, update: b.edit, provider: () => mail.provider, localAccount: () => false, canCompose: () => true, online: () => true, home: () => 'Fake', undoSeconds: () => 0,
+      schedule: (_pending, commit, onStart) => { onStart?.(); commit(); return true }, holdForDraft: () => undefined, isDraftSending: id => going.has(id), markDraftSending: (id, on) => { if (on) going.add(id); else going.delete(id) },
+      deliver: (provider, draft, attempt) => controller(b)(provider, draft, attempt), reportFailure: () => {}, notice: () => {}, record: () => {},
+    })
+    send(record(b)!, { onFailed: (_reason, outcome) => failed.push(outcome) })
+    await settle()
+    expect(mail.send).toHaveBeenCalledTimes(1)
+    expect(failed).toEqual(['not_sent'])
+    finish(accepted())
+    await first
+    await b.save()
+    expect(draftDelivery(b.memory, 'letter').state).toBe('submitted')
   })
 })

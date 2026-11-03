@@ -340,8 +340,9 @@ function mergedDraftsFile(
   // arrived. That is not this copy deleting it.
   const draftBaseline = new Map(thisCopy.draftBaseline)
   const nowMs = Date.parse(now)
+  const heldInMemory = new Set(persistable.drafts.map(draft => draft.id))
   for (const id of draftBaseline.keys()) {
-    if (draftHeldByAnotherCopy(id, nowMs) && !thisCopy.discards.has(id)) draftBaseline.delete(id)
+    if (!heldInMemory.has(id) && draftHeldByAnotherCopy(id, nowMs) && !thisCopy.discards.has(id)) draftBaseline.delete(id)
   }
   const drafts = mergeRecords<Draft>({
     baseline: draftBaseline,
