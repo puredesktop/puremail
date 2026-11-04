@@ -29,14 +29,23 @@ import {
   Meta,
   NavRail,
   ReaderBackButton,
+  ReaderDetailsButton,
+  ReaderHeaderBand,
+  ReaderSenderAvatar,
+  ReaderSenderReply,
+  ReaderSenderTo,
+  ReaderStateChip,
   ReaderStateLine,
   ReaderTaskChip,
+  ReaderTimestamp,
   ReaderToolbar,
   ReaderToolbarButton,
   ReaderToolbarPrimary,
   ReaderToolbarSwap,
   ReaderToolbarSwapLayer,
+  Title,
   ToolbarDivider,
+  MessageCard,
 } from './mailShellStyles'
 
 /**
@@ -75,6 +84,72 @@ export const CompactInRoomStyle = createGlobalStyle`
     --puremail-message-bg: #ffffff;
     --puremail-empty-surface: #ffffff;
     background: #ffffff;
+  }
+
+  /* The held look: calm enterprise, one muted accent, hairlines, sans throughout. Navy replaces the app's brand colour for
+     its primary buttons, and a slate for the rest of what the accent coloured. Dark mode keeps the theme's own. */
+  :root:not([data-platform-theme='dark']) ${MailFrame}[data-compact-in-room] {
+    --pure-chrome-accent: #1f3a5f;
+    --pure-chrome-on-accent: #ffffff;
+    --puremail-accent: #2f5d8c;
+    --pure-chrome-line: #dde1e7;
+    --pure-chrome-hover: #f5f6f8;
+  }
+
+  /* Reading a thread: the state line is plain sans, not an uppercase tag and monospace figures. */
+  [data-compact-in-room] ${ReaderHeaderBand} {
+    padding: 14px 24px;
+  }
+  [data-compact-in-room] ${ReaderStateLine} {
+    font-family: inherit;
+    font-size: 12px;
+  }
+  [data-compact-in-room] ${ReaderStateChip} {
+    padding: 0;
+    background: none;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  [data-compact-in-room] ${ReaderTimestamp},
+  [data-compact-in-room] ${ReaderSenderTo},
+  [data-compact-in-room] ${ReaderDetailsButton},
+  [data-compact-in-room] ${MailStateChip} {
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  [data-compact-in-room] ${MailStateChip} {
+    font-weight: 500;
+  }
+  [data-compact-in-room] ${Title} {
+    margin-bottom: 8px;
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  [data-compact-in-room] ${ReaderSenderAvatar} {
+    display: none;
+  }
+  /* Reply sits twice, in the bar and on the message: the one in the bar is the primary, this one is the quiet copy. */
+  [data-compact-in-room] ${ReaderSenderReply} {
+    height: 28px;
+    margin-left: 0;
+    border: 1px solid #cdd1d7;
+    background: #ffffff;
+    color: var(--platform-colors-text);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  [data-compact-in-room] ${ReaderSenderReply}:hover {
+    background: #f5f6f8;
+    filter: none;
+  }
+  [data-compact-in-room] ${ReaderToolbarButton} {
+    height: 28px;
+  }
+  [data-compact-in-room] ${MessageCard} p {
+    font-size: 14px;
+    line-height: 1.55;
   }
 
   /* Square edges, as the room. */
@@ -198,7 +273,7 @@ const NewMessage = styled.button`
   color: var(--pure-chrome-on-accent);
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 
   &:hover {
