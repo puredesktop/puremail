@@ -487,6 +487,13 @@ These drafts are ordinary drafts: read them with `getDraft`, change them with
 send one for the team; the person sends. Rules and tests live in
 `src/lib/executiveShare.ts`; nothing about the share is kept in the mail store.
 
+## Opening one mail by link
+
+`workspace.openApp({ appSlug: 'mail', resourceId: 'thread/<threadId>/<messageId>' })` opens that thread (each part
+URL-encoded; the message is optional, and may be the digest's Message-ID). A host holding Mail in a page opens it the same
+way, by giving the held copy `purescience://mail/thread/...` as its resource. A row of mail on a dashboard does this
+(`lib/threadLink.ts`). A mail not on this desktop gets a sentence, and the inbox stays.
+
 ## Several running copies
 
 A mini app (held in the Executive room or the Personal agent's page) is a second
