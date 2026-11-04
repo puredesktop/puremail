@@ -236,6 +236,14 @@ import { getPlatformPreferences } from '@purescience/platform-ui/bridge/preferen
 
 /** Where saved attachments and PDFs go: this folder inside the workspace. */
 const MAIL_SAVE_FOLDER = 'Mail'
+
+/** Mail came in: for `/when mail from Olivia`. Who and what about, and nothing of what it says. */
+function tellHappened(thread: MailThread): void {
+  void bridge.call(PLATFORM_BRIDGE_METHODS.COMMANDS_HAPPENED, [{
+    source: 'mail',
+    fields: { from: thread.participants.map(person => `${person.name ?? ''} ${person.email ?? ''}`).join(' '), subject: thread.subject },
+  }]).catch(() => undefined)
+}
 import { PLATFORM_BRIDGE_EVENTS } from '@purescience/platform-ui/bridge/events'
 import type {
   Attachment,
@@ -1604,6 +1612,7 @@ export function PureMailShell({
           if (arrived.length > 0) {
             window.setTimeout(() => {
               notifyNewMailThreadsRef.current(arrived, next)
+              for (const thread of arrived.slice(0, 20)) tellHappened(thread)
 
             }, 0)
           }

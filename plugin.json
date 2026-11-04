@@ -15,6 +15,7 @@
     "productName": "pure.mail",
     "kind": "mail",
     "description": "Modern email with thread-linked tasks, follow-ups, and right-pane work tracking.",
+    "handles": {"happens": ["mail"]},
     "commands": [
       {"trigger": "/mail", "command": "search", "description": "Search your mail", "takesText": true, "textHint": "Words to look for", "unattended": "shows", "help": {"says": "Shows your mail searched for those words. On its own, it shows your inbox.", "example": "/mail invoice from March", "wont": "Doesn’t send or change any mail."}},
       {"trigger": "/reply", "command": "reply", "description": "Reply to someone", "takesText": true, "needsText": true, "textHint": "A person’s name", "help": {"says": "Opens that person’s latest thread, ready for you to write.", "example": "/reply Olivia", "wont": "Doesn’t send anything. You press Send yourself."}}
