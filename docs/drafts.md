@@ -90,12 +90,16 @@ never rewrites the list from what one copy holds:
   another copy; a draft in memory and not on disk is written back.
 - A delete is a tombstone in the file, written by the copy that deleted it: it
   held the draft when it last agreed with the file and now does not. A
-  tombstone yields to a real edit made after it, and to a draft new to the copy
-  holding it (a provider listing it again). Tombstones expire after 90 days.
+  tombstone yields to a real edit made after it, to a send this copy has begun
+  or left uncertain since, and to a draft new to the copy holding it (a provider
+  listing it again). Tombstones expire after 90 days.
 - A draft only one side changed takes that side. Both changed: sent beats unsent,
-  an uncertain send beats an edit, a draft's maker beats a copy imported from the
-  account, then the later `updatedAt`. Provider
-  bookkeeping does not move `updatedAt`, so edit time alone cannot decide.
+  an uncertain send beats an edit, the record settling an attempt beats that
+  attempt, an attempt under way beats an edit, a draft's maker beats a copy
+  imported from the account, then the later `updatedAt`. Provider bookkeeping and
+  send attempts do not move `updatedAt`, so edit time alone cannot decide.
+- A schedule only moves forward, so each keeps its furthest status: a copy with
+  an older view cannot restart one another copy stopped.
 
 Send runs merge the same way; delivery receipts only accumulate. A save re-reads
 the file, writes only if the merge changes it, and writes conditionally (the
@@ -116,6 +120,10 @@ it `importedFromProvider`; the store that made it speaks for it.
 The mailbox cache (`mail-store.json`) is merged too (`lib/storeFileMerge.ts`),
 three ways against what this copy last agreed with the file on: records by id,
 strings by value, objects by key. See `agents.md`, "Several running copies".
+Scheduled sends are not in it: they travel in the drafts file with the drafts they
+would send. A cache from before that is read once, until the drafts file carries them.
+A running copy that needs the saved record reads it with `readSavedMailStore`, which
+leaves what it agreed with the files on alone; only boot uses `readPersistedMailStore`.
 
 Nothing goes in `localStorage`. A normal Gmail window serialises to about 6.4MB
 against a ~5MB origin quota, and past it every write throws silently — which is
@@ -194,3 +202,42 @@ lost APPEND acknowledgement searches again before writing.
 | Agent tools | `agents/handlers.ts`, `agents/catalog.ts` |
 | Regressions from the audit | `lib/draftLifecycle.test.ts` |
 | Provider contract | `lib/providerDraftContract.test.ts` |
+
+## Sends and the merge
+
+A tombstone never ends a record that is held, preparing, submitting or unconfirmed unless a confirmed copy shows it went (`recordConfirmedSent`: a receipt or Sent copy naming the draft, or carrying the Message-ID it was submitted under). This holds whether or not the attempt had reached the saving copy's baseline, because a removal can come from a copy with an old view. The record then returns to the copy that removed it, and a real discard of a free draft still removes it everywhere. The cost is on the safe side: a window frozen with an old attempt can bring back a draft another window really discarded, and it reads unconfirmed until someone looks.
+
+The exit writer uses `ifMatch` with the version paired with this copy's last agreed file. If another copy saved since then, the shell refuses the exit write; it never replaces newer evidence, even if its owner never saves again. Without a version the fast exit write is skipped. This needs no awaited read during unload. Normal saves still read, merge and retry on conflict.
+
+Two copies starting one send are ordered by the conditional write: `saveDraftsFile` merges against the file and retries on a conflict, a marker (`phase: 'submitting'`) already in the file beats another attempt's, and the controller calls the mail service only if the record is still its own after that save and no confirmed copy has arrived. A record read as unconfirmed with no attempt named beats a marker that did not know of it. Both normal and fast exit writes depend on the shell's atomic `ifMatch`. A refresh interval or eventual repair is not their safety boundary.
+
+Definite failures are tied to attempts in `mailDelivery.ts`: `sendSettledAttemptId` names the current settled outcome, and a definite rejection from another attempt leaves it alone (`MailSendError.superseded`). An older ambiguous submission is different: `sendUncertainties` retains its own attempt id, reason and submitted Message-ID beside the newer record. It does not replace the newer phase, Undo, settled identity, reason or schedule decision. `sendSupersedes` records only the predecessor attempt ids a later explicit decision knew about: this lets a stale controller's settlement preserve that later record during the actual file merge without ordering two machines' clocks. These ids and unresolved outcomes are the narrow send contract, not a general history. Its unresolved evidence makes `draftDelivery` unconfirmed even during a newer hold or submission, so no ordinary resend is offered. The person's explicit check marks that independent outcome checked; merging those entries keeps the check without comparing clocks. A genuine late settlement from a stale controller is still evidence and can require another check. A receipt still proves submission, and its attempt identity survives a subsequent sync. When a late receipt meets a newer record, that record is retained as sent evidence; different later words also stay in their own unsent draft. This is send evidence, not an activity history.
+
+
+## Exit limits
+
+A conditional exit write can be refused safely, but the departing page cannot guarantee an awaited merge will finish. Last words held only in that page can therefore be lost on forced page exit or a crash; this repair does **not** claim otherwise. Compose Close and replacement-window stash preserve them through their normal save path, and the debounced persistence/visibility path remains in place.
+
+At ps-suite `f36884f801f4ad3e8780db6c954a82bb5267623f`, `packages/shell/src/modules/storage/jsonStore.ts` serializes the version check and file replacement per path (lines 81–94, 119–141). Mail calls it through `writePlatformStorageJson` in `src/bridge/platformBridge.ts:306`; `useMailStorePersistence` calls the exit writer from `beforeunload`. The shell's `renderer/workspace/closeTabs.ts:19,40–80` sends `workspace.willClose`, but closes after 1200 ms even without an acknowledgement. Removing a frame need not fire unload. Mail has no host-owned durable buffer for an unacknowledged stale-window edit.
+
+To guarantee **both** preservation of saved evidence and every last word across forced exit, the missing capability is a host-owned close/save barrier that keeps the Mail frame alive until a version-checked merge is durably acknowledged (or retains the pending edit outside that frame). Mail's caller must snapshot the composer and flush persistence before acknowledging. The existing timeout notification is not that guarantee, and no awaited unload read can supply it. This is a prerequisite outside this app repair, not a proposal to invent a new shared store here. Process crashes can preserve only work already handed off durably. Separately, proving an unclaimed sender terminated still requires host instance-liveness across every device sharing the store; this task adds no such authority.
+
+## Incomplete compose comparisons
+
+The persisted-message parser retains records with an id without promising complete compose fields; cache compaction also drops HTML. A sent message is therefore partial comparison evidence, not a `Draft`. Missing recipients, HTML or attachment metadata never prove unchanged content, and absent comparison data keeps the whole current snapshot as a separate unsent draft. A complete known-unchanged comparison creates no duplicate. Live complete draft snapshots capture their optional empty fields before removal. Attachment hydration bytes alone still do not count as a content change.
+
+All participating Mail copies must use the corrected writer. Older copies can still overwrite the shared drafts file unconditionally. Coordinated delivery targets Mail PR77 and Executive PR91 on a host with the inspected atomic `ifMatch` contract. The earlier Mail PR73 and Executive PR77 remain predecessor evidence for the owner to resolve.
+
+### Replacement attachments after a late receipt
+
+A genuine older receipt remains authoritative for its own attempt. A later replacement stays in its own unsent draft requiring a fresh explicit send decision, with a separate identity and no inherited schedule. Matching bytes or complete source evidence can establish attachment equality. A filename and MIME type alone cannot. Explicit hydration provenance and equal bytes survive provider bookkeeping. The writer compares before compaction and retains compact identities of attachment content and formatted bodies.
+
+Allowing retry frees the draft for editing. A late receipt also matches the settled attempt itself when no later hold populated `sendSupersedes`. Controller, provider sync and file persistence share the content comparison and stable derived id. The controller supplies its complete approved snapshot. An existing derived id is retained once. An already-confirmed record keeps its own receipt, content and time, while the older receipt remains separately recorded. Both receipt routes clear submission and obsolete provider-copy metadata from a derived unsent draft.
+
+Recipient comparison uses normalized email addresses separately within To, Cc and Bcc. It tolerates parsed display names, address casing and list order. Body comparison normalizes CRLF and trims surrounding plain-text/raw-HTML whitespace. New compacted HTML digests hash CRLF-normalized, boundary-trimmed HTML. Older digests remain readable through exact or canonical matching candidates. A historical noncanonical digest cannot itself be normalized.
+
+Other HTML serialization changes or missing text/contact data may still lack enough comparison evidence. A provider Sent listing may also omit attachment bytes/digests while using a different reference from the Drafts copy. These cases can keep a conservative extra unsent draft. The person must check Sent and make a fresh decision before sending that copy.
+
+A reconstructed derived record is recognized by a missing baseline or a fingerprint equal to this copy's agreed baseline. A real edit to an agreed draft follows the ordinary merge rule. Rejected snapshots carry a transient fingerprint back to the running copy. The writer also retains that compacted fingerprint in this running copy after a successful rejection, so an edit made while the save completes remains comparable on following saves. Before this copy has any agreed or rejected snapshot for a derived id, it cannot distinguish its first edit from reconstruction against another copy’s explicit discard. That case continues to honor the discard. Explicit pending discards also apply to disk arrivals before the first save. Confirmed sent evidence prevents a reconstructed derived phantom row from returning. Live and unconfirmed attempts retain their evidence protections.
+
+A later revision of an original retried draft can arrive after its receipt-derived draft already exists. When that derived draft is free, its newer revision updates the same stable id. Each file side contributes its revision before the ordinary record merge, so a newer direct edit to the derived draft can still win. Sync and the sender use the same free-draft revision rule. Send and unconfirmed evidence on the existing derived record remains protected. Provider empty-subject placeholders compare with empty subjects, and pending discards do not remove an arriving record with `sentAt`.

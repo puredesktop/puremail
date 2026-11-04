@@ -38,6 +38,10 @@ import {
 } from 'lucide-react'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { sendDraft } from '../lib/mailModel'
+import { CHANGED_REASON, holdDraftForSend, markDraftPreparing, settleDraftNotSent } from '../lib/mailDeliveryStatus'
+import { composeDraftEvidence, composeSaveTarget } from '../hooks/useComposeDraftAutosave'
+import { draftSendFingerprint } from '../lib/mailDrawerDrafts'
+import { composeHoldBlock, composeHoldStillApproved, sendFailure } from '../lib/mailSendRelease'
 import { useOutsideClose } from './useOutsideClose'
 import { scheduleSend } from '../lib/mailScheduledSend'
 import {
@@ -275,9 +279,9 @@ export interface ComposeEditorProps {
   onDock?: () => void
   composeToRef: React.RefObject<HTMLInputElement | null>
   pendingSend: PendingSendState | null
-  schedulePendingSend: (pending: PendingSendState, commit: () => void) => void
+  schedulePendingSend: (pending: PendingSendState, commit: () => void, onStart?: () => void) => boolean
   undoPendingSend: (pendingId: string) => void
-  sendDraftThroughProvider: (provider: MailProvider, draft: Draft) => Promise<MailMessage>
+  sendDraftThroughProvider: (provider: MailProvider, draft: Draft, attempt?: { id: string }) => Promise<MailMessage>
   markDraftSending: (draftId: string, sending: boolean) => void
   setSelectedMailboxId: React.Dispatch<React.SetStateAction<string>>
   setSelectedThreadId: React.Dispatch<React.SetStateAction<string>>
@@ -784,6 +788,35 @@ export function ComposeEditor({
     )
   }
 
+  const windowFields = useRef<ComposeSendSnapshot | null>(null)
+  windowFields.current = { to: composeTo, cc: composeCc, bcc: composeBcc, subject: composeSubject, body: composeBody, bodyHtml: composeBodyHtml, attachments: composeAttachments }
+  // A confirmed send removes the draft: what it last said is what this window's words are compared with.
+  const lastSeenDraft = useRef<Draft | undefined>(undefined)
+  const seenDraft = composeContext?.draftId ? storeRef.current.drafts.find(item => item.id === composeContext.draftId) : undefined
+  if (seenDraft) lastSeenDraft.current = composeDraftEvidence(seenDraft)
+  const windowThread = useRef<string | undefined>(undefined)
+  windowThread.current = composeContext?.threadId
+  /**
+   * The send carries what was approved. Words typed during the hold were not
+   * part of that, so they are kept as a draft of their own, never thrown away.
+   */
+  const keepWordsTypedDuringHold = (approved: ComposeSendSnapshot, context: ComposeReplyContext | null): boolean => {
+    const live = windowFields.current
+    if (variant === 'run' || !live) return false
+    // Closed meanwhile, or now holding another conversation: not later words of this message.
+    if (windowThread.current !== context?.threadId) return false
+    if (!live.to.trim() && !live.cc.trim() && !live.bcc.trim() && !live.subject.trim() && !live.body.trim() && !live.attachments.length) return false
+    // By identity of each attachment: a provider save may fetch its bytes during the hold.
+    const sameFiles = live.attachments.length === approved.attachments.length && live.attachments.every((file, index) => file.id === approved.attachments[index]?.id)
+    if (live.to === approved.to && live.cc === approved.cc && live.bcc === approved.bcc && live.subject === approved.subject && live.body === approved.body && live.bodyHtml === approved.bodyHtml && sameFiles) return false
+    const later = { ...live }
+    const id = createComposeId(context?.kind === 'forward' ? 'draft_forward' : 'draft_reply')
+    setStore(current => context
+      ? createContextDraftStore(current, { ...context, draftId: null }, later, id).nextStore
+      : createComposeDraftStore(current, later, { draftId: createComposeId('draft_compose'), threadId: createComposeId('thread_compose') }).nextStore)
+    return true
+  }
+
   const resetCompose = (): void => {
     // The run card's fields belong to the run screen, which re-seeds them
     // per item; a send never clears them from here.
@@ -928,10 +961,22 @@ export function ComposeEditor({
     if (composeContext) {
       // A reply/forward (or reopened draft) saves back onto its own thread
       // through the one reply-draft path — never as a new compose thread.
-      const context = composeContext
       const newDraftId = createComposeId(
-        context.kind === 'forward' ? 'draft_forward' : 'draft_reply',
+        composeContext.kind === 'forward' ? 'draft_forward' : 'draft_reply',
       )
+      // A draft on its way, unconfirmed or gone is never rewritten from this window.
+      const target = composeSaveTarget(storeRef.current, composeContext.draftId, {
+        to: parseComposeRecipients(composeTo), cc: parseComposeRecipients(composeCc), bcc: parseComposeRecipients(composeBcc),
+        subject: composeSubject, body: bodyWithQuote(composeBody, composeQuote),
+        bodyHtml: composeBodyHtml ? bodyHtmlWithQuote(composeBodyHtml, composeQuote) : composeQuote ? bodyHtmlWithQuote('', composeQuote) : '',
+        attachments: composeAttachments,
+      }, lastSeenDraft.current)
+      if (target === 'nothing') {
+        resetCompose()
+        setComposeOpen(false)
+        return
+      }
+      const context = target === 'apart' ? { ...composeContext, draftId: null } : composeContext
       setStore(
         current =>
           createContextDraftStore(current, context, undefined, newDraftId)
@@ -939,7 +984,7 @@ export function ComposeEditor({
       )
       resetCompose()
       setComposeOpen(false)
-      setCommandNotice('Draft saved.')
+      setCommandNotice(target === 'apart' ? 'That message was left as it was approved. What you typed is saved as a new draft.' : 'Draft saved.')
       return
     }
     const ids = {
@@ -989,13 +1034,33 @@ export function ComposeEditor({
   ): void => {
     const pendingId = `pending_reply_${Date.now()}`
     const sentLabel = context.kind === 'forward' ? 'Forward' : context.kind === 'draft' ? 'Message' : 'Reply'
+    // A saved draft this window is sending: approved as it stands, so a change
+    // made elsewhere during the hold stops the send instead of being overwritten.
+    const heldDraft = context.draftId ? storeRef.current.drafts.find(item => item.id === context.draftId) : undefined
+    const approved = heldDraft && draftSendFingerprint(heldDraft)
+    // This window's own save of the same text during the hold is not a change.
+    const outgoing = heldDraft && createContextDraftStore(storeRef.current, context, snapshot).nextStore.drafts.find(item => item.id === heldDraft.id)
+    const outgoingPrint = outgoing && draftSendFingerprint(outgoing)
     schedulePendingSend(
       {
         id: pendingId,
         target: 'compose',
         label: sentLabel,
+        ...(heldDraft ? { draftId: heldDraft.id } : {}),
       },
       () => {
+        const contextProvider =
+          activeProvider !== 'demo' && navigator.onLine !== false ? mailProviderRef.current : undefined
+        if (heldDraft) {
+          const current = storeRef.current.drafts.find(item => item.id === heldDraft.id)
+          if (!composeHoldStillApproved(current, pendingId, approved, outgoingPrint)) {
+            setStore(store => settleDraftNotSent(store, heldDraft.id, pendingId, CHANGED_REASON))
+            setCommandNotice(CHANGED_REASON)
+            return
+          }
+          // Going to the service: still on its way. Otherwise the hold simply ends here.
+          setStore(store => contextProvider ? markDraftPreparing(store, heldDraft.id, pendingId) : ({ ...store, drafts: store.drafts.map(item => (item.id === heldDraft.id ? { ...item, sendAttempt: undefined } : item)) }))
+        }
         const newDraftId = createComposeId(
           context.kind === 'forward' ? 'draft_forward' : 'draft_reply',
         )
@@ -1009,16 +1074,16 @@ export function ComposeEditor({
           item => item.id === result.draftId,
         )
         if (!draft) return
-        const provider =
-          activeProvider !== 'demo' && navigator.onLine !== false ? mailProviderRef.current : undefined
+        const provider = contextProvider
         const home = providerName(activeProvider)
         if (provider) {
           setStore(() => result.nextStore)
           markDraftSending(result.draftId, true)
+          const keptContext = keepWordsTypedDuringHold(snapshot, context)
           resetCompose()
           setComposeOpen(false)
-          setCommandNotice(`Sending through ${home}…`)
-          void sendDraftThroughProvider(provider, draft)
+          setCommandNotice(keptContext ? `Sending through ${home}… What you typed after pressing Send is saved as a new draft.` : `Sending through ${home}…`)
+          void sendDraftThroughProvider(provider, draft, heldDraft ? { id: pendingId } : undefined)
             .then(message => {
               setStore(current =>
                 sendDraft(current, result.draftId, undefined, {
@@ -1036,12 +1101,10 @@ export function ComposeEditor({
               recordReplySend(snapshot.subject)
             })
             .catch(error => {
+              const failure = sendFailure(storeRef.current, result.draftId, error, home, 'the draft is saved on the thread')
+              if (failure.outcome === 'submitted') return
               reportSendFailure(result.draftId, error)
-              setCommandNotice(
-                error instanceof Error
-                  ? `Could not send through ${home} — the draft is saved on the thread. (${error.message})`
-                  : `Could not send through ${home} — the draft is saved on the thread.`,
-              )
+              setCommandNotice(failure.notice)
             })
             .finally(() => markDraftSending(result.draftId, false))
           return
@@ -1050,6 +1113,7 @@ export function ComposeEditor({
           // A real account whose provider is not ready — never fake a send.
           setStore(() => result.nextStore)
           reportSendFailure(result.draftId, 'Mail is disconnected — message not sent.')
+          keepWordsTypedDuringHold(snapshot, context)
           resetCompose()
           setComposeOpen(false)
           setCommandNotice(
@@ -1075,6 +1139,7 @@ export function ComposeEditor({
           }
         })
         setSelectedThreadId(result.threadId)
+        keepWordsTypedDuringHold(snapshot, context)
         resetCompose()
         setComposeOpen(false)
         setCommandNotice(
@@ -1082,7 +1147,21 @@ export function ComposeEditor({
         )
         recordReplySend(snapshot.subject)
       },
+      () => {
+        if (heldDraft) setStore(store => holdDraftForSend(store, heldDraft.id, { id: pendingId, approved: approved!, at: new Date().toISOString() }))
+      },
     )
+  }
+
+  /**
+   * The window's draft may have moved on while it stayed open: sent from the
+   * team's card, unconfirmed, conflicted or already waiting. Asked by id, since
+   * a confirmed send removes the draft, and a send then would mint a new one.
+   */
+  const contextSendBlocked = (): boolean => {
+    const blocked = composeContext?.draftId ? composeHoldBlock(storeRef.current, composeContext.draftId) : null
+    if (blocked) setCommandNotice(blocked)
+    return Boolean(blocked)
   }
 
   const scheduleComposeSend = (sendAt: string): void => {
@@ -1095,6 +1174,7 @@ export function ComposeEditor({
     setSubjectReminderOpen(false)
     pendingSubjectActionRef.current = null
     if (!canSendCompose) return
+    if (contextSendBlocked()) return
     const sendAtMs = Date.parse(sendAt)
     if (!Number.isFinite(sendAtMs) || sendAtMs <= Date.now()) {
       setCommandNotice('Pick a future time for the scheduled send.')
@@ -1161,6 +1241,7 @@ export function ComposeEditor({
     if (!canSendCompose) return
     // Only a person's own press sends (#1017): a scripted click is ignored.
     if (!isPersonGesture(event)) return
+    if (contextSendBlocked()) return
     // Subject reminder: "(no subject)" in someone's inbox is almost always
     // an accident — ask once, inline, before the message leaves.
     if (!subjectReminderOpen && !composeSubject.trim()) {
@@ -1228,9 +1309,10 @@ export function ComposeEditor({
           if (!draft) return
           setStore(() => result.nextStore)
           markDraftSending(result.draftId, true)
+          const keptNew = keepWordsTypedDuringHold(snapshot, null)
           resetCompose()
           setComposeOpen(false)
-          setCommandNotice(`Sending through ${providerName(activeProvider)}…`)
+          setCommandNotice(keptNew ? `Sending through ${providerName(activeProvider)}… What you typed after pressing Send is saved as a new draft.` : `Sending through ${providerName(activeProvider)}…`)
           void sendDraftThroughProvider(provider, draft)
             .then(message => {
               let sentMailboxId = ''
@@ -1260,12 +1342,10 @@ export function ComposeEditor({
               recordComposeSend(snapshot.subject)
             })
             .catch(error => {
+              const failure = sendFailure(storeRef.current, result.draftId, error, providerName(activeProvider), 'the draft is saved in Drafts')
+              if (failure.outcome === 'submitted') return
               reportSendFailure(result.draftId, error)
-              setCommandNotice(
-                error instanceof Error
-                  ? `Could not send through ${providerName(activeProvider)} — the draft is saved in Drafts. (${error.message})`
-                  : `Could not send through ${providerName(activeProvider)} — the draft is saved in Drafts.`,
-              )
+              setCommandNotice(failure.notice)
             })
             .finally(() => markDraftSending(result.draftId, false))
           return
@@ -1282,6 +1362,7 @@ export function ComposeEditor({
             return markDraftSendFailed(result.nextStore, result.draftId, 'Mail is disconnected — message not sent.')
           })
           setSelectedThreadId(draftThreadId)
+          keepWordsTypedDuringHold(snapshot, null)
           resetCompose()
           setComposeOpen(false)
           setCommandNotice(
@@ -1308,6 +1389,7 @@ export function ComposeEditor({
         })
         setSelectedMailboxId(sentMailboxId)
         setSelectedThreadId(threadId)
+        keepWordsTypedDuringHold(snapshot, null)
         resetCompose()
         setComposeOpen(false)
         setCommandNotice('Message sent. Attachments were included.')
@@ -2076,7 +2158,7 @@ export function ComposeEditor({
                 }
               >
                 {composeSendPending ? (
-                  <PendingSendLabel>Sent · Undo</PendingSendLabel>
+                  <PendingSendLabel>Sending · Undo</PendingSendLabel>
                 ) : (
                   <>
                     Send &amp; next
@@ -2173,7 +2255,7 @@ export function ComposeEditor({
                   onClick={sendComposeMessage}
                 >
                   {composeSendPending ? (
-                    <PendingSendLabel>Sent · Undo</PendingSendLabel>
+                    <PendingSendLabel>Sending · Undo</PendingSendLabel>
                   ) : (
                     <>
                       Send
@@ -2677,7 +2759,7 @@ export function ComposeEditor({
           onClick={sendComposeMessage}
         >
           {composeSendPending ? (
-            <PendingSendLabel>Sent · Undo</PendingSendLabel>
+            <PendingSendLabel>Sending · Undo</PendingSendLabel>
           ) : (
             'Send'
           )}

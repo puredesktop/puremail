@@ -1,3 +1,4 @@
+import { withReceiptContentIdentity } from './mailAttachmentIdentity'
 /**
  * Empty mailbox initialization and store persistence, extracted from mailModel.ts (phase 3).
  * Imports from mailModel are call-time only, so the module cycle is inert.
@@ -17,6 +18,7 @@ import {
 import { compactMailText, stripHtmlToText } from './mailTextUtils'
 import type {
   Attachment,
+  Draft,
   MailMessage,
   MailStore,
   MailThread,
@@ -35,6 +37,9 @@ function strippedPersistedAttachment(attachment: Attachment): Attachment {
 }
 
 export function compactPersistedMessage(message: MailMessage): MailMessage {
+  if (message.deliveryAccepted) message = withReceiptContentIdentity(message)
+  // The tolerant parser retains old/partial messages; missing metadata is unknown.
+  if (!Array.isArray(message.attachments)) return message
   const attachments = message.attachments.some(
     attachment => attachment.content && attachment.remote,
   )
@@ -65,6 +70,12 @@ export function compactPersistedMessage(message: MailMessage): MailMessage {
  * remote refs only, never re-fetchable blob content, and no single-fetch
  * sync metadata.
  */
+export function compactPersistedDraft(draft: Draft): Draft {
+  return draft.attachments.some(attachment => attachment.content && attachment.remote)
+    ? { ...draft, attachments: draft.attachments.map(strippedPersistedAttachment) }
+    : draft
+}
+
 export function persistableMailStore(store: MailStore): MailStore {
   return {
     ...store,
@@ -76,16 +87,7 @@ export function persistableMailStore(store: MailStore): MailStore {
       // synced-from-Gmail. Authoritative sent history comes from Gmail sync.
       .filter(message => !isUnconfirmedGmailSend(message))
       .map(compactPersistedMessage),
-    drafts: store.drafts.map(draft =>
-      draft.attachments.some(
-        attachment => attachment.content && attachment.remote,
-      )
-        ? {
-            ...draft,
-            attachments: draft.attachments.map(strippedPersistedAttachment),
-          }
-        : draft,
-    ),
+    drafts: store.drafts.map(compactPersistedDraft),
   }
 }
 

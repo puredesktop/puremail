@@ -18,7 +18,7 @@ import {
   finalizeRunDraftForSend,
   guessRunFieldMap,
   markRunItemCommitted,
-  markRunItemSent,
+  markRunItemSending,
   markRunItemUnsent,
   nextPendingIndex,
   noteTextFromBodyHtml,
@@ -353,7 +353,7 @@ describe('rendering', () => {
           : draft,
       ),
     }
-    next = sendDraft(next, itemB!.draftId, '2026-09-02T11:00:00.000Z')
+    next = sendDraft(next, itemB!.draftId, '2026-09-02T11:00:00.000Z', { sentGmailMessageId: 'gmail_b' })
     next = { ...next, runs: next.runs!.map(item => reconcileRun(next, item)) }
     expect(next.runs![0]!.items[1]!.status).toBe('sent')
     // Change the template, re-render.
@@ -473,36 +473,42 @@ describe('the loop', () => {
     expect(previousIndex(run, 0)).toBe(-1)
   })
 
-  it('send & next: marks sent, advances, finishes when nothing is open', () => {
+  it('send & next: on its way until confirmed, advances, finishes when nothing is open', () => {
     let run = startRun(runWith(['pending', 'pending', 'pending']), NOW)
     expect(run.status).toBe('running')
     expect(run.items[0]!.status).toBe('reviewing')
-    run = markRunItemSent(run, 'd0', { pendingSendId: 'p1' }, NOW)
+    run = markRunItemSending(run, 'd0', { attemptId: 'p1', pendingSendId: 'p1' }, NOW)
     run = advanceRun(run, NOW)
     expect(run.cursor).toBe(1)
-    expect(run.items[0]!.status).toBe('sent')
+    expect(run.items[0]!.status).toBe('sending')
+    expect(run.items[0]!.sentAt).toBeUndefined()
     expect(run.items[0]!.pendingSendId).toBe('p1')
+    expect(runProgress(run)).toMatchObject({ sent: 0, leaving: 1 })
     expect(run.items[1]!.status).toBe('reviewing')
-    run = markRunItemCommitted(run, 'd0', 'msg_1', NOW)
+    run = markRunItemCommitted(run, 'd0', 'msg_1', NOW, 'p1')
+    expect(run.items[0]!.status).toBe('sent')
     expect(run.items[0]!.pendingSendId).toBeUndefined()
     expect(run.items[0]!.sentMessageId).toBe('msg_1')
     run = skipRunItem(run, 'd1', undefined, NOW)
     run = advanceRun(run, NOW)
     expect(run.cursor).toBe(2)
-    run = markRunItemSent(run, 'd2', {}, NOW)
+    run = markRunItemSending(run, 'd2', { attemptId: 'p2' }, NOW)
     run = advanceRun(run, NOW)
+    expect(run.status).toBe('running')
+    run = markRunItemCommitted(run, 'd2', 'msg_2', NOW, 'p2')
     expect(run.status).toBe('done')
-    expect(runProgress(run)).toEqual({ total: 3, sent: 2, skipped: 1, missing: 0, pending: 0, toGo: 0 })
+    expect(runProgress(run)).toEqual({ total: 3, sent: 2, skipped: 1, missing: 0, pending: 0, toGo: 0, leaving: 0, unconfirmed: 0, conflict: 0 })
     expect(runSummaryLine(run)).toBe('Run: Test · 2 sent · 1 skipped · done')
   })
 
-  it('undo (or a provider failure) puts the item back and the cursor on it', () => {
-    let run = runWith(['sent', 'sent', 'pending'], 2)
+  it('undo (or a provider failure) puts the item back and the cursor on it; a confirmed send stays', () => {
+    let run = runWith(['sent', 'sending', 'pending'], 2)
     run = markRunItemUnsent(run, 'd1', 'Gmail refused the send.', NOW)
     expect(run.items[1]!.status).toBe('pending')
     expect(run.items[1]!.skipReason).toBe('Gmail refused the send.')
     expect(run.cursor).toBe(1)
-    const done = markRunItemUnsent({ ...runWith(['sent', 'sent']), status: 'done' }, 'd0', undefined, NOW)
+    expect(markRunItemUnsent(run, 'd0', 'Too late', NOW).items[0]!.status).toBe('sent')
+    const done = markRunItemUnsent({ ...runWith(['sending', 'sent']), status: 'done' }, 'd0', undefined, NOW)
     expect(done.status).toBe('running')
   })
 
@@ -522,8 +528,9 @@ describe('the loop', () => {
 
   it('a skipped item revisited can still be sent; a sent item cannot be skipped', () => {
     let run = runWith(['skipped', 'sent'])
-    run = markRunItemSent(run, 'd0', {}, NOW)
-    expect(run.items[0]!.status).toBe('sent')
+    run = markRunItemSending(run, 'd0', { attemptId: 'a' }, NOW)
+    expect(run.items[0]!.status).toBe('sending')
+    expect(skipRunItem(run, 'd0', undefined, NOW).items[0]!.status).toBe('sending')
     expect(skipRunItem(run, 'd1', undefined, NOW).items[1]!.status).toBe('sent')
   })
 })
@@ -537,7 +544,7 @@ describe('reconciling with the drafts as they are now', () => {
       ...rendered.store,
       drafts: rendered.store.drafts.filter(draft => draft.id !== a!.draftId),
     }
-    next = sendDraft(next, b!.draftId, '2026-09-02T11:00:00.000Z')
+    next = sendDraft(next, b!.draftId, '2026-09-02T11:00:00.000Z', { sentGmailMessageId: 'gmail_b' })
     next = {
       ...next,
       drafts: next.drafts.map(draft =>
@@ -585,7 +592,7 @@ describe('reconciling with the drafts as they are now', () => {
     }
     let next = sendDraft(rendered.store, draft.id, '2026-09-02T11:00:00.000Z', { sentMessage: receipt, sentMessageId: receipt.id })
     // What the shell's onCommitted records for an IMAP send.
-    const committed = markRunItemCommitted(markRunItemSent(rendered.run, draft.id, {}, NOW), draft.id, receipt.id, NOW)
+    const committed = markRunItemCommitted(markRunItemSending(rendered.run, draft.id, { attemptId: 'a' }, NOW), draft.id, receipt.id, NOW, 'a')
     expect(committed.items[0]!.sentMessageId).toBe('imap_sent_1790000000000')
     expect(next.messages.some(message => message.id === receipt.id)).toBe(false)
 
@@ -603,9 +610,6 @@ describe('reconciling with the drafts as they are now', () => {
       ),
     }
     expect(reconcileRun(next, reconciled).items[0]!.sentMessageId).toBe('imap_uid_42')
-    // Under the undo hold nothing is repointed.
-    const held = markRunItemSent(rendered.run, draft.id, { pendingSendId: 'pending_1' }, NOW)
-    expect(reconcileRun(next, held).items[0]!.sentMessageId).toBeUndefined()
   })
 
   it('a rendered draft deleted from Drafts leaves no empty thread behind', () => {

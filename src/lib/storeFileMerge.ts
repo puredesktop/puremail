@@ -16,18 +16,17 @@ import type { MailStore } from '../types'
  * id, strings by value, objects by key. Rules:
  *
  * 1. An entry only one side changed since the baseline takes that side.
- * 2. Both changed: the later `updatedAt` (or date, for a plain date value); a
- *    scheduled send keeps the status furthest along; otherwise this copy, whose
- *    save is the newer.
+ * 2. Both changed: the later `updatedAt` (or date, for a plain date value);
+ *    otherwise this copy, whose save is the newer.
  * 3. An entry in the baseline and missing from either side was deleted, and
  *    stays deleted: there is no edit that brings it back.
  * 4. An entry not in the baseline is new, and is kept.
  *
- * Fields this file does not own (drafts and runs live in `mail-drafts.json`,
- * see draftsFileMerge.ts) are never merged here.
+ * Fields this file does not own (drafts, runs and scheduled sends live in
+ * `mail-drafts.json`, see draftsFileMerge.ts) are never merged here.
  */
 
-const NOT_HERE = new Set(['drafts', 'runs', 'aiTriage', 'syncCoverage'])
+const NOT_HERE = new Set(['drafts', 'runs', 'scheduledSends', 'aiTriage', 'syncCoverage'])
 
 type Entries = Map<string, { fingerprint: string; value: unknown }>
 type Shape = { kind: 'records'; key: 'id' | 'threadId' } | { kind: 'strings' } | { kind: 'object' } | { kind: 'value' }
@@ -119,14 +118,10 @@ const time = (value: unknown): number => {
 }
 const isDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) && time(value) > 0
 
-/** How far along a scheduled send is: it never moves back, or it goes out again. */
-const SCHEDULE_ORDER = ['scheduled', 'cancelled', 'failed', 'sending', 'sent']
-
 /** Both sides changed this entry since the baseline. True when the file's is the one to keep. */
-function fileWins(field: string, mine: unknown, theirs: unknown): boolean {
+function fileWins(mine: unknown, theirs: unknown): boolean {
   if (isDate(mine) && isDate(theirs)) return time(theirs) > time(mine)
   if (!isPlainObject(mine) || !isPlainObject(theirs)) return false
-  if (field === 'scheduledSends') return SCHEDULE_ORDER.indexOf(String(theirs.status)) > SCHEDULE_ORDER.indexOf(String(mine.status))
   return time(theirs.updatedAt) > time(mine.updatedAt)
 }
 
@@ -191,7 +186,7 @@ export function mergeStoreFile(input: {
       let takeFile = false
       if (mine !== theirs) {
         if (mine === held) takeFile = true
-        else if (theirs !== held) takeFile = fileWins(field, memory[field], disk[field])
+        else if (theirs !== held) takeFile = fileWins(memory[field], disk[field])
       }
       const kept = takeFile ? disk[field] : memory[field]
       if (kept !== undefined) merged[field] = kept
@@ -232,7 +227,7 @@ export function mergeStoreFile(input: {
       const heldNow = held.get(key)
       let takeFile = false
       if (onDisk.fingerprint !== heldNow) {
-        takeFile = entry.fingerprint === heldNow || fileWins(field, entry.value, onDisk.value)
+        takeFile = entry.fingerprint === heldNow || fileWins(entry.value, onDisk.value)
       }
       if (takeFile) {
         keep(key, onDisk.value)

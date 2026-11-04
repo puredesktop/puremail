@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { applyDraftsFileChanges, baselineOf, mergeRecords, withoutTombstoned, type Tombstone } from './draftsFileMerge'
+import { applyDraftsFileChanges, baselineOf, mergeRecords, mergeScheduledSends, recordFingerprint, withoutTombstoned, type Tombstone } from './draftsFileMerge'
 import { emptyMailStore } from './mailStoreData'
-import type { Draft } from '../types'
+import type { Draft, ScheduledSend } from '../types'
 
 const NOW = '2026-11-02T12:00:00.000Z'
 
@@ -9,8 +9,8 @@ function draft(id: string, patch: Partial<Draft> = {}): Draft {
   return { id, threadId: 't', to: [], subject: '', body: id, attachments: [], updatedAt: '2026-11-02T10:00:00.000Z', syncState: 'pending', ...patch }
 }
 
-const merge = (input: { baseline?: Draft[]; memory?: Draft[]; disk?: Draft[]; tombstones?: Tombstone[]; discards?: Map<string, string> }) =>
-  mergeRecords<Draft>({ baseline: baselineOf(input.baseline ?? []), memory: input.memory ?? [], disk: input.disk ?? [], tombstones: input.tombstones ?? [], discards: input.discards, now: NOW })
+const merge = (input: { baseline?: Draft[]; memory?: Draft[]; disk?: Draft[]; tombstones?: Tombstone[]; discards?: Map<string, string>; confirmed?: () => boolean }) =>
+  mergeRecords<Draft>({ baseline: baselineOf(input.baseline ?? []), memory: input.memory ?? [], disk: input.disk ?? [], tombstones: input.tombstones ?? [], discards: input.discards, confirmed: input.confirmed, now: NOW })
 
 const ids = (drafts: Draft[]) => drafts.map(item => item.id).sort()
 
@@ -119,7 +119,7 @@ describe('tombstone helpers', () => {
 })
 
 describe('taking another copy’s saves into memory', () => {
-  const empty = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], sentReceipts: [] }
+  const empty = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], scheduledSends: [], sentReceipts: [] }
 
   it('is the same store when nothing arrived', () => {
     const store = emptyMailStore()
@@ -139,5 +139,103 @@ describe('taking another copy’s saves into memory', () => {
     const next = applyDraftsFileChanges(store, { ...empty, drafts: [draft('new', { threadId: 't2' })], removedDrafts: [{ id: 'gone', deletedAt: NOW, reason: 'discarded' }], recovery: { accounts: [], mailboxes: [], threads: [thread] } })
     expect(ids(next.drafts)).toEqual(['new'])
     expect(next.threads.map(item => item.id)).toEqual(['t2'])
+  })
+})
+
+describe('sends and schedules in the merged file', () => {
+  const attempt = { id: 'attempt_1', at: NOW, phase: 'held' as const, approved: 'fingerprint' }
+  const base = draft('d')
+  const empty = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], scheduledSends: [], sentReceipts: [] }
+
+  it('an attempt under way beats a later edit from a copy that did not know of it', () => {
+    const mine = draft('d', { sendAttempt: attempt })
+    const theirs = draft('d', { body: 'edited elsewhere', updatedAt: '2026-11-02T11:00:00.000Z' })
+    expect(merge({ baseline: [base], memory: [mine], disk: [theirs] }).merged).toEqual([mine])
+    expect(merge({ baseline: [base], memory: [theirs], disk: [mine] }).merged).toEqual([mine])
+  })
+
+  it('the record settling an attempt beats that attempt', () => {
+    const stale = draft('d', { sendAttempt: { ...attempt, phase: 'preparing' } })
+    const undone = draft('d', { sendSettledAttemptId: attempt.id, sendUndoneAt: NOW })
+    expect(merge({ baseline: [base], memory: [stale], disk: [undone] }).merged).toEqual([undone])
+    expect(merge({ baseline: [base], memory: [undone], disk: [stale] }).merged).toEqual([undone])
+  })
+
+  it('a delete from another copy does not erase a send begun here since', () => {
+    const mine = draft('d', { sendAttempt: attempt })
+    const result = merge({ baseline: [base], memory: [mine], tombstones: [{ id: 'd', deletedAt: NOW, reason: 'discarded' }] })
+    expect(result.merged).toEqual([mine])
+    expect(result.removed).toEqual([])
+    expect(result.tombstones).toEqual([])
+  })
+
+  it('a removal with no confirmed copy does not erase a send, even one already agreed with the file', () => {
+    const copied = draft('d', { sendAttempt: attempt })
+    const tombstone: Tombstone = { id: 'd', deletedAt: NOW, reason: 'removed' }
+    const result = merge({ baseline: [copied], memory: [copied], tombstones: [tombstone] })
+    expect(result.merged).toEqual([copied])
+    expect(result.removed).toEqual([])
+    expect(result.tombstones).toEqual([])
+  })
+
+  it('a confirmed copy is what ends it: then the removal stands', () => {
+    const copied = draft('d', { sendAttempt: attempt })
+    const tombstone: Tombstone = { id: 'd', deletedAt: NOW, reason: 'removed' }
+    const result = merge({ baseline: [copied], memory: [copied], tombstones: [tombstone], confirmed: () => true })
+    expect(result.merged).toEqual([])
+    expect(result.removed).toEqual([tombstone])
+  })
+
+  it('an unconditional write that knew nothing of an attempt this copy still holds does not end it', () => {
+    const mine = draft('d', { sendAttempt: attempt })
+    expect(merge({ baseline: [mine], memory: [mine], disk: [base] }).merged).toEqual([mine])
+  })
+
+  it('an arrival saved without knowing of the attempt leaves it in memory; one that settled it does not', () => {
+    const store = { ...emptyMailStore(), drafts: [draft('d', { sendAttempt: attempt })] }
+    const edited = draft('d', { body: 'edited', updatedAt: '2026-11-02T11:00:00.000Z' })
+    expect(applyDraftsFileChanges(store, { ...empty, drafts: [edited] }).drafts[0]!.sendAttempt).toEqual(attempt)
+    const settled = draft('d', { sendSettledAttemptId: attempt.id, sendState: 'failed', updatedAt: '2026-11-02T11:00:00.000Z' })
+    expect(applyDraftsFileChanges(store, { ...empty, drafts: [settled] }).drafts[0]).toEqual(settled)
+  })
+
+  it('a pending discard without a baseline retains a confirmed sent record arriving from disk', () => {
+    const sent = draft('sent', { sentAt: NOW })
+    const result = mergeRecords({ baseline: new Map(), memory: [] as Draft[], disk: [sent], tombstones: [], discards: new Map([[sent.id, NOW]]), now: NOW })
+    expect(result.merged).toEqual([sent])
+    expect(result.tombstones).toEqual([])
+  })
+
+  it('a discarded receipt-derived copy stays removed despite clock skew, while a live send and ordinary edits retain their protections', () => {
+    const id = 'draft_compose_after_original_A'
+    const removal: Tombstone = { id, reason: 'discarded', deletedAt: NOW }
+    const rebuilt = draft(id, { updatedAt: '2099-01-01T00:00:00Z' })
+    const take = (record: Draft) => applyDraftsFileChanges({ ...emptyMailStore(), drafts: [record] }, { ...empty, removedDrafts: [removal], rejectedReceiptDrafts: [{ id, fingerprint: recordFingerprint(rebuilt) }] }).drafts
+    expect(take({ ...rebuilt, body: 'Edited after the writer snapshot' })).toEqual([{ ...rebuilt, body: 'Edited after the writer snapshot' }])
+    expect(take(draft(id, { updatedAt: '2099-01-01T00:00:00Z' }))).toEqual([])
+    for (const phase of ['held', 'preparing', 'submitting'] as const) {
+      const live = draft(id, { sendAttempt: { ...attempt, phase } })
+      expect(take(live)).toEqual([live])
+    }
+    const uncertain = draft(id, { sendState: 'uncertain' })
+    expect(take(uncertain)).toEqual([uncertain])
+    const ordinary = draft('provider-listed', { updatedAt: '2099-01-01T00:00:00Z' })
+    expect(applyDraftsFileChanges({ ...emptyMailStore(), drafts: [ordinary] }, { ...empty, removedDrafts: [{ ...removal, id: ordinary.id }] }).drafts).toEqual([ordinary])
+  })
+
+  const entry = (id: string, status: ScheduledSend['status']): ScheduledSend => ({ id, draftId: 'd', threadId: 't', sendAt: NOW, createdAt: NOW, status })
+
+  it('a stale copy cannot revive a stopped schedule, and the stop reaches it', () => {
+    const result = mergeScheduledSends({ baseline: new Set(['s']), memory: [entry('s', 'scheduled')], disk: [entry('s', 'cancelled')] })
+    expect(result.merged).toEqual([entry('s', 'cancelled')])
+    expect(result.arrived).toEqual([entry('s', 'cancelled')])
+    const taken = applyDraftsFileChanges({ ...emptyMailStore(), scheduledSends: [entry('s', 'scheduled')] }, { ...empty, scheduledSends: result.arrived })
+    expect(taken.scheduledSends).toEqual([entry('s', 'cancelled')])
+  })
+
+  it('keeps schedules each copy made, and does not bring back one this copy dropped', () => {
+    const result = mergeScheduledSends({ baseline: new Set(['dropped']), memory: [entry('mine', 'scheduled')], disk: [entry('theirs', 'scheduled'), entry('dropped', 'scheduled')] })
+    expect(result.merged.map(item => item.id)).toEqual(['mine', 'theirs'])
+    expect(result.arrived.map(item => item.id)).toEqual(['theirs'])
   })
 })

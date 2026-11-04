@@ -7,7 +7,7 @@ import { emptyMailStore } from '../lib/mailModel'
 import { writePersistedMailStore } from '../lib/mailPersistence'
 vi.mock('../lib/mailPersistence', () => ({ writePersistedMailStore: vi.fn() }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-const draftChanges = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], sentReceipts: [] }
+const draftChanges = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], scheduledSends: [], sentReceipts: [] }
 const cacheChanges = { fields: {}, values: {} }
 
 it('serializes a send-state flush behind an earlier write and waits for the new snapshot', async () => {
