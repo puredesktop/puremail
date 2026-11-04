@@ -69,6 +69,8 @@ import {
 } from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
 import { isHeldCopy } from '../lib/heldCopy'
+import { useHeldCommand } from '@purescience/platform-ui/bridge/react/heldCommand'
+import { latestThreadFrom } from '../lib/heldMail'
 import { THREAD_LINK_PREFIX, threadLinkTarget } from '../lib/threadLink'
 import { heldCopyFetchDue, heldCopySendRefusal } from '../lib/heldCopySends'
 import { takeComposeIntents } from '../lib/composeIntents'
@@ -561,6 +563,8 @@ export function PureMailShell({
    * reading; Back and Escape return to the index. `selectedThreadId` is kept
    * either way — it is the reader's subject and the list's highlight.
    */
+  // Words the page holding this copy asked it to search for; the box shows them in place of the inbox until Show inbox.
+  const [roomSearch, setRoomSearch] = useState('')
   const [reading, setReading] = useRoomSlot(compactInRoom, initialLayout.reading, false)
   const [focusedMessageId, setFocusedMessageId] = useRoomSlot<string | null>(compactInRoom, null, null)
   const [checkedThreadIds, setCheckedThreadIds] = useRoomSlot<string[]>(compactInRoom, [], [])
@@ -3422,6 +3426,41 @@ export function PureMailShell({
   }
   const openThreadLinkRef = useRef(openThreadLink)
   openThreadLinkRef.current = openThreadLink
+
+  // Told by the page holding this copy: show a search, or open the latest thread from someone with its reply open. Both
+  // do what the person does with the mouse (type in the search, click the row, press Reply), and nothing goes out: the
+  // reply is left open for them to write and send.
+  const [replyWhenOpen, setReplyWhenOpen] = useState<string | null>(null)
+  useEffect(() => {
+    if (!replyWhenOpen || selectedThread?.id !== replyWhenOpen) return
+    setReplyWhenOpen(null)
+    openReplyInCompose('reply')
+  })
+  useHeldCommand((command, text) => {
+    const words = text.trim()
+    if (command === 'search') {
+      setReplyWhenOpen(null)
+      const found = resolveThreadQuery(storeRef.current, selectedAccount?.id, words || 'in:inbox').threads.length
+      if (compactInRoom) setRoomSearch(words)
+      else setCurrentQuery(words || 'in:inbox')
+      setFocusedMessageId(null)
+      setReading(false)
+      setRunScreen(null)
+      setRoomScreen(null)
+      if (!words) return { ok: true, say: 'Showing your inbox.' }
+      return { ok: true, say: found ? `Showing ${found} ${found === 1 ? 'conversation' : 'conversations'} matching “${words}”.` : `Nothing in your mail matches “${words}”.` }
+    }
+    if (command === 'reply') {
+      if (!words) return { ok: false, say: 'Say whose mail to reply to, like: Mira.' }
+      const latest = latestThreadFrom(storeRef.current, words)
+      if (!latest) return { ok: false, say: `No mail from ${words} here.` }
+      openThread(latest.threadId, latest.messageId)
+      setReplyWhenOpen(latest.threadId)
+      const also = latest.alsoMatched.length ? ` There is also mail from ${latest.alsoMatched.join(' and ')}.` : ''
+      return { ok: true, say: `Opened your latest thread from ${latest.who}, “${latest.subject || 'no subject'}”, with a reply ready to write. Nothing is sent.${also}` }
+    }
+    return { ok: false, say: 'Mail can’t do that.' }
+  })
   const emailDocumentRef = useRef(emailDocument)
   emailDocumentRef.current = emailDocument
   useEffect(() => {
@@ -4500,6 +4539,8 @@ export function PureMailShell({
             accountId={selectedAccount?.id}
             onOpen={threadId => openThread(threadId)}
             onNewMessage={openCompose}
+            search={roomSearch}
+            onShowInbox={() => setRoomSearch('')}
           />
         )}
         <ThreadListToolbar
