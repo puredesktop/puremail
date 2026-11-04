@@ -69,6 +69,7 @@ import {
 } from '../lib/executiveShare'
 import { useMailStorePersistence } from '../hooks/useMailStorePersistence'
 import { isHeldCopy } from '../lib/heldCopy'
+import { THREAD_LINK_PREFIX, threadLinkTarget } from '../lib/threadLink'
 import { heldCopyFetchDue, heldCopySendRefusal } from '../lib/heldCopySends'
 import { takeComposeIntents } from '../lib/composeIntents'
 import { applyStoreFileChanges } from '../lib/storeFileMerge'
@@ -3412,6 +3413,15 @@ export function PureMailShell({
   }
   const openDraftLinkRef = useRef(openDraftLink)
   openDraftLinkRef.current = openDraftLink
+  /** Open one mail by its link (purescience://mail/thread/<thread>/<message>): a row of mail on a dashboard. */
+  const openThreadLink = (path: string): void => {
+    const target = threadLinkTarget(storeRef.current, path)
+    if (!target) return
+    if ('notice' in target) setCommandNotice(target.notice)
+    else openThread(target.threadId, target.messageId)
+  }
+  const openThreadLinkRef = useRef(openThreadLink)
+  openThreadLinkRef.current = openThreadLink
   const emailDocumentRef = useRef(emailDocument)
   emailDocumentRef.current = emailDocument
   useEffect(() => {
@@ -3421,6 +3431,10 @@ export function PureMailShell({
     // A draft the executive team left, opened from its Send it? card.
     if (path.startsWith(DRAFT_LINK_PREFIX)) {
       openDraftLinkRef.current(path)
+      return
+    }
+    if (path.startsWith(THREAD_LINK_PREFIX)) {
+      openThreadLinkRef.current(path)
       return
     }
     // purescience:// opens are app requests (compose intents), not files.

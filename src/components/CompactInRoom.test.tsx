@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppFrame } from '@purescience/platform-bridge/components/AppFrame'
 import { useCompactInRoom } from '../hooks/useCompactInRoom'
 import { DRAFT_LINK_PREFIX } from '../lib/executiveShare'
+import { THREAD_LINK_PREFIX } from '../lib/threadLink'
 import { demoMailStore } from '../test/mailFixtures'
 import { CompactInRoomStyle } from './CompactInRoom'
 import { MAIL_LAYOUT_STORAGE_KEY } from './mailShellLayout'
@@ -209,6 +210,23 @@ describe('PureMail beside the Executive app', () => {
     expect(hidden(q('[data-puremail-compose-dock]'))).toBe(false)
     expect(q('[data-puremail-compose-dock] [data-release="send"]')).toBeTruthy()
     expect(q('[data-puremail-compose-dock] [aria-label="To recipients"]')).toBeTruthy()
+  })
+
+  it('opens a mail from a dashboard\'s row on that thread, in the room\'s view, and can reply there', async () => {
+    const thread = store.threads[1]!
+    const message = store.messages.find(each => each.threadId === thread.id && !each.isDraft)!
+    await mountShell(true, { path: `${THREAD_LINK_PREFIX}${encodeURIComponent(thread.id)}/${encodeURIComponent(message.id)}` })
+    expect(document.body.textContent).toContain(thread.subject)
+    expect(q('[aria-label="Inbox"]'), 'the list has given way to the mail').toBeNull()
+    const reply = qq('[aria-label="Mail actions"] button').find(button => /^(reply|.*draft)/i.test(button.textContent ?? ''))
+    expect(hidden(reply ?? null), 'it can be answered').toBe(false)
+    expect(hidden(q(`[id="puremail-message-${message.id}"]`))).toBe(false)
+  })
+
+  it('says so when a dashboard\'s row is not on this desktop, and stays on the inbox', async () => {
+    await mountShell(true, { path: `${THREAD_LINK_PREFIX}gone/gone` })
+    expect(document.body.textContent).toContain('This mail is not in PureMail on this desktop.')
+    expect(inboxRows().length).toBeGreaterThan(0)
   })
 
   it('finds the full app as it was on growing, and again after coming back', async () => {
