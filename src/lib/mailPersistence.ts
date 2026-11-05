@@ -12,6 +12,9 @@ import {
   baselineOf,
   mergeReceipts,
   mergeRecords,
+  mergeScheduledSends,
+  recordConfirmedSent,
+  recordFingerprint,
   withoutTombstoned,
   type DraftsFileChanges,
   type Tombstone,
@@ -26,7 +29,8 @@ import {
   type StoreFileChanges,
   type UnseenChanges,
 } from './storeFileMerge'
-import type { Draft, MailRun, MailStore, MailMessage } from '../types'
+import { draftAfterEarlierReceipt } from './mailDeliveryStatus'
+import type { Draft, MailRun, MailStore, MailMessage, ScheduledSend } from '../types'
 
 export const MAIL_APP_SLUG = 'mail'
 
@@ -58,6 +62,12 @@ interface PersistedDraftsFile {
    * at. Absent in files written before runs existed.
    */
   runs?: MailRun[]
+  /**
+   * With the drafts they would send, in one write: a recovered or undone draft
+   * and its stopped schedule cannot come apart if the cache write fails. Absent
+   * in files written before this; the cache's copy is used then.
+   */
+  scheduledSends?: ScheduledSend[]
   /** Delivery confirmations survive a failed mailbox-cache write. */
   sentReceipts?: MailMessage[]
   recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'>
@@ -71,6 +81,7 @@ interface PersistedDraftsFile {
 interface ParsedDraftsFile {
   drafts: Draft[]
   runs: MailRun[] | null
+  scheduledSends: ScheduledSend[] | null
   sentReceipts: MailMessage[]
   recovery?: Pick<MailStore, 'accounts' | 'mailboxes' | 'threads'>
   draftTombstones: Tombstone[]
@@ -101,6 +112,7 @@ function parseDraftsFile(value: unknown): ParsedDraftsFile | null {
       ? { ...draft, sendState: 'failed' as const, sendError: `Message not sent. An attachment could not be downloaded from its old Drafts copy. Open the draft and reattach the missing file. (${draft.sendError})` }
       : draft), draftTombstones),
     runs: Array.isArray(file.runs) ? withoutTombstoned(file.runs, runTombstones) : null,
+    scheduledSends: Array.isArray(file.scheduledSends) ? file.scheduledSends : null,
     draftTombstones,
     runTombstones,
     ...(typeof file.storeId === 'string' ? { storeId: file.storeId } : {}),
@@ -139,6 +151,7 @@ function withDraftsFile(
     ],
   }
   if (draftsFile.runs) merged.runs = draftsFile.runs
+  if (draftsFile.scheduledSends) merged.scheduledSends = draftsFile.scheduledSends
   // The drafts file is raw JSON; run entries need the same tolerant pass
   // the cache gets.
   return draftsFile.runs ? parsePersistedMailStoreValue(merged) ?? merged : merged
@@ -174,7 +187,23 @@ function clearLegacyLocalStore(): void {
  * file is missing or unreadable: losing the mailbox cache costs a re-fetch,
  * losing drafts costs the user's writing.
  */
-export async function readPersistedMailStore(): Promise<{
+export function readPersistedMailStore(): Promise<{
+  store: MailStore | null
+  migratedFromLocalStorage: boolean
+}> {
+  return loadPersistedMailStore(true)
+}
+
+/**
+ * The saved record as it is now, for a copy already running. Its baselines stay
+ * put: moving them would make what it has not taken in yet read as its own
+ * delete or older edit, and its next save would undo what another copy saved.
+ */
+export async function readSavedMailStore(): Promise<MailStore | null> {
+  return (await loadPersistedMailStore(false)).store
+}
+
+async function loadPersistedMailStore(agree: boolean): Promise<{
   store: MailStore | null
   migratedFromLocalStorage: boolean
 }> {
@@ -193,7 +222,7 @@ export async function readPersistedMailStore(): Promise<{
   ])
   if (storeFile.status === 'fulfilled') {
     cached = parsePersistedMailStoreValue(storeFile.value.value)
-    if (cached) agreeWithStoreFile(cached)
+    if (cached && agree) agreeWithStoreFile(cached)
   } else {
     console.warn('[puremail] mailbox cache unreadable:', storeFile.reason)
   }
@@ -206,7 +235,7 @@ export async function readPersistedMailStore(): Promise<{
   if (draftsFile.value.value !== null && !drafts) {
     throw new Error('Your saved drafts file could not be understood. It has not been changed. Restore a readable copy, then try again.')
   }
-  agreeWithFile(drafts)
+  if (agree) agreeWithFile(drafts, draftsFile.value.version)
 
   if (cached) {
     return {
@@ -236,8 +265,10 @@ export async function readPersistedMailStore(): Promise<{
 const thisCopy = {
   storeId: '',
   file: null as ParsedDraftsFile | null,
+  fileVersion: undefined as string | null | undefined,
   draftBaseline: new Map<string, string>(),
   runBaseline: new Map<string, string>(),
+  scheduleBaseline: new Set<string>(),
   receiptBaseline: new Set<string>(),
   /** Discards not yet in the file, with when. */
   discards: new Map<string, string>(),
@@ -255,11 +286,13 @@ function agreeWithStoreFile(file: unknown): void {
 /** How long a draft from another copy is left for that copy to push to the provider. */
 const ARRIVED_HOLD_MS = 60_000
 
-function agreeWithFile(file: ParsedDraftsFile | null): void {
+function agreeWithFile(file: ParsedDraftsFile | null, version?: string | null): void {
+  thisCopy.fileVersion = version
   thisCopy.file = file
   thisCopy.storeId = file?.storeId || thisCopy.storeId
   thisCopy.draftBaseline = baselineOf(file?.drafts ?? [])
   thisCopy.runBaseline = baselineOf(file?.runs ?? [])
+  thisCopy.scheduleBaseline = new Set((file?.scheduledSends ?? []).map(entry => entry.id))
   thisCopy.receiptBaseline = new Set((file?.sentReceipts ?? []).map(message => message.id))
 }
 
@@ -297,7 +330,7 @@ export function draftHeldByAnotherCopy(draftId: string, now: number = Date.now()
   return false
 }
 
-const NO_CHANGES: DraftsFileChanges = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], sentReceipts: [] }
+const NO_CHANGES: DraftsFileChanges = { drafts: [], removedDrafts: [], runs: [], removedRuns: [], scheduledSends: [], sentReceipts: [] }
 
 /** The file's value for this store merged with what is on disk, and what arrived from other copies. */
 function mergedDraftsFile(
@@ -311,23 +344,47 @@ function mergedDraftsFile(
   // arrived. That is not this copy deleting it.
   const draftBaseline = new Map(thisCopy.draftBaseline)
   const nowMs = Date.parse(now)
+  const heldInMemory = new Set(persistable.drafts.map(draft => draft.id))
   for (const id of draftBaseline.keys()) {
-    if (draftHeldByAnotherCopy(id, nowMs) && !thisCopy.discards.has(id)) draftBaseline.delete(id)
+    if (!heldInMemory.has(id) && draftHeldByAnotherCopy(id, nowMs) && !thisCopy.discards.has(id)) draftBaseline.delete(id)
+  }
+  const receiptsOnFile = [...persistable.messages, ...(disk?.sentReceipts ?? [])]
+  const earlierReceipt = (record: { id: string; sendSupersedes?: string[] }) => receiptsOnFile.find(message => message.deliveryAccepted && message.sentDraftId === record.id && message.sentAttemptId && record.sendSupersedes?.includes(message.sentAttemptId))
+  const laterWords = new Map<string, Draft>()
+  const withEarlierReceipt = (record: Draft): Draft => {
+    const receipt = earlierReceipt(record)
+    if (!receipt) return record
+    const { evidence, later } = draftAfterEarlierReceipt(record, receipt)
+    if (later && !persistable.drafts.some(draft => draft.id === later.id) && !disk?.drafts.some(draft => draft.id === later.id)) { const previous = laterWords.get(later.id); if (!previous || Date.parse(later.updatedAt) > Date.parse(previous.updatedAt)) laterWords.set(later.id, later) }
+    return evidence
   }
   const drafts = mergeRecords<Draft>({
     baseline: draftBaseline,
-    memory: persistable.drafts,
-    disk: disk?.drafts ?? [],
+    memory: persistable.drafts.map(withEarlierReceipt),
+    disk: (disk?.drafts ?? []).map(withEarlierReceipt),
     tombstones: disk?.draftTombstones ?? [],
     discards: thisCopy.discards,
+    confirmed: record => !earlierReceipt(record) && recordConfirmedSent(receiptsOnFile, record),
     now,
   })
+  for (const later of laterWords.values()) { drafts.merged.push(later); drafts.arrived.push(later) }
+  // Receipt stamping above is an application change too, even when both
+  // preprocessed sides compare equal in the merge.
+  for (const kept of drafts.merged) {
+    const held = persistable.drafts.find(draft => draft.id === kept.id)
+    if (held && recordFingerprint(held) !== recordFingerprint(kept) && !drafts.arrived.some(draft => draft.id === kept.id)) drafts.arrived.push(kept)
+  }
   const runs = mergeRecords<MailRun>({
     baseline: thisCopy.runBaseline,
     memory: persistable.runs ?? [],
     disk: disk?.runs ?? [],
     tombstones: disk?.runTombstones ?? [],
     now,
+  })
+  const schedules = mergeScheduledSends({
+    baseline: thisCopy.scheduleBaseline,
+    memory: persistable.scheduledSends ?? [],
+    disk: disk?.scheduledSends ?? [],
   })
   const receipts = mergeReceipts({
     baseline: thisCopy.receiptBaseline,
@@ -349,12 +406,13 @@ function mergedDraftsFile(
     value: {
       drafts: drafts.merged,
       runs: runs.merged,
+      scheduledSends: schedules.merged,
       recovery: {
         accounts: [...persistable.accounts, ...borrowedAccounts],
         mailboxes: [...persistable.mailboxes, ...borrowedMailboxes],
         threads: [...persistable.threads.filter(thread => homeIds.has(thread.id)), ...borrowed],
       },
-      sentReceipts: receipts.merged.map(message => ({ ...message, attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) })),
+      sentReceipts: receipts.merged.map(message => ({ ...message, ...(Array.isArray(message.attachments) ? { attachments: message.attachments.map(({ content: _content, ...attachment }) => attachment) } : {}) })),
       draftTombstones: drafts.tombstones,
       runTombstones: runs.tombstones,
       storeId: disk?.storeId || draftsStoreId(),
@@ -364,6 +422,7 @@ function mergedDraftsFile(
       removedDrafts: drafts.removed,
       runs: runs.arrived,
       removedRuns: runs.removed,
+      scheduledSends: schedules.arrived,
       sentReceipts: receipts.arrived,
       ...(borrowed.length ? { recovery: { accounts: borrowedAccounts, mailboxes: borrowedMailboxes, threads: borrowed } } : {}),
     },
@@ -387,8 +446,8 @@ async function readDraftsFile(): Promise<{ raw: unknown; file: ParsedDraftsFile 
 
 const MAX_MERGE_TRIES = 5
 
-/** The cache as this copy would file it. Drafts and runs have their own file; a second copy here could disagree. */
-const storeFileValue = (store: MailStore): Record<string, unknown> => ({ ...persistableMailStore(store), drafts: [], runs: [] })
+/** The cache as this copy would file it. Drafts, runs and schedules have their own file; a second copy here could disagree. */
+const storeFileValue = (store: MailStore): Record<string, unknown> => ({ ...persistableMailStore(store), drafts: [], runs: [], scheduledSends: [] })
 
 /**
  * Merge this copy into mail-store.json (storeFileMerge.ts) and write only if that
@@ -449,7 +508,7 @@ async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<Dr
     const { raw, file, version } = await readDraftsFile()
     const { value, changes } = mergedDraftsFile(store, file, now)
     if (sameContent(value, raw, ignoreHomes)) {
-      agreeWithFile(file)
+      agreeWithFile(file, version)
       thisCopy.discards.clear()
       return holdArrivals(changes)
     }
@@ -460,7 +519,7 @@ async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<Dr
       ...(version !== undefined ? { ifMatch: version } : {}),
     })
     if (written.conflict) continue
-    agreeWithFile(parseDraftsFile(JSON.parse(JSON.stringify(value))))
+    agreeWithFile(parseDraftsFile(JSON.parse(JSON.stringify(value))), written.version)
     thisCopy.discards.clear()
     return holdArrivals(changes)
   }
@@ -484,11 +543,13 @@ export async function syncDraftsFile(store: MailStore): Promise<DraftsFileChange
 
 /**
  * The page is going away: an awaited read may never come back, so merge with
- * the file as last read and write at once.
+ * the file as last read and conditionally write at once. A stale view must
+ * never replace durable send evidence. No version means no safe exit write.
  */
 export function writeDraftsFileBeforeUnload(store: MailStore): void {
+  if (thisCopy.fileVersion === undefined) return
   const { value } = mergedDraftsFile(store, thisCopy.file, new Date().toISOString())
-  void writePlatformStorageJson({ appSlug: MAIL_APP_SLUG, fileName: MAIL_DRAFTS_FILE, value }).catch(() => {})
+  void writePlatformStorageJson({ appSlug: MAIL_APP_SLUG, fileName: MAIL_DRAFTS_FILE, value, ifMatch: thisCopy.fileVersion }).catch(() => {})
 }
 
 /**

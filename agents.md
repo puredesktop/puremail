@@ -404,6 +404,26 @@ Run change tools reply with what changed, not the run or the template:
 `getDraft`), and `setRunRecipients` / `renderRun` list the first 20
 invalid, duplicate or excluded rows with totals — `getRun` has them all.
 
+## Sent and not sent
+
+Every view (run progress, `getDraft`, `listDrafts`, `getRun`, the team's status file) reads one interpretation, `draftDelivery` in `src/lib/mailDeliveryStatus.ts`. Report what it says:
+
+- `held`: in the undo hold. Nothing has left. `submitting`: going to the mail service, not confirmed.
+- `not_submitted` (with a reason): known not to have left. A person may send it again.
+- `unconfirmed`: it may have gone. Nothing retries it; someone checks Sent and allows another attempt.
+- `conflict`: edited in another mail app; resolve it first.
+- `submitted`: the mail service confirmed it. Say "sent"; never say it was received or read.
+
+A held or unconfirmed draft or run item is not sent, and its content cannot be changed: Undo stops a hold, and the changed draft then needs a fresh approval. A second approval of the same draft reports the attempt under way. Words typed in a window open on such a draft stay in that window and are not saved over it. They reach the draft if Undo or a known failure frees it, and become a new unsent draft if it went or if the window closes first.
+
+Reopening Mail settles interrupted sends from the record and never starts or retries one. Only that attempt's own not-sent record or its Undo counts as known not sent. A saved hold, preparation or marker is a snapshot and shows nothing about whether its window has stopped: a suspended window can wake and send, and no age, silence, unavailable channel or clock reading says otherwise. So a send nobody claims reads `unconfirmed` everywhere, and someone checks Sent and allows another attempt (the recovery panel's "I checked Sent — allow retry"). If that window does wake before anything has left, its marker's save takes in that reading, so it stops without calling the mail service and records its own known-not-sent outcome; a receipt that arrives later is still the answer. Two windows that both start the same send are decided by the same save: the drafts file takes one marker first, and the other stops, whatever their clocks. A copy already sent, found during that save, stops it too. An old schedule on an interrupted draft does not fire. Undo cancels the draft's schedule too, and an approved attempt known not to have left marks it failed: another attempt is the person's new decision. A schedule on a draft with no interrupted send still goes at its time.
+
+An open Mail window may be carrying out the send (two conversations can each have a Mail tab, and PureCloud tabs share one store), so before settling anything Mail asks the open windows over a same-origin channel and leaves alone what one claims, reading the saved record afresh when it ends. A claim is evidence that a send is live; no claim is evidence of nothing, and the cost of that is a false "check Sent", never a false "not sent". The channel does not reach another device or, perhaps, a frame nested in another app's frame, so a held copy leaves this pass to Mail's own tab. Two windows keep separate copies of the store: a send one starts after the other opened reaches the other only when it next reads the drafts file, on focus or within 15 seconds. That interval is not what keeps it safe: the drafts file merge is (`docs/drafts.md`).
+
+Knowing that an unclaimed send really stopped, so that it could read as not sent with no check by a person, needs something Mail does not have: a host-level answer to "is the Mail instance that owns this attempt still running?", covering nested frames and other devices sharing the store. The shell offers none today, and this app does not invent one.
+
+A discard from a window with an old view cannot erase a send that is held, preparing, submitting or unconfirmed. Only a confirmed copy ends such a record: the draft comes back to the window that removed it, and the team's status file stops saying discarded. A definite failure from an older attempt never rewrites a newer attempt's state, reason, identity or schedule, and identical content does not make them one attempt. An older ambiguous submission is retained separately in `sendUncertainties`, with its own attempt identity, reason and submitted Message-ID. The newer record keeps its own evidence, while every delivery reading is conservatively `unconfirmed`, including during a newer hold or submission. A genuine receipt remains authoritative for its own attempt; the newer record is retained with the confirmation, and different later words are kept as a separate unsent draft.
+
 ## The reading room
 
 The reader can open any message with **Read** and read it like an article.
@@ -459,7 +479,8 @@ model and no network call of its own:
   `draftId`, `takenAt`) or `drafts/refused/` (with a plain `why`, `refusedAt`).
 - writes `drafts/state/<key>.json` for each taken draft when it changes:
   `state` is `draft` (with `to`, `cc`, `subject`, plain `body` as the person
-  edited it, and `version`, getDraft's token), `sent` (`sentAt`,
+  edited it, `version`, getDraft's token, and additive `delivery`: `state`,
+  `reason`, `at`, as under Sent and not sent), `sent` (`sentAt`,
   `sentMessageId`; found by the kept draft's `sentAt`, the receipt's
   `sentDraftId` or the local `msg_sent_<draftId>_` copy), `discarded` (only
   after a real discard, a request or the person's action in Mail, named in
@@ -502,13 +523,14 @@ own memory, over the same files. `lib/twoCopies.test.ts` proves the file rules w
 two loads of the real modules on one fake file; `components/heldCopyShell.test.tsx`
 mounts the shell with a recording provider and proves what a held copy leaves alone.
 
-Every whole-file store is safe with two copies:
+Whole-file stores merge changes between copies:
 
-- `mail-drafts.json`: `lib/draftsFileMerge.ts`, per record, with tombstones.
+- `mail-drafts.json`: `lib/draftsFileMerge.ts`, per record, with tombstones. The fast exit write uses the last agreed version as `ifMatch`, so a stale closing copy cannot erase newer saved evidence. A rejected write cannot guarantee saving last words before forced exit; the exact host prerequisite is in `docs/drafts.md`. Scheduled
+  sends live here, with the drafts they would send, and keep the status furthest along.
 - `mail-store.json`: `lib/storeFileMerge.ts`, three ways against what this copy last
   agreed with the file on: records by id, strings by value, objects by key. A record
-  one side changed takes that side; both changed keeps the later `updatedAt`, a
-  scheduled send keeps the status furthest along; deleted stays deleted. A save with
+  one side changed takes that side; both changed keeps the later `updatedAt`;
+  deleted stays deleted. A save with
   nothing changed reads and writes nothing. A copy takes what others saved on each
   save, every minute and on focus.
 - `mail-annotations.json`, `mail-triage.json`: the lock as before, plus a conditional

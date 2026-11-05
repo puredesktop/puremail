@@ -1,4 +1,6 @@
 node_modules/
+# A linked install is a symlink, which the line above does not match.
+/node_modules
 dist/
 .swc/
 .project-data/sessions.json
@@ -6,3 +8,6 @@ dist/
 # Local development records and generated caches
 .project-data/
 .swc/
+
+# Disposable, pinned app verification layout
+.verification/

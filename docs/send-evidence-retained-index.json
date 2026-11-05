@@ -1,0 +1,36 @@
+{
+  "setupReportSha256": "3621fe25a36d99945213895c138d092e05375589089ad4a5a284a5948b8def29",
+  "latestTask4ReportSha256": "6c0d3ee2c33035b4ebd860a400cef9121fb2f3469a5b0abb65addc11a652b222",
+  "reviews": [
+    {
+      "runId": "a8e28e66-d9be-4a44-86c6-0f7de1c1ff11",
+      "at": "2026-11-02T19:06:34.644Z",
+      "verdict": "fail",
+      "textSha256": "c8661eedca71c3858a1db47761d661fae7cf63cf71a6f04250d23b6b816139ef"
+    },
+    {
+      "runId": "a8e28e66-d9be-4a44-86c6-0f7de1c1ff11",
+      "at": "2026-11-02T19:29:54.828Z",
+      "verdict": "fail",
+      "textSha256": "5670cbdcb7563f1816db9759cb44415c657af7a8dddfd2cc0ecc9846c149baea"
+    },
+    {
+      "runId": "a8e28e66-d9be-4a44-86c6-0f7de1c1ff11",
+      "at": "2026-11-02T19:41:55.114Z",
+      "verdict": "fail",
+      "textSha256": "14bf6da90a2dbe2aadee24eacd9aa734d26a40d9f97f7c48fca5e735da67f498"
+    },
+    {
+      "runId": "4cf974d8-929a-4553-911d-d3a86bed92da",
+      "at": "2026-11-02T22:03:01.140Z",
+      "verdict": "fail",
+      "textSha256": "777db28cfa2123b4697cfaaadbede1a87b2531ec6a2a8f746ee8bed58cd0aa67"
+    },
+    {
+      "runId": "f9d5839c-55f9-4483-b594-2178b7c85e84",
+      "at": "2026-11-03T04:53:55.439Z",
+      "verdict": "fail",
+      "textSha256": "49917f59da9668d8fad9be4272907fdb9bc779c79bdb93049940301adb2d3d06"
+    }
+  ]
+}

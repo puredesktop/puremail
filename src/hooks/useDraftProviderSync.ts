@@ -1,5 +1,5 @@
 import { MailSendError } from '../lib/mailDelivery'
-import { draftContentRevision, MailDraftSaveUncertain } from '../lib/mailDeliveryStatus'
+import { draftContentRevision, hasUnconfirmedSendEvidence, MailDraftSaveUncertain } from '../lib/mailDeliveryStatus'
 import { useEffect, useRef, useState } from 'react'
 import { mailProviderSupports } from '../lib/mailProviderCapabilities'
 import type { Draft, MailProvider, MailStore } from '../types'
@@ -20,7 +20,7 @@ type DraftSyncProvider = Pick<
 
 /** A draft with nothing in it yet is not worth a row in the user's real Drafts. */
 function worthSyncing(draft: Draft): boolean {
-  if (draft.sentAt || draft.providerSaveUncertain || draft.providerConflict || draft.sendState === 'uncertain') return false
+  if (draft.sentAt || draft.providerSaveUncertain || draft.providerConflict || hasUnconfirmedSendEvidence(draft)) return false
   if (draft.syncState === 'synced') return false
   // 'failed' means we already tried and the provider would not take it.
   // Retrying on every render would append a duplicate per attempt on a
@@ -48,9 +48,14 @@ function sameRevision(left: Draft, right: Draft): boolean {
     providerSaveError: _saveError,
     providerSaveUncertain: _saveUncertain,
     staleProviderDraftIds: _staleIds,
+    sendSupersedes: _sendSupersedes,
+    sendUncertainties: _sendUncertainties,
     sendState: _sendState,
     sendMessageId: _sendId,
     sendError: _sendError,
+    sendAttempt: _sendAttempt,
+    sendUndoneAt: _sendUndoneAt,
+    sendSettledAttemptId: _sendSettledAttemptId,
     ...draft
   }: Draft) => draft
   return JSON.stringify(content(left)) === JSON.stringify(content(right))
