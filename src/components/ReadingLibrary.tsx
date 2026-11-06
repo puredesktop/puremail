@@ -292,14 +292,14 @@ const Head = styled.header`
   .segments {
     display: inline-flex;
     padding: 3px;
-    border-radius: 10px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: var(--platform-colors-surface-hover);
   }
   .segments button {
     height: 32px;
     padding: 0 12px;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: transparent;
     color: var(--platform-colors-text-secondary);
     font: 500 13px var(--platform-typography-font-family);
@@ -321,7 +321,7 @@ const SearchBox = styled.label`
   box-sizing: border-box;
   padding: 0 12px;
   border: 1px solid var(--platform-colors-border);
-  border-radius: 10px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-message-bg, #ffffff);
   svg {
     width: 15px;
@@ -349,7 +349,7 @@ const Topics = styled.div`
     height: 32px;
     padding: 0 12px;
     border: 0;
-    border-radius: 99px;
+    border-radius: 2px;
     background: var(--platform-colors-surface-hover);
     color: var(--platform-colors-text-secondary);
     font: 500 13px var(--platform-typography-font-family);
@@ -373,7 +373,7 @@ const Problem = styled.p`
   max-width: 980px;
   margin: 0 auto 14px;
   padding: 9px 12px;
-  border-radius: 9px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-warning-bg, #fdf4de);
   color: var(--puremail-warning-text, #6b4e0c);
   font-size: 13px;
@@ -391,7 +391,7 @@ const Card = styled.article`
   flex-direction: column;
   gap: 12px;
   padding: 20px 24px;
-  border-radius: 14px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-message-bg, #ffffff);
   box-shadow: 0 1px 2px rgba(20, 25, 40, 0.05);
   .top {
@@ -419,7 +419,7 @@ const Card = styled.article`
   .state {
     flex: none;
     padding: 4px 10px;
-    border-radius: 99px;
+    border-radius: 2px;
     background: color-mix(in srgb, var(--platform-colors-success, #1e7d4f) 14%, transparent);
     color: var(--platform-colors-success, #1e7d4f);
     font-size: 12.5px;
@@ -428,7 +428,7 @@ const Card = styled.article`
   .scope {
     flex: none;
     padding: 4px 10px;
-    border-radius: 99px;
+    border-radius: 2px;
     background: var(--platform-colors-surface-hover);
     color: var(--platform-colors-text-secondary);
     font-size: 12.5px;
@@ -518,7 +518,7 @@ const Card = styled.article`
     align-items: center;
     height: 24px;
     padding: 0 9px;
-    border-radius: 99px;
+    border-radius: 2px;
     background: var(--platform-colors-surface-hover);
     font-size: 12.5px;
   }
