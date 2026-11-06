@@ -1,3 +1,4 @@
+import { mailSetsOwnColours } from '../lib/mailSetsOwnColours'
 import type { TeamReadStatuses } from '../lib/teamMailReview'
 import { InviteDescription } from './InviteDescription'
 import type { InviteActionState } from '../types'
@@ -192,7 +193,6 @@ import {
   ReaderPosition,
   ReaderSenderAvatar,
   ReaderSenderName,
-  ReaderSenderReply,
   ReaderSenderRow,
   ReaderSenderTo,
   ReaderTaskChip,
@@ -440,6 +440,7 @@ export const SanitizedMessageBody = memo(function SanitizedMessageBody({
   return (
     <MessageBody
       onClick={onBodyClick}
+      data-follows-theme={mailSetsOwnColours(html) ? undefined : ''}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
@@ -1937,9 +1938,6 @@ export function ThreadReader({
               </ReaderSenderTo>
             )}
             {/* Reply where the sender is named, so answering needs no trip back to the toolbar; the same action as the toolbar's. */}
-            <ReaderSenderReply type="button" onClick={focusReply} title={replyPrimaryLabel === 'Reply' ? `Reply to ${headerSenderName}` : 'Continue your draft reply'}>
-              {replyPrimaryLabel}
-            </ReaderSenderReply>
             <ReaderDetailsButton
               type="button"
               aria-expanded={detailsOpen}
@@ -2355,7 +2353,7 @@ export function ThreadReader({
                     </Meta>
                   )}
                   {body.hasCollapsedHistory ? (
-                    <MessageBody>
+                    <MessageBody data-follows-theme="">
                       {body.segments.map((segment, segmentIndex) => {
                         if (segment.type === 'quote') {
                           return quotedExpanded ? (
@@ -2522,7 +2520,7 @@ export function ThreadReader({
                       )
                     })()
                   ) : (
-                    <MessageBody>
+                    <MessageBody data-follows-theme="">
                       {plainTextParagraphs(message.body, `${message.id}-body`)}
                     </MessageBody>
                   )}

@@ -1984,21 +1984,18 @@ export const AttachmentChips = styled.div<{ $scroll?: boolean }>`
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px 28px;
   ${({ $scroll }) =>
     $scroll ? 'max-height: 40vh; overflow-y: auto; padding-right: 4px;' : ''}
 `
 
+/** One file on the attachments line: its type, name and size, then its actions. No box around it. */
 export const ReaderAttachmentChip = styled.div`
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
-  padding: 5px 8px 5px 6px;
-  border: 1px solid var(--puremail-line);
-  border-radius: var(--pure-chrome-radius, 3px);
-  background: var(--puremail-message-bg);
 `
 
 export const AttachmentChipActions = styled.div`
@@ -2031,20 +2028,18 @@ export const AttachmentRow = styled.div`
   }
 `
 
+/** The file's type in small grey capitals before its name, not a box of its own. */
 export const AttachmentTypeTile = styled.span`
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
   flex: none;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--puremail-line);
-  border-radius: 5px;
-  background: var(--puremail-message-bg);
   color: var(--platform-colors-text-tertiary);
   font-family: var(--platform-typography-font-family);
-  font-size: var(--pure-chrome-meta-size);
-  text-transform: lowercase;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* small capitals sit high beside the name: down onto its line */
+  position: relative;
+  top: 1px;
 `
 
 export const AttachmentRowText = styled.div`
@@ -2186,13 +2181,15 @@ export const MessageCard = styled.article<{ $focused?: boolean }>`
   max-width: ${READER_MEASURE}px;
   margin: 0 auto;
   padding: 0 0 8px;
-  /* Messages separate with a rule, not by floating apart. */
+  /* Messages separate with a rule between them, not by floating apart; the first sits under the header's own rule. A focused
+     message has the shared selected look, never a coloured bar down its edge. */
   border: 0;
-  border-top: 1px solid var(--puremail-line);
-  border-left: ${({ $focused }) =>
-    $focused ? '3px solid var(--puremail-accent)' : '0'};
-  padding-left: ${({ $focused }) => ($focused ? '13px' : '0')};
-  background: transparent;
+  & + & {
+    border-top: 1px solid var(--puremail-line);
+  }
+  padding-inline: ${({ $focused }) => ($focused ? '13px' : '0')};
+  background: ${({ $focused }) => ($focused ? 'var(--p-chosen)' : 'transparent')};
+  box-shadow: ${({ $focused }) => ($focused ? 'var(--p-chosen-edge)' : 'none')};
 
   p {
     margin: 10px 0 0;
@@ -2229,6 +2226,26 @@ export const MessageBody = styled.div`
   border-radius: var(--pure-chrome-radius, 3px);
   background: #ffffff;
   color: #1f2328;
+
+  /* A plain message has no card of its own, so its words start on the subject's edge. */
+  &[data-follows-theme] {
+    padding-inline: 0;
+  }
+
+  /* A plain message (no colours of its own) sits on the reader's own ground and ink, so in dark mode it is dark too.
+     Designed mail keeps the light page above. */
+  :root[data-platform-theme='dark'] &[data-follows-theme] {
+    --platform-colors-text: var(--n-ink);
+    --platform-colors-text-secondary: var(--n-soft);
+    --platform-colors-text-tertiary: var(--n-faint);
+    --platform-colors-border: var(--n-line);
+    --platform-colors-surface: var(--n-panel);
+    --platform-colors-surface-hover: var(--n-hover);
+    --platform-colors-info: var(--p-working-text);
+    --platform-colors-semantic-blue-text: var(--p-working-text);
+    background: var(--n-sheet);
+    color: var(--n-ink);
+  }
   font-family: var(--platform-typography-font-family);
   font-size: 13.5px;
   line-height: 1.65;
@@ -5209,9 +5226,13 @@ export const ComposeQuoteChip = styled.button`
  * compose window seeded with that draft. One composer surface.
  */
 
+/* The reply launcher sits in the message's own reading column, its edges on the words' edges. */
 export const ReplyLaunchStrip = styled.button`
   display: flex;
   width: 100%;
+  max-width: ${READER_MEASURE}px;
+  margin-inline: auto;
+  border-radius: var(--pure-chrome-radius, 3px);
   align-items: center;
   gap: 10px;
   border: 1px solid var(--platform-colors-border);
