@@ -28,7 +28,6 @@ import {
   Reply as ReplyIcon,
   ReplyAll,
   Sparkles,
-  SquareCheck,
   Trash2,
 } from 'lucide-react'
 import type { CalendarInviteResponse } from '@purescience/platform-ui/bridge/calendarInviteIntent'
@@ -495,9 +494,6 @@ export function ThreadReader({
   addSelectedThreadToCalendar,
   forwardSelectedThread,
   openDraftInComposeWindow,
-  openTaskDrawer,
-  threadTaskCount,
-  addTask,
   threadPosition,
   threadTotal,
   selectAdjacentThread,
@@ -1696,12 +1692,6 @@ export function ThreadReader({
           <Clock aria-hidden="true" />
           <ReaderToolbarLabel>follow up</ReaderToolbarLabel>
         </ReaderToolbarButton>
-        {/* Files a task against this thread; the drawer opens and scrolls it
-            into view rather than leaving you to go looking for it. */}
-        <ReaderToolbarButton type="button" onClick={addTask}>
-          <SquareCheck aria-hidden="true" />
-          <ReaderToolbarLabel>task</ReaderToolbarLabel>
-        </ReaderToolbarButton>
         {/*
           A small anchored menu, not a full-height sheet with a backdrop.
           Dimming the whole app to offer "Mark unread" was never
@@ -1883,15 +1873,6 @@ export function ThreadReader({
               >
                 high priority
               </MailStateChip>
-            )}
-            {threadTaskCount > 0 && (
-              <ReaderTaskChip
-                type="button"
-                onClick={openTaskDrawer}
-                title="Show these in the task drawer"
-              >
-                {threadTaskCount} task{threadTaskCount === 1 ? '' : 's'}
-              </ReaderTaskChip>
             )}
             {teamReads[selectedThread.id] && <MailStateChip $tone="label" title={teamReads[selectedThread.id]!.description}>{teamReads[selectedThread.id]!.label}</MailStateChip>}
             {threadStatusLabel(store, selectedThread, store.drafts) && (
