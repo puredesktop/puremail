@@ -802,13 +802,18 @@ export const ReaderStateChip = styled.span`
   ${quietLabel}
 `
 
+/** "details": the message's full headers, opened in place. Ink with a hairline under it, never the app's colour (coloured words read as highlights). */
 export const ReaderDetailsButton = styled.button`
   flex: none;
   margin-left: auto;
   border: 0;
-  border-radius: 4px;
+  border-radius: 3px;
   background: transparent;
-  color: var(--puremail-accent);
+  color: var(--platform-colors-text-secondary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--platform-colors-border-strong);
   cursor: pointer;
   font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
@@ -4285,6 +4290,8 @@ export const NavRailCount = styled.span.attrs(chrome('meta'))<{ $accent?: boolea
 
 export const NavRailSectionTitle = styled.div.attrs(chrome('section-label'))`
   flex: none;
+  /* A plain heading in the sans, not the shared tracked capitals. */
+  && { font-family: var(--platform-typography-font-family); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--platform-colors-text-secondary); }
 `
 
 export const NavRailLabelDot = styled.span<{ $color?: string }>`
