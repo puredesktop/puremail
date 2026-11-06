@@ -148,7 +148,7 @@ export const FilterChipRow = styled.div`
   height: 30px;
   flex: none;
   align-items: center;
-  gap: 14px;
+  gap: 4px;
   border-bottom: 1px solid var(--puremail-line);
   padding: 0 12px;
   overflow-x: auto;
@@ -159,13 +159,13 @@ export const FilterChipRow = styled.div`
   }
 `
 
-/** A filter over the list is a tab: words, the chosen one in ink with a rule under it in Mail's colour. */
+/** A filter over the list is a tab; the chosen one has the shared selected look (hairline round a faint ground). Never an under-bar. */
 export const FilterChip = styled.button<{ $active?: boolean }>`
-  align-self: stretch;
+  height: 22px;
   border: 0;
   border-radius: 0;
-  background: transparent;
-  box-shadow: ${({ $active }) => ($active ? 'inset 0 -2px 0 var(--p-text)' : 'none')};
+  background: ${({ $active }) => ($active ? 'var(--p-chosen)' : 'transparent')};
+  box-shadow: ${({ $active }) => ($active ? 'var(--p-chosen-edge)' : 'none')};
   color: ${({ $active }) =>
     $active ? 'var(--n-ink)' : 'var(--n-soft)'};
   cursor: pointer;
@@ -174,7 +174,7 @@ export const FilterChip = styled.button<{ $active?: boolean }>`
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: ${({ $active }) => ($active ? 600 : 500)};
-  padding: 0 4px;
+  padding: 0 8px;
 
   &:hover {
     color: var(--n-ink);

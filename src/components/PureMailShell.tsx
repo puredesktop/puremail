@@ -17,7 +17,7 @@ import {
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, X } from 'lucide-react'
 import { assignHandoff, buildThreadHandoff } from '../lib/assignHandoff'
 import {
   MAIL_LIST_FILTERS,
@@ -113,7 +113,6 @@ import {
   reapplyLocalMailChangesSinceSnapshot,
   applyMailCopyRepair,
   qaStatusForDraft,
-  resolveMailTaskSourceTarget,
   snoozeThread,
   removeProviderAccountData,
   recoverMailDraftSync,
@@ -121,9 +120,6 @@ import {
   withMirroredInviteKeys,
   unarchiveThread,
   sendDraft,
-  updateMailTask,
-  deleteMailTask,
-  updateTaskStatus,
 } from '../lib/mailModel'
 import { mergeThreadFragment } from '../lib/mailStoreData'
 import { replyStateInStore } from '../lib/mailReplyState'
@@ -269,30 +265,12 @@ import {
   FilterChipRow,
   FilterChip,
   PaneScroll,
-  DockedTaskDrawer,
-  DockedTaskDrawerHeader,
-  DockedTaskDrawerBody,
-  BulkMenuItem,
-  BulkMenuWrap,
   MailToast,
   MailToastAction,
-  ThreadActionsMenu,
-  TaskCountPill,
-  TaskDrawerRow,
-  TaskDrawerCheck,
-  TaskDrawerText,
-  TaskDrawerTitle,
-  TaskDrawerMeta,
-  TaskDrawerOpen,
-  TaskModeChip,
-  TaskDrawerAdd,
-  TaskDrawerEmpty,
-  TaskDrawerChevron,
   Section,
 } from './mailShellStyles'
 import {
   MAIL_LAYOUT_STORAGE_KEY,
-  taskDrawerOpenFor,
   type MailDensity,
   readLayoutState,
   type TaskMode,
@@ -600,7 +578,7 @@ export function PureMailShell({
   const [taskDrawerOpenByAccount, setTaskDrawerOpenByAccount] = useState<
     Record<string, boolean>
   >(initialLayout.taskDrawerOpen)
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [, setSelectedTaskId] = useState<string | null>(null)
   const appSettings = useAppSettings()
   const mailSettingsOpen = appSettings.isOpen
   const setMailSettingsOpen = useCallback((open: boolean) => open ? appSettings.open() : appSettings.close(), [appSettings.open, appSettings.close])
@@ -1025,31 +1003,6 @@ export function PureMailShell({
   const followUpSettings = followUpSettingsForStore(store)
   const autoFetchEnabled = autoFetchEnabledForStore(store)
   const mailFetchIntervalMinutes = mailFetchIntervalMinutesForStore(store)
-  const visibleTasks = useMemo(() => {
-    if (taskMode === 'thread') return threadTasks
-    if (taskMode === 'followups')
-      return store.tasks.filter(task => task.status === 'waiting')
-    return store.tasks.filter(
-      task => task.status !== 'done' && task.status !== 'dismissed',
-    )
-  }, [store.tasks, taskMode, threadTasks])
-  /**
-   * The open thread's tasks first. The drawer is four rows tall, and the task
-   * you filed from the thread you are reading is the one that has to be in
-   * them — without this it sorted to wherever it happened to be created.
-   */
-  const drawerTasks = useMemo(() => {
-    const visibleIds = new Set(visibleTasks.map(task => task.id))
-    const shown = store.tasks.filter(
-      task => visibleIds.has(task.id) || completedTaskIds.includes(task.id),
-    )
-    const threadId = selectedThread?.id
-    if (!threadId) return shown
-    return [
-      ...shown.filter(task => task.source?.threadId === threadId),
-      ...shown.filter(task => task.source?.threadId !== threadId),
-    ]
-  }, [store.tasks, visibleTasks, completedTaskIds, selectedThread?.id])
   const syncSummary = useMemo(() => mailSyncSummary({
     ...store,
     threads: store.threads.filter(thread => thread.accountId === selectedAccountId),
@@ -2525,11 +2478,6 @@ export function PureMailShell({
     )
   }
 
-  const taskDrawerOpen = taskDrawerOpenFor(
-    { taskDrawerOpen: taskDrawerOpenByAccount },
-    selectedAccountId,
-  )
-
   const setTaskDrawerOpen = (open: boolean): void => {
     setTaskDrawerOpenByAccount(current => ({
       ...current,
@@ -2566,12 +2514,8 @@ export function PureMailShell({
    * replacement — small, but every mutation reachable again.
    */
   const [taskMenuOpenId, setTaskMenuOpenId] = useState<string | null>(null)
-  const [taskMenuDeleteArmed, setTaskMenuDeleteArmed] = useState(false)
-  const [taskMenuDueValue, setTaskMenuDueValue] = useState<string | null>(null)
-  const [editingTask, setEditingTask] = useState<{
-    id: string
-    title: string
-  } | null>(null)
+  const [, setTaskMenuDeleteArmed] = useState(false)
+  const [, setTaskMenuDueValue] = useState<string | null>(null)
   const taskMenuRef = useRef<HTMLDivElement | null>(null)
   useOutsideClose(taskMenuRef, taskMenuOpenId !== null, () =>
     setTaskMenuOpenId(null),
@@ -2583,70 +2527,9 @@ export function PureMailShell({
     }
   }, [taskMenuOpenId])
 
-  const patchTask = (
-    taskId: string,
-    patch: Partial<
-      Pick<MailTask, 'title' | 'notes' | 'status' | 'priority' | 'dueAt'>
-    >,
-  ): void => {
-    setStore(current => ({
-      ...current,
-      tasks: current.tasks.map(task =>
-        task.id === taskId ? updateMailTask(task, patch) : task,
-      ),
-    }))
-  }
 
-  const commitTaskRename = (): void => {
-    if (!editingTask) return
-    const title = editingTask.title.trim()
-    if (title) patchTask(editingTask.id, { title })
-    setEditingTask(null)
-  }
 
-  const showToast = (
-    message: string,
-    action?: { label: string; run: () => void },
-  ): void => {
-    setToast({
-      id: Date.now(),
-      message,
-      actionLabel: action?.label,
-      onAction: action?.run,
-    })
-  }
 
-  /**
-   * Marks a task done and offers it back for a few seconds. The row stays put
-   * and struck through until the offer lapses, so the undo has something to
-   * point at and the list does not reflow under the cursor.
-   */
-  const completeTask = (task: MailTask): void => {
-    const previousStatus = task.status
-    setStore(current => ({
-      ...current,
-      tasks: current.tasks.map(item =>
-        item.id === task.id ? updateTaskStatus(item, 'done') : item,
-      ),
-    }))
-    setCompletedTaskIds(ids =>
-      ids.includes(task.id) ? ids : [...ids, task.id],
-    )
-    showToast('Task completed.', {
-      label: 'Undo',
-      run: () => {
-        setStore(current => ({
-          ...current,
-          tasks: current.tasks.map(item =>
-            item.id === task.id
-              ? updateTaskStatus(item, previousStatus)
-              : item,
-          ),
-        }))
-        setCompletedTaskIds(ids => ids.filter(id => id !== task.id))
-      },
-    })
-  }
 
   /**
    * Opens the drawer and scrolls the drawer's own container — not the page —
@@ -2727,22 +2610,6 @@ export function PureMailShell({
     } catch { setCommandNotice('Could not open this invitation.') }
   }), [queryResult.entries])
 
-  const openTaskSource = (task: MailTask): void => {
-    const target = resolveMailTaskSourceTarget(store, task)
-    if (!target) {
-      setCommandNotice('Source email is no longer available.')
-      return
-    }
-    // The mode is left alone. Narrowing to the opened thread emptied the
-    // drawer of every other row the moment you clicked one of them.
-    openThread(target.thread.id, target.message?.id ?? null)
-    setSelectedTaskId(task.id)
-    setCommandNotice(
-      target.message
-        ? 'Opened source email message.'
-        : 'Opened source email thread.',
-    )
-  }
 
 
   // Snooze is app-owned mailbox state since M4 — always available. The
@@ -4720,300 +4587,6 @@ export function PureMailShell({
         </PaneScroll>
             </>
           )}
-          {/* Region 5. Tasks stay docked at the bottom of the content column
-              in BOTH states — the reader's "task" button opens this same
-              drawer. CSS `order` keeps it visually last even though the
-              reader renders after it in the DOM. */}
-          <DockedTaskDrawer aria-label="Tasks">
-          <DockedTaskDrawerHeader
-            type="button"
-            aria-expanded={taskDrawerOpen}
-            aria-controls="puremail-task-drawer"
-            onClick={() => setTaskDrawerOpen(!taskDrawerOpen)}
-          >
-            <Kicker>Tasks</Kicker>
-            <TaskCountPill>{visibleTasks.length}</TaskCountPill>
-            {taskMode !== 'mine' && (
-              <TaskModeChip
-                as="span"
-                role="button"
-                tabIndex={0}
-                title="Showing a filtered view — click to show all tasks"
-                onClick={event => {
-                  event.stopPropagation()
-                  setTaskMode('mine')
-                }}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.stopPropagation()
-                    setTaskMode('mine')
-                  }
-                }}
-              >
-                {taskMode === 'thread' ? 'this thread' : 'follow-ups'} ✕
-              </TaskModeChip>
-            )}
-            <span style={{ flex: 1 }} />
-            <TaskDrawerAdd
-              as="span"
-              role="button"
-              tabIndex={0}
-              onClick={event => {
-                event.stopPropagation()
-                addTask()
-              }}
-              onKeyDown={event => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.stopPropagation()
-                  addTask()
-                }
-              }}
-            >
-              + Add
-            </TaskDrawerAdd>
-            <TaskDrawerChevron aria-hidden="true">
-              {taskDrawerOpen ? '▾' : '▸'}
-            </TaskDrawerChevron>
-          </DockedTaskDrawerHeader>
-          {taskDrawerOpen && (
-            <DockedTaskDrawerBody
-              id="puremail-task-drawer"
-              ref={taskDrawerBodyRef}
-            >
-              {/* The drawer renders its own rows. Mounting the old tasks
-                  panel here put a second, fuller task UI inside the first —
-                  mode buttons, a card and an add form stacked under the
-                  drawer that replaced them. */}
-              {drawerTasks.length === 0 ? (
-                <TaskDrawerEmpty>
-                  No tasks yet. Use <b>task</b> on a thread, or Add.
-                </TaskDrawerEmpty>
-              ) : (
-                drawerTasks.map(task => {
-                  const fromThisThread =
-                    !!selectedThread &&
-                    task.source?.threadId === selectedThread.id
-                  const done = task.status === 'done'
-                  return (
-                    <TaskDrawerRow
-                      key={task.id}
-                      data-task-id={task.id}
-                      $active={task.id === selectedTaskId}
-                    >
-                      <TaskDrawerCheck
-                        type="button"
-                        $thread={fromThisThread}
-                        $done={done}
-                        aria-pressed={done}
-                        aria-label={`Complete ${task.title}`}
-                        disabled={done}
-                        onClick={() => completeTask(task)}
-                      >
-                        {done && <Check aria-hidden="true" />}
-                      </TaskDrawerCheck>
-                      {editingTask?.id === task.id ? (
-                        <TaskDrawerText style={{ flex: 1 }}>
-                          <input
-                            autoFocus
-                            value={editingTask.title}
-                            aria-label="Task title"
-                            style={{
-                              border: 0,
-                              outline: 'none',
-                              background: 'transparent',
-                              color: 'inherit',
-                              font: 'inherit',
-                              fontSize: 11.5,
-                              padding: 0,
-                            }}
-                            onChange={event =>
-                              setEditingTask({
-                                id: task.id,
-                                title: event.currentTarget.value,
-                              })
-                            }
-                            onBlur={commitTaskRename}
-                            onKeyDown={event => {
-                              if (event.key === 'Enter') commitTaskRename()
-                              if (event.key === 'Escape')
-                                setEditingTask(null)
-                            }}
-                          />
-                        </TaskDrawerText>
-                      ) : (
-                        <TaskDrawerOpen
-                          type="button"
-                          onClick={() => {
-                            setSelectedTaskId(task.id)
-                            openTaskSource(task)
-                          }}
-                        >
-                          <TaskDrawerText>
-                            <TaskDrawerTitle
-                              $thread={fromThisThread}
-                              $done={done}
-                            >
-                              {task.title}
-                            </TaskDrawerTitle>
-                            <TaskDrawerMeta>
-                              {fromThisThread
-                                ? 'this thread'
-                                : (task.source?.label || 'Task')}
-                              {task.status === 'waiting' ? ' · waiting' : ''}
-                              {task.dueAt
-                                ? ` · ${task.dueAt.slice(0, 10)}`
-                                : ''}
-                            </TaskDrawerMeta>
-                          </TaskDrawerText>
-                        </TaskDrawerOpen>
-                      )}
-                      <BulkMenuWrap
-                        ref={
-                          taskMenuOpenId === task.id ? taskMenuRef : undefined
-                        }
-                      >
-                        <TaskDrawerAdd
-                          as="span"
-                          role="button"
-                          tabIndex={0}
-                          aria-haspopup="menu"
-                          aria-expanded={taskMenuOpenId === task.id}
-                          aria-label={`Manage ${task.title}`}
-                          style={{ color: 'inherit', opacity: 0.55 }}
-                          onMouseDown={event => event.stopPropagation()}
-                          onClick={event => {
-                            event.stopPropagation()
-                            setTaskMenuOpenId(current =>
-                              current === task.id ? null : task.id,
-                            )
-                          }}
-                          onKeyDown={event => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.stopPropagation()
-                              setTaskMenuOpenId(current =>
-                                current === task.id ? null : task.id,
-                              )
-                            }
-                          }}
-                        >
-                          ⋯
-                        </TaskDrawerAdd>
-                        {taskMenuOpenId === task.id && (
-                          <ThreadActionsMenu
-                            role="menu"
-                            aria-label="Task actions"
-                          >
-                            <BulkMenuItem
-                              role="menuitem"
-                              onClick={() => {
-                                setTaskMenuOpenId(null)
-                                setEditingTask({
-                                  id: task.id,
-                                  title: task.title,
-                                })
-                              }}
-                            >
-                              Rename
-                            </BulkMenuItem>
-                            {taskMenuDueValue === null ? (
-                              <BulkMenuItem
-                                role="menuitem"
-                                onClick={() =>
-                                  setTaskMenuDueValue(
-                                    task.dueAt?.slice(0, 16) ?? '',
-                                  )
-                                }
-                              >
-                                {task.dueAt ? 'Change due…' : 'Set due…'}
-                              </BulkMenuItem>
-                            ) : (
-                              <BulkMenuItem
-                                as="div"
-                                role="none"
-                                style={{ cursor: 'default' }}
-                              >
-                                <input
-                                  type="datetime-local"
-                                  autoFocus
-                                  value={taskMenuDueValue}
-                                  aria-label="Task due time"
-                                  style={{
-                                    border: 0,
-                                    outline: 'none',
-                                    background: 'transparent',
-                                    color: 'inherit',
-                                    font: 'inherit',
-                                  }}
-                                  onClick={event => event.stopPropagation()}
-                                  onChange={event =>
-                                    setTaskMenuDueValue(
-                                      event.currentTarget.value,
-                                    )
-                                  }
-                                />
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    const parsed = taskMenuDueValue
-                                      ? new Date(taskMenuDueValue)
-                                      : null
-                                    patchTask(task.id, {
-                                      dueAt:
-                                        parsed &&
-                                        !Number.isNaN(parsed.getTime())
-                                          ? parsed.toISOString()
-                                          : '',
-                                    })
-                                    setTaskMenuOpenId(null)
-                                  }}
-                                >
-                                  Set
-                                </Button>
-                              </BulkMenuItem>
-                            )}
-                            <BulkMenuItem
-                              role="menuitem"
-                              onClick={() => {
-                                patchTask(task.id, {
-                                  status:
-                                    task.status === 'waiting'
-                                      ? 'open'
-                                      : 'waiting',
-                                })
-                                setTaskMenuOpenId(null)
-                              }}
-                            >
-                              {task.status === 'waiting'
-                                ? 'Mark active'
-                                : 'Mark waiting'}
-                            </BulkMenuItem>
-                            <BulkMenuItem
-                              role="menuitem"
-                              onClick={() => {
-                                if (!taskMenuDeleteArmed) {
-                                  setTaskMenuDeleteArmed(true)
-                                  return
-                                }
-                                setStore(current =>
-                                  deleteMailTask(current, task.id),
-                                )
-                                setTaskMenuOpenId(null)
-                              }}
-                            >
-                              {taskMenuDeleteArmed
-                                ? 'Delete? click again'
-                                : 'Delete'}
-                            </BulkMenuItem>
-                          </ThreadActionsMenu>
-                        )}
-                      </BulkMenuWrap>
-                    </TaskDrawerRow>
-                  )
-                })
-              )}
-            </DockedTaskDrawerBody>
-          )}
-        </DockedTaskDrawer>
         {composeMode === 'full' ? (
           <ComposeEditor
             key={`compose-${composeSession}`}

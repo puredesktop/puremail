@@ -157,7 +157,6 @@ describe('PureMail beside the Executive app', () => {
     await mountShell(true)
     expect(hidden(q('nav[aria-label="Mailboxes and views"]'))).toBe(true)
     expect(hidden(q('[aria-label="Thread filters"]'))).toBe(true)
-    expect(hidden(q('[aria-label="Tasks"]'))).toBe(true)
     expect(hidden(q('[aria-label="Thread list"]'))).toBe(true)
     expect(hidden(q('[data-mail-scroll]'))).toBe(true)
     expect(hidden(q('[aria-label="Inbox"]'))).toBe(false)
