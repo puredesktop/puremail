@@ -70,7 +70,7 @@ export const BarButton = styled.button`
   height: 36px;
   padding: 0 12px;
   border: 1px solid var(--platform-colors-border);
-  border-radius: 9px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--platform-colors-surface);
   color: var(--platform-colors-text);
   font: 500 13px var(--platform-typography-font-family);
@@ -107,7 +107,7 @@ export const Chip = styled.span`
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 99px;
+  border-radius: 2px;
   font-size: 12.5px;
   font-weight: 500;
   white-space: nowrap;
@@ -135,7 +135,7 @@ export const Switch = styled.span<{ $on: boolean }>`
   position: relative;
   width: 26px;
   height: 15px;
-  border-radius: 99px;
+  border-radius: 2px;
   background: ${props => (props.$on ? 'var(--platform-colors-text-secondary)' : 'var(--platform-colors-border)')};
   &::after {
     content: '';
@@ -306,7 +306,7 @@ export const SelectionBar = styled.div`
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border-radius: 12px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--mail-room-paper, #ffffff);
   box-shadow: 0 2px 6px rgba(20, 25, 40, 0.1), 0 14px 32px -12px rgba(20, 25, 40, 0.35);
   transform: translate(-50%, calc(-100% - 10px));
@@ -318,7 +318,7 @@ export const SelectionBar = styled.div`
     height: 34px;
     padding: 0 10px;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: transparent;
     color: var(--mail-room-muted, #4f545c);
     font: 500 13px var(--platform-typography-font-family);
@@ -385,7 +385,7 @@ export const NoteCard = styled.div`
   display: flex;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: var(--pure-chrome-radius, 3px);
   &[data-active='true'] {
     background: var(--platform-colors-surface);
   }
@@ -483,7 +483,7 @@ export const NoteCard = styled.div`
     height: 28px;
     padding: 0 8px;
     border: 0;
-    border-radius: 7px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: transparent;
     color: var(--mail-room-muted, var(--platform-colors-text-tertiary));
     font: 500 12px var(--platform-typography-font-family);
@@ -512,7 +512,7 @@ export const NoteEditor = styled.div`
     max-width: 100%;
     padding: 8px 10px;
     border: 1px solid var(--platform-colors-border);
-    border-radius: 8px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: var(--platform-colors-surface);
     color: var(--platform-colors-text);
     resize: vertical;
@@ -536,7 +536,7 @@ export const NoteEditor = styled.div`
     height: 30px;
     padding: 0 10px;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: transparent;
     color: var(--platform-colors-text-secondary);
     font: 500 12.5px var(--platform-typography-font-family);
@@ -565,7 +565,7 @@ export const ReplyBox = styled.div`
   gap: 8px;
   margin: 0 0 12px;
   padding: 14px 14px 12px;
-  border-radius: 14px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--mail-room-paper, #ffffff);
   box-shadow: 0 1px 2px rgba(20, 25, 40, 0.06);
   label {
@@ -578,7 +578,7 @@ export const ReplyBox = styled.div`
     min-height: 84px;
     padding: 9px 11px;
     border: 1px solid var(--mail-room-line, #d5d9e0);
-    border-radius: 9px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: var(--mail-room-paper, #ffffff);
     color: var(--mail-room-ink, ${INK});
     resize: vertical;
@@ -612,7 +612,7 @@ export const ReplyBox = styled.div`
 export const WholeNote = styled.div`
   margin: 14px 14px 0;
   padding: 14px;
-  border-radius: 12px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--platform-colors-surface);
   label {
     display: block;
@@ -626,7 +626,7 @@ export const WholeNote = styled.div`
 export const Notice = styled.div`
   margin: 0 24px 8px;
   padding: 8px 12px;
-  border-radius: 9px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-warning-bg, var(--platform-colors-semantic-orange-muted));
   color: var(--puremail-warning-text, var(--platform-colors-semantic-orange-text));
   font-size: 13px;

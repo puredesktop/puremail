@@ -167,7 +167,7 @@ const Dialog = styled.dialog`
   box-sizing: border-box;
   padding: 28px 30px 22px;
   border: 0;
-  border-radius: 16px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-message-bg, #ffffff);
   color: var(--platform-colors-text);
   box-shadow: 0 2px 6px rgba(20, 25, 40, 0.06), 0 28px 64px -28px rgba(20, 25, 40, 0.4);
@@ -211,7 +211,7 @@ const Dialog = styled.dialog`
     box-sizing: border-box;
     padding: 9px 11px;
     border: 1px solid var(--platform-colors-border);
-    border-radius: 9px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: var(--platform-colors-surface);
     color: var(--platform-colors-text);
     font: 400 14px var(--platform-typography-font-family);
@@ -244,7 +244,7 @@ const Dialog = styled.dialog`
     height: 28px;
     padding: 0 10px;
     border: 1px dashed var(--platform-colors-border);
-    border-radius: 99px;
+    border-radius: 2px;
     background: transparent;
     color: var(--platform-colors-text-secondary);
     font: 500 12.5px var(--platform-typography-font-family);
@@ -256,7 +256,7 @@ const Dialog = styled.dialog`
     gap: 12px;
     padding: 10px 12px;
     border: 0;
-    border-radius: 10px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: transparent;
     color: inherit;
     font: inherit;
@@ -311,7 +311,7 @@ const Dialog = styled.dialog`
     gap: 4px;
     padding: 12px;
     border: 1.5px solid var(--platform-colors-border);
-    border-radius: 12px;
+    border-radius: var(--pure-chrome-radius, 3px);
     background: transparent;
     color: inherit;
     font: inherit;
