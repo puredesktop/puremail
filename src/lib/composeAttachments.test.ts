@@ -7,7 +7,7 @@ const hydrated: Attachment = { id: 'attachment', name: 'file.txt', mimeType: 'te
 
 it('replaces a deleted-UID attachment reference with bytes from the successful save', () => {
   expect(reconcileComposeAttachments([remote], [remote], [hydrated])).toEqual([hydrated])
-  expect(retainHydratedAttachments([remote], [hydrated])).toEqual([hydrated])
+  expect(retainHydratedAttachments([remote], [hydrated])).toEqual([{ ...hydrated, hydratedFrom: remote.remote }])
 })
 
 it('keeps user removals, additions and replacement content while applying store additions and removals', () => {

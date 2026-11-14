@@ -140,6 +140,10 @@ export interface Attachment {
         uid: number
         partId: string
       }
+  /** The remote source these bytes were fetched from, once a provider save replaced it with content. */
+  hydratedFrom?: Attachment['remote']
+  /** Receipt-only SHA-256 of canonical base64 content, retained when bytes are compacted. */
+  receiptContentHash?: string
 }
 
 export interface MailCalendarInvite {
@@ -164,6 +168,8 @@ export interface MailCalendarInvite {
 }
 
 export interface MailMessage {
+  /** The approved attempt this provider receipt answers. */
+  sentAttemptId?: string
   /** SMTP/API acceptance, independently of filing the Sent copy. */
   deliveryAccepted?: boolean
   deliveryWarnings?: string[]
@@ -208,6 +214,8 @@ export interface MailMessage {
   subject: string
   body: string
   bodyHtml?: string
+  /** Receipt-only identity of UTF-8 HTML, retained when the rendering is compacted. */
+  receiptBodyHtmlHash?: string
   receivedAt: string
   attachments: Attachment[]
   calendarInvite?: MailCalendarInvite
@@ -275,6 +283,19 @@ export interface MailTask {
   source: TaskSource
 }
 
+export interface DraftSendAttempt {
+  id: string
+  /**
+   * held: nothing has left, Undo still works. preparing: the hold is over and
+   * the marker is not saved yet, so nothing has left and Undo no longer works.
+   * submitting: the request may have reached the service.
+   */
+  phase: 'held' | 'preparing' | 'submitting'
+  /** draftSendFingerprint of what was approved: anything else is refused before it can leave. */
+  approved: string
+  at: string
+}
+
 export interface Draft {
   /** Persisted delivery failure; incoming sync does not clear this. */
   providerConflict?: Pick<Draft, 'subject' | 'body' | 'bodyHtml' | 'to' | 'cc' | 'bcc' | 'replyTo' | 'attachments' | 'updatedAt'>
@@ -294,8 +315,18 @@ export interface Draft {
   /** Stable IMAP draft Message-ID across APPEND/delete replacements. */
   providerDraftMessageIdHeader?: string
   sendMessageId?: string
+  /** Attempt identities this draft's later explicit send decision supersedes; no clock ordering. */
+  sendSupersedes?: string[]
+  /** Uncertainty from a different submission, kept apart from the current attempt's outcome. */
+  sendUncertainties?: Array<{ attemptId: string; reason: string; messageId?: string; checkedAt?: string }>
   sendState?: 'failed' | 'uncertain'
   sendError?: string
+  /** The send under way for this draft: on disk, so a restart can tell a lost hold from a possible submission. */
+  sendAttempt?: DraftSendAttempt
+  /** The person undid the last hold; a new approval is needed to send it. */
+  sendUndoneAt?: string
+  /** The attempt the failed or undone record above belongs to: what ties it to a run item after a restart. */
+  sendSettledAttemptId?: string
   id: string
   threadId: string
   to: MailContact[]
@@ -672,6 +703,8 @@ export type ScheduledSendStatus =
   | 'sent'
   | 'cancelled'
   | 'failed'
+  /** May have reached the mail service: someone checks Sent. */
+  | 'unconfirmed'
 
 export interface ScheduledSend {
   id: string
@@ -991,6 +1024,10 @@ export type MailRunStatus = 'setup' | 'ready' | 'running' | 'paused' | 'done'
 export type MailRunItemStatus =
   | 'pending'
   | 'reviewing'
+  /** Approved, not confirmed: in the undo hold (pendingSendId) or being submitted. */
+  | 'sending'
+  /** May have reached the mail service; never retried until someone checks Sent. */
+  | 'unconfirmed'
   | 'sent'
   | 'skipped'
   /** The draft was deleted outside the run; skipped with that reason. */
@@ -1028,6 +1065,8 @@ export interface MailRunItem {
   sentMessageId?: string
   /** The undo-send hold that is still open for this item, while it is. */
   pendingSendId?: string
+  /** The attempt this item is waiting on; a callback from any other attempt is ignored. */
+  sendAttemptId?: string
   noteAdded?: boolean
   /** Why the item was skipped when the run did it (missing draft, …). */
   skipReason?: string

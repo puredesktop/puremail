@@ -7,14 +7,16 @@ import {
   MAIL_STORE_FILE,
   readPersistedMailStore,
   writePersistedMailStore,
+  writeDraftsFileBeforeUnload,
 } from './mailPersistence'
 import { applyDraftsFileChanges } from './draftsFileMerge'
 import { emptyMailStore } from './mailStoreData'
-import type { Draft, MailStore } from '../types'
+import type { Draft, MailStore, ScheduledSend } from '../types'
 
 const files = new Map<string, unknown>()
 const failing = new Set<string>()
 const unreadable = new Set<string>()
+let omitReadVersions = false
 /** The shell's version token: the content, as near as a test needs. */
 const versionOf = (fileName: string) => (files.has(fileName) ? JSON.stringify(files.get(fileName)) : null)
 /** Run once just before the next conditional write applies: another copy saving in between. */
@@ -23,7 +25,7 @@ const beforeWrite = { run: null as (() => void) | null }
 vi.mock('../bridge/platformBridge', () => ({
   readPlatformStorageJson: async ({ fileName }: { fileName: string }) => {
     if (unreadable.has(fileName)) throw new Error(`Cannot read ${fileName}`)
-    return { value: files.has(fileName) ? files.get(fileName) : null, version: versionOf(fileName) }
+    return { value: files.has(fileName) ? files.get(fileName) : null, ...(omitReadVersions ? {} : { version: versionOf(fileName) }) }
   },
   writePlatformStorageJson: async ({
     fileName,
@@ -90,6 +92,7 @@ function storeWith(drafts: Draft[]): MailStore {
 
 describe('mail persistence', () => {
   beforeEach(() => {
+  omitReadVersions = false;
     forgetStoreFileForTest()
     files.clear()
     failing.clear()
@@ -107,12 +110,15 @@ describe('mail persistence', () => {
       drafts: [draft('d1', 'Approved, shipping Friday.')],
       // Send runs travel with the drafts they point at.
       runs: [],
+      // So do the schedules that would send them: one write, so they cannot disagree.
+      scheduledSends: [],
       sentReceipts: [],
       recovery: { accounts: storeWith([]).accounts, mailboxes: storeWith([]).mailboxes, threads: storeWith([]).threads },
     })
     // The cache file must not carry a second copy: two copies can disagree.
     expect((files.get(MAIL_STORE_FILE) as MailStore).drafts).toEqual([])
     expect((files.get(MAIL_STORE_FILE) as MailStore).runs).toEqual([])
+    expect((files.get(MAIL_STORE_FILE) as MailStore).scheduledSends).toEqual([])
     expect((files.get(MAIL_STORE_FILE) as MailStore).threads).toHaveLength(1)
   })
 
@@ -338,6 +344,38 @@ describe('two running copies of Mail over one drafts file', () => {
     expect(draftsOnDisk().find(item => item.id === 'barbara')?.body).toBe('Dear Barbara')
   })
 
+  describe('sends and schedules', () => {
+    const schedule = (status: ScheduledSend['status']): ScheduledSend => ({ id: 'later', draftId: 'old', threadId: 'thread_1', sendAt: '2026-11-03T09:00:00.000Z', createdAt: '2026-11-02T09:00:00.000Z', status })
+    const scheduledOnDisk = (): ScheduledSend[] => (files.get(MAIL_DRAFTS_FILE) as { scheduledSends: ScheduledSend[] }).scheduledSends
+
+    it('an older copy saving cannot restart a schedule another copy stopped', async () => {
+      await writePersistedMailStore({ ...storeWith([draft('old', 'kept')]), scheduledSends: [schedule('scheduled')] })
+      const a = await openCopy()
+      const b = await openCopy()
+      expect(b.store.scheduledSends).toEqual([schedule('scheduled')])
+      await a.copy.writePersistedMailStore({ ...a.store, scheduledSends: [schedule('cancelled')] })
+
+      const result = await b.copy.writePersistedMailStore(b.store)
+
+      expect(scheduledOnDisk()).toEqual([schedule('cancelled')])
+      expect(result.draftChanges.scheduledSends).toEqual([schedule('cancelled')])
+      expect(applyDraftsFileChanges(b.store, result.draftChanges).scheduledSends).toEqual([schedule('cancelled')])
+      // And it survives the reopening that decides whether it fires.
+      expect((await openCopy()).store.scheduledSends).toEqual([schedule('cancelled')])
+    })
+
+    it('an edit from a copy that did not know of a send cannot erase the record of it', async () => {
+      const attempt = { id: 'a1', phase: 'submitting' as const, approved: 'fingerprint', at: '2026-11-02T09:00:00.000Z' }
+      const a = await openCopy()
+      const b = await openCopy()
+      await a.copy.writePersistedMailStore({ ...a.store, drafts: [{ ...a.store.drafts[0]!, sendAttempt: attempt }] })
+
+      await b.copy.writePersistedMailStore({ ...b.store, drafts: [{ ...b.store.drafts[0]!, body: 'edited there', updatedAt: '2026-11-02T10:00:00.000Z' }] })
+
+      expect(draftsOnDisk()[0]).toMatchObject({ id: 'old', body: 'kept', sendAttempt: attempt })
+    })
+  })
+
   it('hands the older copy what the other saved, so it stops holding an old view', async () => {
     const a = await openCopy()
     const b = await openCopy()
@@ -516,4 +554,24 @@ describe('two copies where the second only knows the draft from the provider lis
     expect(onDisk.map(item => item.id)).toEqual(['draft_reply_exec-k'])
     expect(onDisk[0]).toMatchObject({ threadId: 'thread_1', sourceMessageId: 'msg_1' })
   })
+})
+
+it('a current fast exit uses its agreed version and saves the last words without an awaited read', async () => {
+  const original = storeWith([draft('exit-current', 'Before')])
+  await writePersistedMailStore(original)
+  await readPersistedMailStore()
+  writeDraftsFileBeforeUnload({ ...original, drafts: [draft('exit-current', 'Last words')] })
+  await Promise.resolve()
+  expect((files.get(MAIL_DRAFTS_FILE) as { drafts: Draft[] }).drafts[0]!.body).toBe('Last words')
+})
+
+it('a host without version evidence gets no unsafe fast exit write', async () => {
+  const original = storeWith([draft('exit-no-version', 'Durable words')])
+  await writePersistedMailStore(original)
+  omitReadVersions = true
+  await readPersistedMailStore()
+  const before = JSON.stringify(files.get(MAIL_DRAFTS_FILE))
+  writeDraftsFileBeforeUnload({ ...original, drafts: [draft('exit-no-version', 'Only here')] })
+  await Promise.resolve()
+  expect(JSON.stringify(files.get(MAIL_DRAFTS_FILE))).toBe(before)
 })

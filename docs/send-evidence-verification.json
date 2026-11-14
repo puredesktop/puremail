@@ -1,0 +1,496 @@
+{
+  "node": "v24.16.0",
+  "suite": {
+    "commit": "f36884f801f4ad3e8780db6c954a82bb5267623f",
+    "tree": "58a53f4cbd356900118c8a92d7c2479aa6bf0a96",
+    "sourceCorrespondence": {
+      "filesCompared": 4559,
+      "mismatches": []
+    }
+  },
+  "repositories": {
+    "puremail": {
+      "startingCommit": "afd630eed324d045d60f8df6d1a41ba2072720bb",
+      "startingTree": "acabf140e8318963ef791ab7952f38f7b9ccbe0e",
+      "copyMismatches": [],
+      "testedSourceFileCount": 261,
+      "testedSourceManifestSha256": "6471e9e2c1abca8573a4cba546cea488c65ddfbf63beb7e154f5f1de7fb4ae7f",
+      "sourceBlobsChangedFromStartingCommit": {
+        "src/components/ComposeEditor.laterWords.test.tsx": "5d4c2a50ba6535ad32c246d77e91258adf5f8ca6",
+        "src/components/ComposeEditor.tsx": "5fa7d17821e69bb831f5c9f18b3c9e2c62b64e92",
+        "src/components/PureMailShell.tsx": "750a2a74918921a4d5110a4e1e31ca415398060d",
+        "src/components/ThreadReader.tsx": "6d60c7d43b70f1fa0cd426da742b8cd8086cc1cb",
+        "src/components/composeStash.test.tsx": "755aef3393c4702daeabf009cfa854e55e4be854",
+        "src/hooks/useComposeDraftAutosave.sending.test.tsx": "7b227cb1e9c0213e5fa983d754140d5aeb46ba06",
+        "src/hooks/useComposeDraftAutosave.ts": "317ffb138800f4f366fa055c9a00d37b1904e7eb",
+        "src/hooks/useDraftProviderSync.test.tsx": "471fb5589e66942bdce52e99183cc4f7f58b54a1",
+        "src/hooks/useDraftProviderSync.ts": "fe3ff22ceee3548bbad64eba9edd44abbafa6be0",
+        "src/lib/draftsFileMerge.ts": "8bcb091a4dfb26c15d29d25f1f41be76189d3b34",
+        "src/lib/mailDelivery.ts": "5ea1036ce49f8141eb1ccad9c418faf83ec6c586",
+        "src/lib/mailDeliveryStatus.ts": "c9638c452003f918cc142917e9cb2678e473c198",
+        "src/lib/mailModel.test.ts": "26932b0cfaed52c030f6ef7eaf448b9240988fa0",
+        "src/lib/mailModel.ts": "51d48aeefaa21db7649cb2f8de3c3fc2bbc5fbfa",
+        "src/lib/mailPersistence.test.ts": "69d820fbcb7a395ea0dc2d193a1ed55aa3c27989",
+        "src/lib/mailPersistence.ts": "2d1c3d98c336e73c337390e12e9ab814c1e4848d",
+        "src/lib/mailSendSettlement.test.tsx": "da6cff3f218ba0c553404e780727f6b5c6c86e1a",
+        "src/lib/mailStoreData.ts": "ad27f2d4ef27def4ea87a41a274c83520fc8b9b2",
+        "src/lib/twoCopies.test.ts": "4a082b7110c98fd7bbb109038adf777c932c6d0f",
+        "src/types.ts": "92eeca8bb364ce03568f181af4b59e3ca4b31c28"
+      }
+    },
+    "pureexecutive": {
+      "startingCommit": "422c4f7d887d3f8c2360ec27af544bb9987974e0",
+      "startingTree": "a92b8fd2626828edf03dcae627c95b68af85443a",
+      "copyMismatches": [],
+      "testedSourceFileCount": 257,
+      "testedSourceManifestSha256": "5b76472d2d49108ff551714fa7f0fc93ab7def5492db41d98ff268ec6b7d0569",
+      "sourceBlobsChangedFromStartingCommit": {
+        "src/lib/replies.test.ts": "6c203000cf09df689aae5fe8f8d30c92f721ea6f",
+        "src/runner/host.replies.test.ts": "e4776e2b1fea00aa38cf6b6ad31e46f387be57c2",
+        "src/screens/ReplyCard.test.tsx": "7b2db257bd3361d8234eb1f3ce87d9149be3b33c"
+      }
+    }
+  },
+  "configs": {
+    "puremail/package.json": {
+      "gitBlob": "adc62f123b48d9cccc05e012db28b1c89ece67e1",
+      "sha256": "9996662e5e949883ff2ea5a270d7f5c06c5aabb422dbc67ac9e3c33bdca20372"
+    },
+    "puremail/tsconfig.json": {
+      "gitBlob": "a021c231776768c7704cd19e78cbec07bba27b87",
+      "sha256": "2b6d0714b3700bcb889cf43c34bebfe386fd379defe1be39be5f67a57884c613"
+    },
+    "puremail/vite.config.js": {
+      "gitBlob": "d8f2530b8de379729a5ba8b326c01cd7c6a274a2",
+      "sha256": "ad990bb55d7d79e8551235deeaf4a04e65fa11acb921cc8cf960faadb10f717d"
+    },
+    "pureexecutive/package.json": {
+      "gitBlob": "167029de28331cc5b6a6353363d78c61b8b9885f",
+      "sha256": "856263a28443ec4edf783d4c11c5d2e055e5e8ae0dcd198b876088ac2a25533a"
+    },
+    "pureexecutive/tsconfig.json": {
+      "gitBlob": "9b6333ec85a72bf0abf75d6e1a055667f289d750",
+      "sha256": "94c3f7ebae5cc8d7dfd77dd4df3c112a81f5040350834ef4ef296461b7f0d8dc"
+    },
+    "pureexecutive/vite.config.js": {
+      "gitBlob": "3ed5e1b149e79c6b4e7923bf15313f533134bc31",
+      "sha256": "d0f9a09e6371d714f058d5678d65d031d6a310af70518c3c0a9a6de99196e878"
+    },
+    "pureexecutive/vitest.config.ts": {
+      "gitBlob": "27f83eb6e07bb58fd62965fb6fb97427ccd995bd",
+      "sha256": "c641949bb78ba9442fb3a309c8652c0d1d7ef89dfb761e56b7c5626a5f01e938"
+    },
+    "suite/tsconfig.base.json": {
+      "gitBlob": "004f827e7c915de6729ba6fecaa7a5cd37e8c1c1",
+      "sha256": "ccc4eb51d2a038efc988dc34e21146d61df2938a1653dda78b24c1402ba1ecbe"
+    },
+    "suite/package.json": {
+      "gitBlob": "079165dceafa4b66e0f9800a3ca0ca9766f95072",
+      "sha256": "41d390862b746acfd0747803d6b7a756cc0c0a73344fd2bbdf2e7a69d4aa2803"
+    },
+    "suite/package-lock.json": {
+      "gitBlob": "101e2e53f6274a345e6b13b34d9e731e08deb669",
+      "sha256": "4e969315a4b079b1876573d2866f5d264a45722bc039fa1fdae92403d3587a0d"
+    }
+  },
+  "dependencies": {
+    "suite": {
+      "installRealpath": "/private/tmp/claude-501/-Users-adamhyde--puredev-worktrees-puremail-f9d583-tnwrid/d954cbfb-e938-4c03-a390-963bd0a2da2d/scratchpad/suite/node_modules",
+      "packages": {
+        "react": {
+          "version": "19.2.8",
+          "gitBlob": "dfeacb6e82bde3354512a248e2380d539ed25b08",
+          "sha256": "e40c3ed9b633c9ecf188e09a4be309780a1ea0a9c068278a30ff6a27e7b2dbb6"
+        },
+        "react-dom": {
+          "version": "19.2.8",
+          "gitBlob": "1a01e6da700727b4ad9e09c7f62a029c6f8cd75c",
+          "sha256": "7c82f0967114d4b5d38b1f07e543af87c9919e8d3243f9604004819319cb2200"
+        },
+        "styled-components": {
+          "version": "6.5.3",
+          "gitBlob": "925208bc5aff74281486333268a0cd5b4c33c159",
+          "sha256": "4127a02ebe51e30f1c5e9164c0d9a25b44e52379e83e336de2e38e1f56038158"
+        },
+        "typescript": {
+          "version": "5.9.3",
+          "gitBlob": "cccb75de5b204bdd6f084eda262c2e3835a163a3",
+          "sha256": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6"
+        },
+        "vitest": {
+          "version": "3.2.7",
+          "gitBlob": "d594be5d02c282ad67491bb9ee061b19eeed5167",
+          "sha256": "3f3dc1ef7acc6ffac8d0a7f10c4460f98e36026837b57f774426d962d546d740"
+        },
+        "happy-dom": {
+          "version": "21.0.4",
+          "gitBlob": "996aab3b689f21363f482e782ba8eec9410c47c5",
+          "sha256": "516fdf64d51eee945fc0b5e15de4219489ec2ce8d3343f201782fe69044f5242"
+        },
+        "@swc/core": {
+          "version": "1.15.40",
+          "gitBlob": "139df1df2af6b45a43a07a70424c6b0b4dbdb2d9",
+          "sha256": "f96bf34477b1d6bf462a8ad96022a55969ea2d3b200cd9ffce8ec45685b1d111"
+        },
+        "@swc/plugin-styled-components": {
+          "version": "12.12.1",
+          "gitBlob": "c4fa5bf5561de9a56cdf7db9cdb2e7eaeb36e01f",
+          "sha256": "455dae50b9c68693caad99430049adf8718baf64712a723f4058c963154d37d1"
+        }
+      },
+      "installedLock": {
+        "gitBlob": "58127f2f694b6da2ab9ba7c5669511f3c8233698",
+        "sha256": "5fcaf72f4e61cadecb9ad5de68d895fa85e808a0f72ebf042495733938644528"
+      },
+      "testRuntime": {
+        "vite": {
+          "version": "6.4.4",
+          "gitBlob": "3b6d03c4ebc634c5c2ea5a05f9d8cafda1da6a23",
+          "sha256": "08aa811517022c5b83c52c63dc435d2aa725a64fe4e3cfa6f351affa6b9ed9de"
+        },
+        "happy-dom": {
+          "version": "21.0.4",
+          "gitBlob": "996aab3b689f21363f482e782ba8eec9410c47c5",
+          "sha256": "516fdf64d51eee945fc0b5e15de4219489ec2ce8d3343f201782fe69044f5242"
+        }
+      }
+    },
+    "mail": {
+      "installRealpath": "/private/tmp/claude-501/-Users-adamhyde--puredev-worktrees-puremail-f9d583-tnwrid/d954cbfb-e938-4c03-a390-963bd0a2da2d/scratchpad/suite/apps/puremail/node_modules",
+      "packages": {
+        "vite": {
+          "version": "6.4.4",
+          "gitBlob": "3b6d03c4ebc634c5c2ea5a05f9d8cafda1da6a23",
+          "sha256": "08aa811517022c5b83c52c63dc435d2aa725a64fe4e3cfa6f351affa6b9ed9de",
+          "suiteLockVersion": "6.4.4"
+        },
+        "happy-dom": {
+          "version": "17.6.3",
+          "gitBlob": "96d8a87283177446d1c01242155c99f16278f5e5",
+          "sha256": "c6c97e231e46239c36502e08fc9ba9e6fe7d164d4b0422e834ce921881915de0",
+          "suiteLockVersion": "17.6.3"
+        },
+        "@vitejs/plugin-react-swc": {
+          "version": "3.11.0",
+          "gitBlob": "63d962d9a13ffa26477f22508c145ca85b14c21d",
+          "sha256": "d00d40552a1addd2b181aea687fa1146326f723722671e1bae06cd7dd5e2ec63",
+          "suiteLockVersion": "3.11.0"
+        },
+        "@swc/core": {
+          "version": "1.16.1",
+          "gitBlob": "9ab700580b2e50bd6c982269ea955c0b609aff70",
+          "sha256": "beb82565845371c6ffc6efec78aaa7da603ca2493bb0beea36f37f08436fc759",
+          "suiteLockVersion": "1.16.1"
+        },
+        "@swc/plugin-styled-components": {
+          "version": "13.0.0",
+          "gitBlob": "6ca1cbd398ea1e741e4fc59677c5dc8d3007f3bd",
+          "sha256": "874007e551351c2b87177ab103edc605bf3cd9c086a48cb8c975492565801b32",
+          "suiteLockVersion": "13.0.0"
+        }
+      }
+    },
+    "executive": {
+      "installRealpath": "/private/tmp/claude-501/-Users-adamhyde--puredev-worktrees-puremail-f9d583-tnwrid/d954cbfb-e938-4c03-a390-963bd0a2da2d/scratchpad/suite/apps/pureexecutive/node_modules",
+      "packages": {
+        "vite": {
+          "version": "6.4.5",
+          "gitBlob": "798edfd73627c7d647cdcf082fbb90a7074a1c29",
+          "sha256": "0ac6ea0598168f203cad40e7b6e0f892987109262a296e29abf039f1b26099ee",
+          "suiteLockVersion": "6.4.5"
+        },
+        "happy-dom": {
+          "version": "17.6.3",
+          "gitBlob": "96d8a87283177446d1c01242155c99f16278f5e5",
+          "sha256": "c6c97e231e46239c36502e08fc9ba9e6fe7d164d4b0422e834ce921881915de0",
+          "suiteLockVersion": "17.6.3"
+        },
+        "@vitejs/plugin-react-swc": {
+          "version": "3.11.0",
+          "gitBlob": "63d962d9a13ffa26477f22508c145ca85b14c21d",
+          "sha256": "d00d40552a1addd2b181aea687fa1146326f723722671e1bae06cd7dd5e2ec63",
+          "suiteLockVersion": "3.11.0"
+        }
+      }
+    },
+    "installedVersionAudit": {
+      "checked": 1911,
+      "mismatches": [],
+      "absentWorkspaceOrDevEntries": [
+        "apps/bridge-lab",
+        "apps/purechart",
+        "apps/puredashboards",
+        "apps/puredashboards/node_modules/@vitejs/plugin-react-swc",
+        "apps/puredashboards/node_modules/vite",
+        "apps/puredesign",
+        "apps/pureexpenses",
+        "apps/pureinvoicing",
+        "apps/pureknowledge/node_modules/@vitejs/plugin-react-swc",
+        "apps/pureknowledge/node_modules/vite",
+        "apps/puresheets",
+        "apps/purewriter"
+      ],
+      "freshInstall": false
+    }
+  },
+  "knowledge": {
+    "commit": "82152ae10e381733e97eca54df27a1c32e3cb6b7",
+    "sourceCorrespondence": {
+      "filesCompared": 58,
+      "mismatches": []
+    }
+  },
+  "scope": {
+    "MailPR": "https://github.com/puredesktop/puremail/pull/73",
+    "ExecutivePR": "https://github.com/purescience-inc/pureexecutive/pull/77",
+    "commitsCreated": false,
+    "note": "Starting commit plus changed full blob identities defines the tested candidate. Documentation is outside the runtime source manifest; PureDev owns the eventual delivered commits. No tree object was written."
+  },
+  "hostContractBlobs": {
+    "packages/shell/src/modules/storage/jsonStore.ts": {
+      "gitBlob": "1629844b3c6e6fd681acfae06fc8e17b7e556ffa",
+      "sha256": "9607931abf0df84ce040d8faf2c8569d23c8eb7087f7b9aa58e23ae03494affa"
+    },
+    "packages/shell/src/renderer/workspace/closeTabs.ts": {
+      "gitBlob": "5a3bc81fdcbda2565651771c87cb382277971552",
+      "sha256": "1916f241f9ae9f3bf1b8802a3d81856550e7f904d536ffc3077126c088137478"
+    },
+    "packages/ui/src/bridge/storage.mjs": {
+      "gitBlob": "2268d1e1f4ce23a502850e91fb81e0650aa3aa40",
+      "sha256": "eee9b4a230d8333640949054a43ca9b4f48b298a41412f7ec005c6b4ca652da0"
+    },
+    "packages/ui/src/bridge/storage.d.mts": {
+      "gitBlob": "ed480cf151544495b86ac4808eee949ece31762f",
+      "sha256": "b174370409457a25be80448e38885e2858b32b3638d03db298e1f8e1b44aea1c"
+    },
+    "scripts/vite/app-server.mjs": {
+      "gitBlob": "2d53460ced0b9b30824bc3fa42f06b577cfcff57",
+      "sha256": "7a18e4535ec0020e2faaaeb50e1973f3b16cfd9bc5beea639dc0b933a4ffd247"
+    }
+  },
+  "logs": {
+    "exec-baseline.log": {
+      "gitBlob": "88403730a1122db7ffad20d0020486f673d8dadd",
+      "sha256": "558c1d4e3d8f7a08c4515c53785f4aeb8a060def264bc4b95ef00e1ea2043700"
+    },
+    "exec-adopts-baseline.log": {
+      "gitBlob": "5bde0f686b8d86fd4c0753f4c87c381d89ddd56a",
+      "sha256": "fc69c651170df8ccd0efa9acb700d11b2beb288d4bf12d178da634ed25065163"
+    },
+    "mail-build.log": {
+      "gitBlob": "ae3d181dca05be989e6bddaf52f6a7ff6c943e07",
+      "sha256": "9fd56e50930537a0b240d29f631acd06f234e9b3fc984a02bac92dd0eb3d5dd3"
+    },
+    "exec-full.log": {
+      "gitBlob": "4e60ce08554a237b8bd94ab24e6e14a5876c886d",
+      "sha256": "728d9d76b798d43349e06bfe3b89de48da86a6fdf7ccc7d6cd286095b65c4e62"
+    },
+    "mail-before-complete.log": {
+      "gitBlob": "f2a2d61ca6d9f5af0a2a290eb40a5441416c7fce",
+      "sha256": "179afdd581c8193f244061ed20f5b5a713f2222de7f2f27c7cc8125483fe4b27"
+    },
+    "mail-tsc.log": {
+      "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "mail-final5.log": {
+      "gitBlob": "44c2e113083e0619fc426d2aec48fdac3f3667f1",
+      "sha256": "07fa3335601cced127620fd1545eb8c48d97db3a73f3214d5711919815379218"
+    },
+    "exec-build.log": {
+      "gitBlob": "6b201435ab14b84a8cc04929b5563b06f9eb2643",
+      "sha256": "d75a529bf868f5a903e5ded3e08ee3c3add54d8d0d0c1af126f85b969593e16f"
+    },
+    "exec-final.log": {
+      "gitBlob": "ab5c42494be4c8438903fcd016bad8cd047d1c5c",
+      "sha256": "5db85e815836b701e90268547d59138a9e1f3ce98a4b473660fb852de568f1c5"
+    },
+    "mail-before-sync.log": {
+      "gitBlob": "eced2993bb8e9a4a9eadd41d20940b467a626d56",
+      "sha256": "0230fc1cd8fbe72a98d04fe79ee437da87fbda06d206ebf6de43849d98aabaa8"
+    },
+    "exec-tsc.log": {
+      "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "exec-card-final.log": {
+      "gitBlob": "58df29ef4da38926762bdb6bea4d370b3204cddb",
+      "sha256": "0f3ff807e3e747f885fa17cba02a87a52ece9a913da885afcb3f4ce4f4f7c4bf"
+    },
+    "exec-targeted.log": {
+      "gitBlob": "3d19998272ff701c94430f0e8ce814bc022e8f1d",
+      "sha256": "4a8b44d3a4422a8756b232b243214749bb2bc4ec27ac4ffdb188eb28632ea382"
+    }
+  },
+  "baseline": {
+    "ExecutiveMainCommit": "3f0641e3a5aeffaaad563404c687562c0462de17",
+    "ExecutiveMainTree": "8a5681a174eea71cde59b1cea5a0986943d873f4",
+    "fileComparisons": {
+      "src/runner/boundary.test.ts": {
+        "mainBlob": "8382f6a61e24affed9167ceecb95627c89729377",
+        "candidateBlob": "8382f6a61e24affed9167ceecb95627c89729377",
+        "identical": true
+      },
+      "src/screens/DecisionAssignmentLinks.test.tsx": {
+        "mainBlob": "c0c4709342e74a740c292025ca784706fdac7798",
+        "candidateBlob": "c0c4709342e74a740c292025ca784706fdac7798",
+        "identical": true
+      },
+      "src/screens/LeadWorkspace.test.tsx": {
+        "mainBlob": "7b3fd1f83067ba42060286fba1bcc5175a491505",
+        "candidateBlob": "7b3fd1f83067ba42060286fba1bcc5175a491505",
+        "identical": true
+      },
+      "src/mcp/server.test.ts": {
+        "mainBlob": "e1a9ecd097e3f103e88b5e38e4c5983af4963348",
+        "candidateBlob": "e1a9ecd097e3f103e88b5e38e4c5983af4963348",
+        "identical": true
+      },
+      "src/runner/host.ctoRunsDev.test.ts": {
+        "mainBlob": "a1c2aa814a5bef665b0cb18a060249136d1d3002",
+        "candidateBlob": "a1c2aa814a5bef665b0cb18a060249136d1d3002",
+        "identical": true
+      },
+      "src/runner/host.ctoAdopts.test.ts": {
+        "mainBlob": "efafa30b8ea06b298c9a2bf1314cfbb45b397c12",
+        "candidateBlob": "efafa30b8ea06b298c9a2bf1314cfbb45b397c12",
+        "identical": true
+      },
+      "package.json": {
+        "mainBlob": "167029de28331cc5b6a6353363d78c61b8b9885f",
+        "candidateBlob": "167029de28331cc5b6a6353363d78c61b8b9885f",
+        "identical": true
+      },
+      "tsconfig.json": {
+        "mainBlob": "9b6333ec85a72bf0abf75d6e1a055667f289d750",
+        "candidateBlob": "9b6333ec85a72bf0abf75d6e1a055667f289d750",
+        "identical": true
+      },
+      "vite.config.js": {
+        "mainBlob": "3ed5e1b149e79c6b4e7923bf15313f533134bc31",
+        "candidateBlob": "3ed5e1b149e79c6b4e7923bf15313f533134bc31",
+        "identical": true
+      },
+      "vitest.config.ts": {
+        "mainBlob": "27f83eb6e07bb58fd62965fb6fb97427ccd995bd",
+        "candidateBlob": "27f83eb6e07bb58fd62965fb6fb97427ccd995bd",
+        "identical": true
+      }
+    }
+  },
+  "checks": [
+    {
+      "repo": "puremail",
+      "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+      "exit": 0,
+      "log": "mail-tsc.log"
+    },
+    {
+      "repo": "puremail",
+      "command": "../../node_modules/.bin/vitest run",
+      "exit": 0,
+      "passed": 1543,
+      "failed": 0,
+      "files": 113,
+      "skipped": 0,
+      "log": "mail-final5.log"
+    },
+    {
+      "repo": "puremail",
+      "command": "./node_modules/.bin/vite build",
+      "exit": 0,
+      "log": "mail-build.log"
+    },
+    {
+      "repo": "pureexecutive",
+      "command": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+      "exit": 0,
+      "log": "exec-tsc.log"
+    },
+    {
+      "repo": "pureexecutive",
+      "command": "../../node_modules/.bin/vitest run",
+      "exit": 1,
+      "passed": 595,
+      "failed": 6,
+      "files": 107,
+      "skipped": 0,
+      "log": "exec-final.log"
+    },
+    {
+      "repo": "pureexecutive",
+      "command": "./node_modules/.bin/vite build",
+      "exit": 0,
+      "log": "exec-build.log"
+    },
+    {
+      "repo": "pureexecutive",
+      "command": "../../node_modules/.bin/vitest run src/lib/replies.test.ts src/screens/ReplyCard.test.tsx src/runner/host.replies.test.ts",
+      "exit": 0,
+      "passed": 62,
+      "failed": 0,
+      "files": 3,
+      "skipped": 0,
+      "log": "exec-targeted.log",
+      "note": "Consumer cases also all pass in final full suite; card helper duplicate key removed before final full/typecheck."
+    },
+    {
+      "repo": "pureexecutive-main",
+      "command": "../../node_modules/.bin/vitest run src/screens/LeadWorkspace.test.tsx src/screens/DecisionAssignmentLinks.test.tsx src/runner/boundary.test.ts src/mcp/server.test.ts src/runner/host.ctoRunsDev.test.ts",
+      "exit": 1,
+      "passed": 25,
+      "failed": 5,
+      "files": 5,
+      "skipped": 0,
+      "log": "exec-baseline.log"
+    },
+    {
+      "repo": "pureexecutive-main",
+      "command": "../../node_modules/.bin/vitest run src/runner/host.ctoAdopts.test.ts",
+      "exit": 0,
+      "passed": 4,
+      "failed": 0,
+      "files": 1,
+      "skipped": 0,
+      "log": "exec-adopts-baseline.log"
+    },
+    {
+      "repo": "puremail-starting-production-with-candidate-tests",
+      "command": "../../node_modules/.bin/vitest run src/lib/twoCopies.test.ts src/lib/mailSendSettlement.test.tsx src/components/ComposeEditor.laterWords.test.tsx src/components/composeStash.test.tsx src/hooks/useComposeDraftAutosave.sending.test.tsx src/lib/mailPersistence.test.ts",
+      "exit": 1,
+      "passed": 148,
+      "failed": 44,
+      "files": 6,
+      "skipped": 0,
+      "log": "mail-before-complete.log"
+    },
+    {
+      "repo": "puremail-starting-production-with-candidate-tests",
+      "command": "../../node_modules/.bin/vitest run src/hooks/useDraftProviderSync.test.tsx src/lib/mailModel.test.ts -t 'superseded submission|synced draft carrying older uncertainty'",
+      "exit": 1,
+      "passed": 0,
+      "failed": 2,
+      "files": 2,
+      "skipped": 154,
+      "log": "mail-before-sync.log"
+    }
+  ],
+  "limitations": [
+    "A rejected fast exit write cannot guarantee saving last words from a page destroyed before the normal merge acknowledges; see drafts.md for exact pinned host prerequisite.",
+    "No host-level proof of termination across suspended frames/devices exists in the inspected contract.",
+    "Executive full suite remains red: five failures reproduce on main; the CTO question-card failure is unclassified against its isolated baseline. Do not call these flakes.",
+    "Configured retained dependencies, not a fresh install; full app configs and actual SWC plugins were used.",
+    "No live desktop/mail/provider/send or release verification.",
+    "No puredesktop:check script is defined in either app."
+  ],
+  "delivery": {
+    "mailPR": 73,
+    "MailHeadObservedOnGitHub": "afd630eed324d045d60f8df6d1a41ba2072720bb",
+    "MailBaseObservedOnGitHub": "9bf303a7ab05c2e07f8289bee0224c19da0af340",
+    "descriptionUpdate": "pending; GitHub HTTP 403 Resource not accessible by integration",
+    "executivePR": 77,
+    "executiveDescriptionUpdate": "pending; connector read returned HTTP 404",
+    "commitsPushesBranchesCreated": false,
+    "owner": "Normal PureDev delivery and review"
+  }
+}

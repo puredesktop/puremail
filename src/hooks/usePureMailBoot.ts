@@ -21,6 +21,9 @@ import {
   pruneOrphanedDraftThreads,
 } from '../lib/mailModel'
 import { readPersistedMailStore } from '../lib/mailPersistence'
+import { recoverInterruptedSends } from '../lib/mailRuns'
+import { draftsInTheAir, draftsSendingElsewhere } from '../lib/mailSendOwners'
+import { isHeldCopy } from '../lib/heldCopy'
 import type { MailProvider, MailSettings, MailStore } from '../types'
 
 export const PUREMAIL_LOCAL_SETTINGS_KEY = 'puremail.localSettings.v1'
@@ -49,7 +52,13 @@ export interface PureMailBootState {
 
 async function readPersistedStore(): Promise<MailStore | null> {
   const { store } = await readPersistedMailStore()
-  return store ? pruneOrphanedDraftThreads(store) : null
+  if (!store) return null
+  // Only here, after a successful read: a failed load never reaches recovery.
+  // A held copy leaves this to Mail's own tab: a frame nested in another app's may not reach its channel.
+  if (isHeldCopy()) return pruneOrphanedDraftThreads(store)
+  // A send another open Mail window says it is carrying out is not ours to settle.
+  const elsewhere = await draftsSendingElsewhere(draftsInTheAir(store))
+  return recoverInterruptedSends(pruneOrphanedDraftThreads(store), undefined, { scope: draftId => !elsewhere.has(draftId) })
 }
 
 function readPersistedSettings(): Partial<MailSettings> {

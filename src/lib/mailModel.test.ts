@@ -3547,6 +3547,13 @@ describe('merging provider drafts', () => {
     expect(merged[0].body).toBe('Local text.')
   })
 
+  it('a synced draft carrying older uncertainty survives repeated missing listings and a newer remote copy without losing its evidence or words', () => {
+    const kept = local({ providerDraftId: 'r1', sendUncertainties: [{ attemptId: 'older', reason: 'No confirmation' }] })
+    const once = mergeMailDrafts([kept], [], true)
+    expect(mergeMailDrafts(once, [], true)).toEqual([kept])
+    expect(mergeMailDrafts([kept], [remote({ updatedAt: '2099-01-01T00:00:00Z' })], true)).toEqual([kept])
+  })
+
   it('drops a synced draft the provider no longer has', () => {
     // One listing proves nothing: it may have begun before the save.
     const once = mergeMailDrafts([local({ providerDraftId: 'r1' })], [], true)

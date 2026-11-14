@@ -28,8 +28,8 @@ function makeContext(undoSeconds = 0): MailAgentToolContext & { sent: Draft[] } 
       sent.push(draft)
       if (undoSeconds > 0) return { ok: true, pendingId: `pending_${draft.id}`, undoSeconds }
       const at = NOW.toISOString()
-      context.store = sendDraft(context.store, draft.id, at)
-      options.onCommitted?.(`msg_sent_${draft.id}_${at.replace(/[^0-9]/g, '')}`)
+      context.store = sendDraft(context.store, draft.id, at, { sentGmailMessageId: 'gmail_sent' })
+      options.onCommitted?.(`msg_sent_${draft.id}_${at.replace(/[^0-9]/g, '')}`, `pending_${draft.id}`)
       return { ok: true, pendingId: `pending_${draft.id}`, undoSeconds: 0 }
     },
     sent,

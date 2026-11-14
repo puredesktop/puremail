@@ -102,6 +102,17 @@ function mountHook(input: {
 }
 
 describe('draft provider sync', () => {
+  it('keeps a superseded submission out of account draft writes until the explicit Sent check', async () => {
+    const createDraft = vi.fn(async () => 'saved-after-check')
+    const harness = mountHook({ drafts: [draft({ sendUncertainties: [{ attemptId: 'older', reason: 'No confirmation' }] })], provider: { capabilities: { drafts: true }, createDraft } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(createDraft).not.toHaveBeenCalled()
+    harness.edit({ sendUncertainties: [{ attemptId: 'older', reason: 'No confirmation', checkedAt: '2026-11-02T10:00:00Z' }] })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(createDraft).toHaveBeenCalledTimes(1)
+    harness.unmount()
+  })
+
   it('does not retry an unconfirmed save when the draft was edited during that save', async () => {
     const pending = deferred<string>()
     const createDraft = vi.fn(() => pending.promise)

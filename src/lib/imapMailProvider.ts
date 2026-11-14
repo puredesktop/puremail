@@ -1151,8 +1151,8 @@ export class ImapMailProvider implements MailProvider {
     const attachments = await Promise.all(draft.attachments.map(async attachment => {
       if (attachment.content || attachment.remote?.provider !== 'imap') return attachment
       const hydrated = await this.getAttachmentContent(undefined as unknown as MailMessage, attachment)
-      const { remote: _remote, ...local } = hydrated
-      return local
+      const { remote, ...local } = hydrated
+      return { ...local, hydratedFrom: remote }
     }))
     const raw = await this.draftRaw({ ...draft, attachments })
     let uid: number | void

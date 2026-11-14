@@ -13,6 +13,8 @@ import type { PendingSendState } from '../components/mailShellHelpers'
 export function usePendingSend(input: {
   undoSendDelaySeconds: number | undefined
   setCommandNotice: (notice: string) => void
+  /** Undo cancelled this hold: nothing left, and the record should say so. */
+  onUndone?: (pending: PendingSendState) => void
 }): {
   pendingSend: PendingSendState | null
   /**
@@ -22,15 +24,27 @@ export function usePendingSend(input: {
    */
   pendingSends: PendingSendState[]
   sendingDraftIds: string[]
-  /** False when refused (another non-run hold is open) — nothing was queued. */
+  /**
+   * False when refused (another non-run hold is open, or this draft already
+   * has one) — nothing was queued. `onStart` runs once it is accepted, before
+   * the hold or, with no hold, before the commit.
+   */
   schedulePendingSend: (
     pending: PendingSendState,
     commit: () => void,
+    onStart?: () => void,
   ) => boolean
-  undoPendingSend: (pendingId: string) => void
+  /** False when that hold is no longer open: it cannot be undone any more. */
+  undoPendingSend: (pendingId: string) => boolean
   markDraftSending: (draftId: string, sending: boolean) => void
+  /** Read synchronously: a second approval must see the first before React renders. */
+  holdForDraft: (draftId: string) => PendingSendState | undefined
+  isDraftSending: (draftId: string) => boolean
 } {
   const { undoSendDelaySeconds, setCommandNotice } = input
+  const onUndoneRef = useRef(input.onUndone)
+  onUndoneRef.current = input.onUndone
+  const sendingRef = useRef(new Set<string>())
   const [pendingSend, setPendingSend] = useState<PendingSendState | null>(null)
   const [pendingSends, setPendingSends] = useState<PendingSendState[]>([])
   const [sendingDraftIds, setSendingDraftIds] = useState<string[]>([])
@@ -55,13 +69,15 @@ export function usePendingSend(input: {
   const schedulePendingSend = (
     pending: PendingSendState,
     commit: () => void,
+    onStart?: () => void,
   ): boolean => {
     // One compose/reply hold at a time; run holds stack among themselves.
     const holds = holdsRef.current
     const stacks =
       pending.target === 'run' && holds.every(item => item.target === 'run')
     if (
-      holds.some(item => item.id === pending.id) ||
+      holds.some(item => item.id === pending.id || (pending.draftId && item.draftId === pending.draftId)) ||
+      (pending.draftId && sendingRef.current.has(pending.draftId)) ||
       (holds.length > 0 && !stacks)
     ) {
       setCommandNotice('A send is already waiting. Undo it or let it finish.')
@@ -69,6 +85,7 @@ export function usePendingSend(input: {
     }
     // Undo-send hold: configurable, default 10s; 0 sends now.
     const undoSeconds = undoSendDelaySeconds ?? 10
+    onStart?.()
     if (undoSeconds === 0) {
       commit()
       return true
@@ -88,15 +105,24 @@ export function usePendingSend(input: {
     return true
   }
 
-  const undoPendingSend = (pendingId: string): void => {
+  const undoPendingSend = (pendingId: string): boolean => {
+    const pending = holdsRef.current.find(item => item.id === pendingId)
+    if (!pending) {
+      setCommandNotice('Too late to undo: this send had already left the hold.')
+      return false
+    }
     const timeoutId = timeoutsRef.current[pendingId]
     if (timeoutId) window.clearTimeout(timeoutId)
     delete timeoutsRef.current[pendingId]
     dropPending(pendingId)
+    onUndoneRef.current?.(pending)
     setCommandNotice('Send cancelled.')
+    return true
   }
 
   const markDraftSending = (draftId: string, sending: boolean): void => {
+    if (sending) sendingRef.current.add(draftId)
+    else sendingRef.current.delete(draftId)
     setSendingDraftIds(current =>
       sending
         ? current.includes(draftId)
@@ -113,5 +139,7 @@ export function usePendingSend(input: {
     schedulePendingSend,
     undoPendingSend,
     markDraftSending,
+    holdForDraft: draftId => holdsRef.current.find(item => item.draftId === draftId),
+    isDraftSending: draftId => sendingRef.current.has(draftId),
   }
 }

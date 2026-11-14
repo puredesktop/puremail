@@ -23,7 +23,7 @@ export function retainHydratedAttachments(snapshot: Attachment[], saved: Attachm
     if (item.remote?.provider !== 'imap' || item.content !== undefined ||
         !hydrated || hydrated.content === undefined || hydrated.remote ||
         hydrated.name !== item.name || hydrated.mimeType !== item.mimeType) return item
-    const { remote: _remote, ...local } = item
-    return { ...local, content: hydrated.content }
+    const { remote, ...local } = item
+    return { ...local, content: hydrated.content, hydratedFrom: hydrated.hydratedFrom ?? remote }
   })
 }

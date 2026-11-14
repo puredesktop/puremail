@@ -1,4 +1,4 @@
-import { draftContentRevision, draftIdFromMessageId, imapDraftMessageId } from './mailDeliveryStatus'
+import { draftAfterEarlierReceipt, receiptDraftRevision, draftContentRevision, hasUnconfirmedSendEvidence, draftIdFromMessageId, imapDraftMessageId } from './mailDeliveryStatus'
 import {
   calendarDraftResourceId,
   type CalendarDraftIntent,
@@ -624,7 +624,7 @@ export function calendarInviteForMessage(
   message: MailMessage,
 ): MailMessage['calendarInvite'] {
   if (message.calendarInvite) return message.calendarInvite
-  const calendarAttachment = message.attachments.find(
+  const calendarAttachment = (Array.isArray(message.attachments) ? message.attachments : []).find(
     attachment =>
       attachment.mimeType.toLowerCase() === 'text/calendar' ||
       attachment.name.toLowerCase().endsWith('.ics'),
@@ -1383,7 +1383,7 @@ export function recoverMailDraftSync(
   return {
     ...store,
     drafts: store.drafts.map(draft =>
-      draft.id === draftId && !draft.providerConflict && draft.syncState !== 'conflict' && !draft.providerSaveUncertain && !draft.providerSaveWarning && draft.sendState !== 'uncertain'
+      draft.id === draftId && !draft.providerConflict && draft.syncState !== 'conflict' && !draft.providerSaveUncertain && !draft.providerSaveWarning && !hasUnconfirmedSendEvidence(draft)
         ? {
             ...draft,
             syncState: recoveredMailSyncState(draft.syncState, action),
@@ -1407,7 +1407,7 @@ export function resolveMailDraftConflict(store: MailStore, draftId: string, useR
         providerConflict: undefined,
         providerRevision: draftContentRevision({ ...draft, ...accountVersion }),
         syncState: useRemote ? 'synced' as const : 'pending' as const,
-        sendError: draft.sendState === 'uncertain' ? draft.sendError : undefined,
+        sendError: hasUnconfirmedSendEvidence(draft) ? draft.sendError : undefined,
         providerSaveError: useRemote ? undefined : draft.providerSaveError,
       }
     }),
@@ -1427,7 +1427,7 @@ export function retryMailSyncFailures(store: MailStore): MailStore {
     })),
     drafts: store.drafts.map(draft => ({
       ...draft,
-      syncState: draft.syncState === 'conflict' || draft.providerConflict ? 'conflict' : draft.providerSaveWarning || draft.providerSaveUncertain || draft.sendState === 'uncertain' ? draft.syncState : recoveredMailSyncState(draft.syncState, 'retry'),
+      syncState: draft.syncState === 'conflict' || draft.providerConflict ? 'conflict' : draft.providerSaveWarning || draft.providerSaveUncertain || hasUnconfirmedSendEvidence(draft) ? draft.syncState : recoveredMailSyncState(draft.syncState, 'retry'),
     })),
   }
 }
@@ -3661,6 +3661,13 @@ export function mergeMailDrafts(
   }
 
   for (let local of currentDrafts) {
+    // A provider listing cannot erase or replace the only evidence of another
+    // attempt. Preserve it until Sent is checked or a receipt settles it.
+    if (!local.sentAt && local.sendUncertainties?.some(item => !item.checkedAt)) {
+      merged.push(local)
+      if (local.providerDraftId && providerById.has(local.providerDraftId)) claimed.add(local.providerDraftId)
+      continue
+    }
     if (!local.providerDraftId) {
       const named = remoteByMessageId.get(imapDraftMessageId(local))
       if (!named || claimed.has(named.providerDraftId!) || currentProviderIds.has(named.providerDraftId)) {
@@ -3786,10 +3793,15 @@ export function mergeMailProviderSyncResult(
   now: DateInput = new Date(),
 ): MailStore {
   const acceptedReceipts = currentStore.messages.filter(message => message.deliveryAccepted)
-  const confirmedUncertain = currentStore.drafts.filter(draft => draft.sendState === 'uncertain' && draft.sendMessageId && providerStore.messages.some(message => !message.isDraft && message.messageIdHeader === draft.sendMessageId))
+  const confirmedEarlier = currentStore.drafts.flatMap(draft => (draft.sendUncertainties ?? []).filter(entry => entry.messageId && providerStore.messages.some(message => !message.isDraft && !message.optimistic && message.messageIdHeader === entry.messageId)).map(entry => ({ draft, entry })))
+  const confirmedCurrent = currentStore.drafts.filter(draft => draft.sendState === 'uncertain' && draft.sendMessageId && !draft.sendUncertainties?.some(entry => entry.messageId === draft.sendMessageId && entry.attemptId !== (draft.sendAttempt?.id ?? draft.sendSettledAttemptId)) && providerStore.messages.some(message => !message.isDraft && message.messageIdHeader === draft.sendMessageId))
+  // Retain a newer attempt's own record when a receipt also coexists with
+  // another attempt's evidence. A receipt still makes the overall reading sent.
+  const confirmedUncertain = confirmedCurrent.filter(draft => !draft.sendUncertainties?.length)
+  const confirmedWithEvidence = confirmedCurrent.filter(draft => draft.sendUncertainties?.length)
   const consumedDraftIds = new Set([
     ...acceptedReceipts.flatMap(message => message.sentDraftProviderIds ?? (message.sentDraftProviderId ? [message.sentDraftProviderId] : [])),
-    ...confirmedUncertain.map(draft => draft.providerDraftId),
+    ...confirmedCurrent.map(draft => draft.providerDraftId),
   ].filter((id): id is string => Boolean(id)))
   const staleDrafts = providerStore.drafts.filter(draft => draft.providerDraftId && consumedDraftIds.has(draft.providerDraftId))
   const staleDraftMessageIds = new Set(staleDrafts.map(draft => draft.providerDraftMessageId).filter(Boolean))
@@ -3797,19 +3809,34 @@ export function mergeMailProviderSyncResult(
   const localDrafts = new Set(currentStore.drafts)
   const localAccounts = new Map(currentStore.threads.map(thread => [thread.id, thread.accountId]))
   const remoteAccounts = new Map(providerStore.threads.map(thread => [thread.id, thread.accountId]))
+  const laterWords: Draft[] = []
   const mergedDrafts = mergeMailDrafts(
-    currentStore.drafts.filter(draft => !confirmedUncertain.includes(draft)),
+    currentStore.drafts.filter(draft => !confirmedUncertain.includes(draft)).map(draft => {
+      const receipt = confirmedEarlier.find(item => item.draft.id === draft.id)
+      const messageId = receipt?.entry.messageId ?? (confirmedWithEvidence.includes(draft) ? draft.sendMessageId : undefined)
+      if (!messageId) return draft
+      const message = providerStore.messages.find(message => message.messageIdHeader === messageId)!
+      const settled = draftAfterEarlierReceipt(draft, { ...message, sentAttemptId: receipt?.entry.attemptId ?? draft.sendAttempt?.id ?? draft.sendSettledAttemptId })
+      if (settled.later) laterWords.push(settled.later)
+      return settled.evidence
+    }),
     incomingDrafts,
     Boolean(providerStore.syncCoverage?.draftsCovered),
     draft => (localDrafts.has(draft) ? localAccounts : remoteAccounts).get(draft.threadId),
   )
+  for (const later of laterWords) {
+    const index = mergedDrafts.findIndex(draft => draft.id === later.id)
+    if (index < 0) mergedDrafts.push(later)
+    else mergedDrafts[index] = receiptDraftRevision(mergedDrafts[index], later)
+  }
   const retainedDraftThreadIds = new Set(mergedDrafts.filter(draft => !draft.sentAt).map(draft => draft.threadId))
   const incomingMessages = providerStore.messages.filter(message => !message.isDraft || !staleDraftMessageIds.has(message.id)).map(message => {
     if (message.isDraft) return message
     const receipt = acceptedReceipts.find(local => local.gmailMessageId && local.gmailMessageId === message.gmailMessageId || local.messageIdHeader && local.messageIdHeader === message.messageIdHeader)
-    const uncertain = confirmedUncertain.find(draft => draft.sendMessageId === message.messageIdHeader)
+    const uncertain = confirmedCurrent.find(draft => draft.sendMessageId === message.messageIdHeader)
+    const earlier = confirmedEarlier.find(item => item.entry.messageId === message.messageIdHeader)
     const providerDraftId = receipt?.sentDraftProviderId ?? uncertain?.providerDraftId
-    if (!receipt && !uncertain) return message
+    if (!receipt && !uncertain && !earlier) return message
     const providerDraftIds = receipt?.sentDraftProviderIds ?? (providerDraftId ? [providerDraftId] : [])
     const cleanupPending = staleDrafts.some(draft => draft.providerDraftId && providerDraftIds.includes(draft.providerDraftId))
     const rejectedRecipients = receipt?.deliveryRejectedRecipients ?? []
@@ -3822,7 +3849,7 @@ export function mergeMailProviderSyncResult(
       ...(uncertain && !message.sentCopyPresent && providerStore.accounts.some(account => account.provider === 'imap') ? ['The account confirms this message was sent, but its IMAP Sent copy was not confirmed. Do not resend it.'] : []),
       ...(cleanupPending ? ['The account confirms this message was sent, but its old Drafts copy is still present. Do not resend it.'] : []),
     ]
-    return { ...message, ...(receipt?.bcc?.length ? { bcc: receipt.bcc } : {}), sentCopyMime: message.sentCopyPresent ? undefined : receipt?.sentCopyMime, deliveryAccepted: true, sentDraftId: receipt?.sentDraftId ?? uncertain?.id, sentDraftProviderId: providerDraftId, sentDraftProviderIds: providerDraftIds, deliveryRejectedRecipients: rejectedRecipients.length ? rejectedRecipients : undefined, deliveryWarnings: warnings.length ? [...new Set(warnings)] : undefined }
+    return { ...message, ...(receipt?.bcc?.length ? { bcc: receipt.bcc } : {}), sentCopyMime: message.sentCopyPresent ? undefined : receipt?.sentCopyMime, deliveryAccepted: true, sentDraftId: receipt?.sentDraftId ?? uncertain?.id ?? earlier?.draft.id, sentAttemptId: receipt?.sentAttemptId ?? earlier?.entry.attemptId ?? uncertain?.sendSettledAttemptId ?? uncertain?.sendAttempt?.id, sentDraftProviderId: providerDraftId, sentDraftProviderIds: providerDraftIds, deliveryRejectedRecipients: rejectedRecipients.length ? rejectedRecipients : undefined, deliveryWarnings: warnings.length ? [...new Set(warnings)] : undefined }
   })
   const mergedSettings = {
     ...providerStore.settings,

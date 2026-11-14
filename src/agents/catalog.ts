@@ -1,3 +1,4 @@
+import type { SendStoreDraftOptions, SendStoreDraftResult } from '../lib/mailSendRelease'
 import type { PreparedReply } from '../lib/mailDrawerDrafts'
 import type { Attachment, Draft, MailMessage, MailStore, MailThread } from '../types'
 import type { MailProposal } from '../lib/mailProposal'
@@ -226,14 +227,7 @@ export interface MailAgentToolContext {
    * draft, finalized, through the usual undo hold and provider path.
    * Present only in a live session; approval-gated per tool call.
    */
-  sendStoreDraft?: (
-    draft: Draft,
-    options: {
-      label?: string
-      onCommitted?: (sentMessageId: string | undefined) => void
-      onFailed?: (reason: string) => void
-    },
-  ) => { ok: true; pendingId: string; undoSeconds: number } | { ok: false; reason: string }
+  sendStoreDraft?: (draft: Draft, options: SendStoreDraftOptions) => SendStoreDraftResult
   /** Put a run on the user's screen at its first open item (resumeRun). */
   openRun?: (runId: string) => void
   /**

@@ -13,8 +13,12 @@ import {
   findRun,
   guessRunFieldMap,
   markRunItemCommitted,
-  markRunItemSent,
+  markRunItemSending,
+  markRunItemSubmitting,
+  markRunItemUnconfirmed,
   markRunItemUnsent,
+  runItemDelivery,
+  runItemLocked,
   noteTextFromBodyHtml,
   parsePastedRecipients,
   pauseRun,
@@ -38,6 +42,7 @@ import {
   normalizeRunKey,
 } from '../lib/mailRuns'
 import { plainTextToComposeHtml } from '../lib/mailCompose'
+import { deliveryNote, draftEditBlock, draftReleaseBlock, type DraftDelivery } from '../lib/mailDeliveryStatus'
 import { ownAddresses, replyStateInStore } from '../lib/mailReplyState'
 import { normalizeMessageId } from '../lib/mailThreading'
 import type {
@@ -151,6 +156,7 @@ function itemSummary(
     ...(item.rowIndex !== undefined ? { row: item.rowIndex + 1 } : { inherited: true }),
     draftId: item.draftId,
     status: item.status,
+    delivery: runItemDelivery(context.store, item),
     label: item.label ?? null,
     to: draft?.to.map(contact => contact.email) ?? null,
     subject: draft?.subject ?? null,
@@ -883,6 +889,8 @@ export function setRunNoteHandler(
   if (!draft || draft.sentAt || item.status === 'sent') {
     throw new AgentMailToolError(`Item "${item.label ?? item.draftId}" is ${item.status === 'sent' ? 'already sent' : 'missing'}; its note cannot change.`)
   }
+  const editBlock = draftEditBlock(context.store, draft.id)
+  if (editBlock) throw new AgentMailToolError(editBlock)
   const bodyHtml = setNoteInBodyHtml(draft.bodyHtml ?? plainTextToComposeHtml(draft.body), note)
   if (!bodyHtml) {
     throw new AgentMailToolError(
@@ -933,35 +941,63 @@ export function sendRunItemHandler(
     throw new AgentMailToolError(`The draft for "${item.label ?? item.draftId}" no longer exists (deleted from Drafts). renderRun recreates it from the template.`)
   }
   const draftId = draft.id
-  const result = context.sendStoreDraft(draft, {
-    label: 'Message',
-    onCommitted: sentMessageId =>
-      updateRunInStore(context, run.id, current => markRunItemCommitted(current, draftId, sentMessageId)),
-    onFailed: reason =>
-      updateRunInStore(context, run.id, current => markRunItemUnsent(current, draftId, reason)),
-  })
-  if (!result.ok) throw new AgentMailToolError(result.reason)
-  const now = (context.now ?? new Date()).toISOString()
-  // With no undo hold the commit already ran (synchronously) — recording
-  // a hold id now would leave the item looking pending forever.
-  const pendingSendId = result.undoSeconds > 0 ? result.pendingId : undefined
-  updateRunInStore(context, run.id, current =>
-    advanceRun(markRunItemSent(current, draftId, { pendingSendId }, now), now),
-  )
-  const remaining = runProgress(run).toGo - 1
-  return ok({
+  const answer = (delivery: DraftDelivery, extra: Record<string, unknown> = {}) => ok({
     runId: run.id,
     draftId,
     to: draft.to.map(contact => contact.email),
     subject: draft.subject,
-    status: result.undoSeconds > 0 ? 'queued' : 'sent',
-    undoSeconds: result.undoSeconds,
-    remaining: Math.max(0, remaining),
-    note:
-      result.undoSeconds > 0
-        ? `Leaves in ${result.undoSeconds}s unless the person undoes it. One item per approved send.`
-        : 'Sent. One item per approved send.',
+    status: delivery.state === 'submitted' ? 'sent' : 'queued',
+    delivery,
+    note: `${deliveryNote(delivery)} One item per approved send.`,
+    ...extra,
   })
+  const before = runItemDelivery(context.store, item)
+  if (item.status === 'sending' || before.state === 'held' || before.state === 'submitting') {
+    return answer(before.state === 'none' ? { state: 'submitting' } : before, { alreadyQueued: true })
+  }
+  const blocked = draftReleaseBlock(context.store, draftId)
+  if (blocked) throw new AgentMailToolError(blocked.reason)
+  let committed: string | undefined
+  let failure: string | undefined
+  const result = context.sendStoreDraft(draft, {
+    label: 'Message',
+    fromRun: true,
+    onStart: (attemptId, undoSeconds) =>
+      updateRunInStore(context, run.id, current =>
+        markRunItemSending(current, draftId, { attemptId, ...(undoSeconds > 0 ? { pendingSendId: attemptId } : {}) }),
+      ),
+    onSubmitting: attemptId =>
+      updateRunInStore(context, run.id, current => markRunItemSubmitting(current, draftId, attemptId)),
+    onCommitted: (sentMessageId, attemptId) => {
+      committed = sentMessageId ?? ''
+      updateRunInStore(context, run.id, current => markRunItemCommitted(current, draftId, sentMessageId, (context.now ?? new Date()).toISOString(), attemptId))
+    },
+    onFailed: (reason, outcome, attemptId) => {
+      failure = reason
+      updateRunInStore(context, run.id, current =>
+        outcome === 'uncertain'
+          ? markRunItemUnconfirmed(current, draftId, reason, undefined, attemptId)
+          : markRunItemUnsent(current, draftId, reason, undefined, attemptId),
+      )
+    },
+  })
+  if (!result.ok) throw new AgentMailToolError(result.reason)
+  if (result.already) return answer({ state: result.already }, { undoSeconds: result.undoSeconds, alreadyQueued: true })
+  if (failure) throw new AgentMailToolError(failure)
+  const now = (context.now ?? new Date()).toISOString()
+  // Legacy callers' stand-ins may never call onStart: the item is still only on its way.
+  updateRunInStore(context, run.id, current => {
+    const held = current.items.find(entry => entry.draftId === draftId)
+    const marked = held && held.status !== 'sending' && held.status !== 'sent'
+      ? markRunItemSending(current, draftId, { attemptId: result.pendingId, ...(result.undoSeconds > 0 ? { pendingSendId: result.pendingId } : {}) }, now)
+      : current
+    return advanceRun(marked, now)
+  })
+  const remaining = runProgress(run).toGo - 1
+  return answer(
+    committed !== undefined ? { state: 'submitted', ...(committed ? { sentMessageId: committed } : {}) } : { state: result.undoSeconds > 0 ? 'held' : 'submitting' },
+    { undoSeconds: result.undoSeconds, remaining: Math.max(0, remaining) },
+  )
 }
 
 export function skipRunItemHandler(
@@ -970,6 +1006,7 @@ export function skipRunItemHandler(
 ): AgentToolHandlerResult {
   const run = requireRun(context, requireString(args, 'runId'))
   const { item } = resolveItem(run, args)
+  if (runItemLocked(item) && item.status !== 'sent') throw new AgentMailToolError(`"${item.label ?? item.draftId}" is on its way or not confirmed; it cannot be skipped.`)
   if (item.status === 'sent') throw new AgentMailToolError(`"${item.label ?? item.draftId}" was already sent; it cannot be skipped.`)
   const reason = optionalString(args, 'reason')
   const now = (context.now ?? new Date()).toISOString()
