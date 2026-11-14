@@ -5,7 +5,7 @@ import { guessZone, searchZones, zoneChoices, type ZoneChoice, type ZoneGuess } 
 import { BarButton } from './readingRoomStyles'
 
 const Panel = styled.section`
-  margin: 0 0 28px; padding: 20px; border: 1px solid currentColor; border-radius: 12px;
+  margin: 0 0 28px; padding: 20px; border: 1px solid currentColor; border-radius: var(--pure-chrome-radius, 3px);
   h2 { margin: 0 0 8px; font-size: 20px; }
   p { font-size: 14px; line-height: 1.5; }
   article { border-top: 1px solid currentColor; padding-top: 12px; margin-top: 16px; }

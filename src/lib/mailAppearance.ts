@@ -1,5 +1,3 @@
-import { createGlobalStyle } from 'styled-components'
-
 /**
  * Mail's two backgrounds, in light mode:
  * - Glass is the shared White look (solid, softly tinted surfaces), which reads
@@ -45,43 +43,3 @@ export function installMailAppearance(root: HTMLElement = document.documentEleme
   render()
   return () => observer.disconnect()
 }
-
-/** White chosen, light mode: neutral greys over the shared White, sidebar included. */
-export const MailWhiteNeutral = createGlobalStyle`
-  html:root[data-mail-appearance='white']:not([data-platform-theme='dark']) {
-    --platform-colors-bg: #f2f2f2 !important;
-    --platform-colors-app-viewport: #f2f2f2 !important;
-    --platform-colors-surface: #f7f7f7 !important;
-    --platform-colors-elevated: #ffffff !important;
-    --platform-colors-surface-hover: #ececec !important;
-    --platform-colors-surface-active: #e4e4e4 !important;
-    --platform-colors-chrome-titlebar: #f6f6f6 !important;
-    --platform-colors-border: #dcdcdc !important;
-    --platform-colors-border-soft: #e6e6e6 !important;
-    --platform-colors-border-strong: #bdbdbd !important;
-    --platform-colors-divider: #e3e3e3 !important;
-    --pure-chrome-sidebar: #f7f7f7 !important;
-    --pure-chrome-well: #ececec !important;
-    --pure-chrome-hover: #ebebeb !important;
-    --pure-chrome-selection: #e3e3e3 !important;
-    --pure-chrome-line: #dcdcdc !important;
-    --pure-chrome-fence: #e6e6e6 !important;
-    --glass-panel: #f7f7f7 !important;
-    --glass-well: #ececec !important;
-    --glass-edge: #dcdcdc !important;
-    --glass-line: #e0e0e0 !important;
-  }
-  html:root[data-mail-appearance='white']:not([data-platform-theme='dark']) body {
-    background: #f2f2f2 !important;
-  }
-  html:root[data-mail-appearance='white']:not([data-platform-theme='dark']) [data-chrome='sidebar'] {
-    --pure-chrome-line: #dcdcdc;
-    --pure-chrome-fence: #e6e6e6;
-    --pure-chrome-muted: #6b6b6b;
-    --pure-chrome-hover: #ebebeb;
-    --pure-chrome-selection: #e3e3e3;
-  }
-  html:root[data-mail-appearance='white']:not([data-platform-theme='dark']) [data-chrome='sidebar'] :is([aria-current]:not([aria-current='false']), [aria-selected='true'], [data-active]) {
-    box-shadow: inset 0 0 0 1px #d6d6d6;
-  }
-`

@@ -29,14 +29,23 @@ import {
   Meta,
   NavRail,
   ReaderBackButton,
+  ReaderDetailsButton,
+  ReaderHeaderBand,
+  ReaderSenderAvatar,
+  ReaderSenderReply,
+  ReaderSenderTo,
+  ReaderStateChip,
   ReaderStateLine,
   ReaderTaskChip,
+  ReaderTimestamp,
   ReaderToolbar,
   ReaderToolbarButton,
   ReaderToolbarPrimary,
   ReaderToolbarSwap,
   ReaderToolbarSwapLayer,
+  Title,
   ToolbarDivider,
+  MessageCard,
 } from './mailShellStyles'
 
 /**
@@ -75,6 +84,72 @@ export const CompactInRoomStyle = createGlobalStyle`
     --puremail-message-bg: #ffffff;
     --puremail-empty-surface: #ffffff;
     background: #ffffff;
+  }
+
+  /* The held look: calm enterprise, one muted accent, hairlines, sans throughout. Navy replaces the app's brand colour for
+     its primary buttons, and a slate for the rest of what the accent coloured. Dark mode keeps the theme's own. */
+  :root:not([data-platform-theme='dark']) ${MailFrame}[data-compact-in-room] {
+    --pure-chrome-accent: #1f3a5f;
+    --pure-chrome-on-accent: #ffffff;
+    --puremail-accent: #2f5d8c;
+    --pure-chrome-line: #dde1e7;
+    --pure-chrome-hover: #f5f6f8;
+  }
+
+  /* Reading a thread: the state line is plain sans, not an uppercase tag and monospace figures. */
+  [data-compact-in-room] ${ReaderHeaderBand} {
+    padding: 14px 24px;
+  }
+  [data-compact-in-room] ${ReaderStateLine} {
+    font-family: inherit;
+    font-size: 12px;
+  }
+  [data-compact-in-room] ${ReaderStateChip} {
+    padding: 0;
+    background: none;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  [data-compact-in-room] ${ReaderTimestamp},
+  [data-compact-in-room] ${ReaderSenderTo},
+  [data-compact-in-room] ${ReaderDetailsButton},
+  [data-compact-in-room] ${MailStateChip} {
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  [data-compact-in-room] ${MailStateChip} {
+    font-weight: 500;
+  }
+  [data-compact-in-room] ${Title} {
+    margin-bottom: 8px;
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  [data-compact-in-room] ${ReaderSenderAvatar} {
+    display: none;
+  }
+  /* Reply sits twice, in the bar and on the message: the one in the bar is the primary, this one is the quiet copy. */
+  [data-compact-in-room] ${ReaderSenderReply} {
+    height: 28px;
+    margin-left: 0;
+    border: 1px solid #cdd1d7;
+    background: #ffffff;
+    color: var(--platform-colors-text);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  [data-compact-in-room] ${ReaderSenderReply}:hover {
+    background: #f5f6f8;
+    filter: none;
+  }
+  [data-compact-in-room] ${ReaderToolbarButton} {
+    height: 28px;
+  }
+  [data-compact-in-room] ${MessageCard} p {
+    font-size: 14px;
+    line-height: 1.55;
   }
 
   /* Square edges, as the room. */
@@ -198,7 +273,7 @@ const NewMessage = styled.button`
   color: var(--pure-chrome-on-accent);
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 
   &:hover {
@@ -321,20 +396,26 @@ function previewText(text: string): string {
 
 /**
  * Always the account's Inbox, newest first, whatever the full app last showed.
- * It reads the store directly and never the shell's query or filter.
+ * It reads the store directly and never the shell's query or filter. The one thing that
+ * changes it is words the page holding it asked to search for, until the person goes back.
  */
 export function CompactInbox({
   store,
   accountId,
   onOpen,
   onNewMessage,
+  search = '',
+  onShowInbox,
 }: {
   store: MailStore
   accountId: string | undefined
   onOpen: (threadId: string) => void
   onNewMessage: () => void
+  search?: string
+  onShowInbox?: () => void
 }): React.ReactElement {
-  const entries = resolveThreadQuery(store, accountId, 'in:inbox').entries
+  const searching = search.trim().length > 0
+  const entries = resolveThreadQuery(store, accountId, searching ? search : 'in:inbox').entries
   const unread = useMemo(() => unreadThreadIds(store), [store])
   const isUnread = (threads: ReadonlyArray<{ id: string }>): boolean => threads.some(thread => unread.has(thread.id))
   const unreadCount = entries.filter(entry => isUnread(entry.threads)).length
@@ -374,22 +455,33 @@ export function CompactInbox({
   // one page at a time, as many rows as fit: a list that scrolled inside the room's own scrolling would trap the wheel
   const perPage = Math.max(1, Math.floor(view.height / ROW_HEIGHT) || 8)
   const [page, setPage] = useState(0)
+  useEffect(() => setPage(0), [search])
   const lastPage = Math.max(0, Math.ceil(entries.length / perPage) - 1)
   const shownPage = Math.min(page, lastPage)
   const start = shownPage * perPage
   const end = Math.min(entries.length, start + perPage)
 
   return (
-    <Inbox aria-label="Inbox">
+    <Inbox aria-label={searching ? 'Search results' : 'Inbox'}>
       <Heading>
-        <HeadingText>{unreadCount > 0 ? `Inbox · ${unreadCount} unread` : 'Inbox'}</HeadingText>
-        <NewMessage type="button" onClick={onNewMessage}>
-          New message
-        </NewMessage>
+        <HeadingText>
+          {searching
+            ? `${entries.length} ${entries.length === 1 ? 'conversation matches' : 'conversations match'} “${search.trim()}”`
+            : unreadCount > 0 ? `Inbox · ${unreadCount} unread` : 'Inbox'}
+        </HeadingText>
+        {searching && onShowInbox ? (
+          <NewMessage type="button" onClick={onShowInbox}>
+            Show inbox
+          </NewMessage>
+        ) : (
+          <NewMessage type="button" onClick={onNewMessage}>
+            New message
+          </NewMessage>
+        )}
       </Heading>
       <Rows ref={scroller}>
         {entries.length === 0 ? (
-          <Nothing>Nothing in your inbox.</Nothing>
+          <Nothing>{searching ? `Nothing in your mail matches “${search.trim()}”.` : 'Nothing in your inbox.'}</Nothing>
         ) : (
           <div>
             {entries.slice(start, end).map(entry => {
@@ -414,7 +506,7 @@ export function CompactInbox({
         )}
       </Rows>
       {entries.length > perPage && (
-        <Pager aria-label="Inbox pages">
+        <Pager aria-label={searching ? 'Search pages' : 'Inbox pages'}>
           <span>{start + 1}–{end} of {entries.length}</span>
           <PagerButton type="button" aria-label="Newer messages" disabled={shownPage === 0} onClick={() => setPage(shownPage - 1)}>‹ Newer</PagerButton>
           <PagerButton type="button" aria-label="Older messages" disabled={shownPage === lastPage} onClick={() => setPage(shownPage + 1)}>Older ›</PagerButton>

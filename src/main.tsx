@@ -2,7 +2,8 @@ import './heldInRoom'
 import { createRoot } from 'react-dom/client'
 import { bridge } from '@purescience/platform-ui/bridge/client'
 import { App } from './App'
-import { installMailAppearance, MailWhiteNeutral } from './lib/mailAppearance'
+import { installMailAppearance } from './lib/mailAppearance'
+import { MailStyles } from './ui/styles'
 import { guardDevelopmentTiming } from './lib/developmentTiming'
 
 if (import.meta.env.DEV) {
@@ -16,7 +17,7 @@ installMailAppearance()
 
 createRoot(document.getElementById('root')!).render(
   <>
-    <MailWhiteNeutral />
+    <MailStyles />
     <App />
   </>,
 )

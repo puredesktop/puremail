@@ -1,6 +1,7 @@
 import { css, styled } from 'styled-components'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { THREAD_ROW_HEIGHTS, type MailDensity } from './mailShellLayout'
+import { primaryLook, quiet, quietLabel, statusLabel } from '../ui/styles'
 
 export type ConnectionResultTone = 'success' | 'warning' | 'neutral'
 export type MailProviderOptionStatus = 'ready' | 'planned' | 'advanced' | 'later'
@@ -147,7 +148,7 @@ export const FilterChipRow = styled.div`
   height: 30px;
   flex: none;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   border-bottom: 1px solid var(--puremail-line);
   padding: 0 12px;
   overflow-x: auto;
@@ -158,21 +159,26 @@ export const FilterChipRow = styled.div`
   }
 `
 
+/** A filter over the list is a tab; the chosen one has the shared selected look (hairline round a faint ground). Never an under-bar. */
 export const FilterChip = styled.button<{ $active?: boolean }>`
+  height: 22px;
   border: 0;
-  border-radius: 11px;
-  background: ${({ $active }) =>
-    $active
-      ? 'var(--platform-colors-text)'
-      : 'color-mix(in srgb, currentColor 5%, transparent)'};
+  border-radius: 0;
+  background: ${({ $active }) => ($active ? 'var(--p-chosen)' : 'transparent')};
+  box-shadow: ${({ $active }) => ($active ? 'var(--p-chosen-edge)' : 'none')};
   color: ${({ $active }) =>
-    $active ? 'var(--platform-colors-surface)' : 'inherit'};
+    $active ? 'var(--n-ink)' : 'var(--n-soft)'};
   cursor: pointer;
   flex: none;
-  font-family: var(--platform-typography-font-family-mono);
-  font-size: var(--pure-chrome-meta-size);
-  opacity: ${({ $active }) => ($active ? 1 : 0.72)};
-  padding: 3px 7px;
+  font-family: var(--platform-typography-font-family);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: ${({ $active }) => ($active ? 600 : 500)};
+  padding: 0 8px;
+
+  &:hover {
+    color: var(--n-ink);
+  }
 `
 
 
@@ -370,12 +376,9 @@ export const DockedTaskDrawerHeader = styled.button`
 `
 
 export const TaskCountPill = styled.span`
-  border-radius: 9px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
   color: var(--platform-colors-text-secondary);
-  font-family: var(--platform-typography-font-family-mono);
   font-size: var(--pure-chrome-meta-size);
-  padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
 `
 
 /**
@@ -389,11 +392,11 @@ export const TaskModeChip = styled.button`
   align-items: center;
   gap: 4px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-accent-bg);
   color: var(--puremail-accent-text);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 1px 7px;
 
@@ -783,7 +786,7 @@ export const ReaderStateLine = styled.div`
   min-width: 0;
   margin-bottom: 10px;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   /* An item may move to the next row whole; it may never break inside —
      that is what turned the timestamp into a three-line column. */
@@ -794,26 +797,25 @@ export const ReaderStateLine = styled.div`
   }
 `
 
+/** Where a message stands (received, sent, draft): a quiet label, in normal case. */
 export const ReaderStateChip = styled.span`
-  flex: none;
-  border-radius: 4px;
-  background: color-mix(in srgb, currentColor 12%, transparent);
-  color: var(--platform-colors-text-secondary);
-  font-size: var(--pure-chrome-label-size);
-  letter-spacing: var(--pure-chrome-label-tracking);
-  padding: 2px 7px;
-  text-transform: uppercase;
+  ${quietLabel}
 `
 
+/** "details": the message's full headers, opened in place. Ink with a hairline under it, never the app's colour (coloured words read as highlights). */
 export const ReaderDetailsButton = styled.button`
   flex: none;
   margin-left: auto;
   border: 0;
-  border-radius: 4px;
+  border-radius: 3px;
   background: transparent;
-  color: var(--puremail-accent);
+  color: var(--platform-colors-text-secondary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--platform-colors-border-strong);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 2px 4px;
 
@@ -834,7 +836,7 @@ export const ReaderDetailsPanel = styled.dl`
 
   dt {
     color: var(--platform-colors-text-tertiary);
-    font-family: var(--platform-typography-font-family-mono);
+    font-family: var(--platform-typography-font-family);
   }
 
   dd {
@@ -934,7 +936,7 @@ export const ThreadPill = styled.button<{ $open?: boolean }>`
       $open
         ? 'var(--puremail-accent)'
         : 'color-mix(in srgb, currentColor 25%, transparent)'};
-  border-radius: 11px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: ${({ $open }) =>
     $open ? 'var(--puremail-accent-bg)' : 'transparent'};
   color: ${({ $open }) =>
@@ -942,7 +944,7 @@ export const ThreadPill = styled.button<{ $open?: boolean }>`
       ? 'var(--puremail-accent-text)'
       : 'var(--platform-colors-text-secondary)'};
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 3px 10px;
   white-space: nowrap;
@@ -969,7 +971,7 @@ export const HistoryPopover = styled.div`
   max-width: calc(100% - 32px);
   flex-direction: column;
   border: 1px solid var(--puremail-line);
-  border-radius: 10px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-message-bg);
   box-shadow: 0 14px 38px color-mix(in srgb, #111827 18%, transparent);
   overflow: hidden;
@@ -985,7 +987,7 @@ export const HistoryPopoverHeader = styled.div`
 
 export const HistoryPopoverTitle = styled.span`
   color: var(--platform-colors-text-secondary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-label-size);
   font-weight: 500;
   letter-spacing: var(--pure-chrome-label-tracking);
@@ -994,7 +996,7 @@ export const HistoryPopoverTitle = styled.span`
 
 export const HistoryPopoverCount = styled.span`
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -1044,7 +1046,7 @@ export const HistoryMonthLabel = styled.div`
   border-bottom: 1px solid
     color-mix(in srgb, var(--platform-colors-text) 5%, transparent);
   color: color-mix(in srgb, var(--platform-colors-text) 35%, transparent);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-label-size);
   letter-spacing: var(--pure-chrome-label-tracking);
   padding: 7px 12px 5px;
@@ -1059,11 +1061,8 @@ export const HistoryRow = styled.button<{ $current?: boolean }>`
   border: 0;
   border-bottom: 1px solid
     color-mix(in srgb, var(--platform-colors-text) 5%, transparent);
-  border-left: 2px solid
-    ${({ $current }) =>
-      $current ? 'var(--puremail-accent)' : 'transparent'};
-  background: ${({ $current }) =>
-    $current ? 'var(--puremail-accent-bg)' : 'transparent'};
+  background: ${({ $current }) => ($current ? 'var(--p-chosen)' : 'transparent')};
+  box-shadow: ${({ $current }) => ($current ? 'var(--p-chosen-edge)' : 'none')};
   color: inherit;
   cursor: pointer;
   font: inherit;
@@ -1100,7 +1099,7 @@ export const HistoryRowTime = styled.span`
   min-width: 0;
   overflow: hidden;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   text-overflow: ellipsis;
 `
@@ -1108,7 +1107,7 @@ export const HistoryRowTime = styled.span`
 export const HistoryRowMarker = styled.span`
   flex: none;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -1119,7 +1118,7 @@ export const HistoryFooter = styled.div`
   border-top: 1px solid var(--puremail-line);
   background: var(--puremail-pane-header-bg);
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 9px 12px;
 `
@@ -1131,7 +1130,7 @@ export const HistoryFooterLink = styled.button`
   color: var(--puremail-accent);
   cursor: pointer;
   font: inherit;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   font-weight: 500;
   padding: 0;
@@ -1166,7 +1165,7 @@ export const ThreadViewBack = styled.button`
   background: transparent;
   color: var(--puremail-accent);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 2px 0;
 
@@ -1220,7 +1219,7 @@ export const ThreadViewMetaLine = styled.div`
   gap: 8px;
   min-width: 0;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   white-space: nowrap;
 `
@@ -1266,7 +1265,7 @@ export const ThreadSearchInput = styled.input`
   border: 0;
   background: transparent;
   color: var(--platform-colors-text);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   outline: none;
   padding: 2px 4px;
@@ -1282,7 +1281,7 @@ export const ThreadExpandAll = styled.button`
   background: transparent;
   color: var(--puremail-accent);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 2px 0;
 
@@ -1304,7 +1303,7 @@ export const ThreadViewScroll = styled.div`
 
 export const ThreadViewMonth = styled.div`
   color: color-mix(in srgb, var(--platform-colors-text) 35%, transparent);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-label-size);
   letter-spacing: var(--pure-chrome-label-tracking);
   padding: 10px 0 6px 34px;
@@ -1355,7 +1354,7 @@ export const TimelineBody = styled.div`
 /** The open message, expanded in place as a bordered card. */
 export const TimelineCard = styled.article`
   border: 1px solid color-mix(in srgb, var(--platform-colors-text) 12%, transparent);
-  border-radius: 9px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-message-bg);
   overflow: hidden;
 `
@@ -1429,7 +1428,7 @@ export const TimelineRowSnippet = styled.span`
 export const TimelineDraftWord = styled.span`
   flex: none;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -1441,7 +1440,7 @@ export const ThreadViewFooter = styled.div`
   border-top: 1px solid var(--puremail-line);
   background: var(--puremail-pane-header-bg);
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 10px 40px;
 
@@ -1473,7 +1472,7 @@ export const ComposerBar = styled.div`
 export const ComposerBarStatus = styled.span`
   margin-left: auto;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -1491,7 +1490,7 @@ export const ComposerHeaderBand = styled.div`
 export const ComposerKicker = styled.div`
   margin-bottom: 6px;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-label-size);
   letter-spacing: var(--pure-chrome-label-tracking);
   text-transform: uppercase;
@@ -1532,7 +1531,7 @@ export const ComposerRecipientRow = styled.div`
 export const ComposerToLabel = styled.span`
   flex: none;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -1542,7 +1541,7 @@ export const ComposerCcButton = styled.button`
   background: transparent;
   color: var(--puremail-accent);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 2px 0;
 
@@ -1625,7 +1624,7 @@ export const ComposerAssistRow = styled.div`
 export const AssistLabel = styled.span`
   flex: none;
   color: var(--platform-colors-text-secondary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -1633,11 +1632,11 @@ export const AssistPresetChip = styled.button<{ $dashed?: boolean }>`
   flex: none;
   border: 1px ${({ $dashed }) => ($dashed ? 'dashed' : 'solid')}
     color-mix(in srgb, var(--platform-colors-text) 20%, transparent);
-  border-radius: 11px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: transparent;
   color: var(--platform-colors-text-secondary);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 3px 10px;
 
@@ -1660,7 +1659,7 @@ export const AssistCustomInput = styled.input`
     color-mix(in srgb, var(--platform-colors-text) 25%, transparent);
   background: transparent;
   color: var(--platform-colors-text);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   outline: none;
   padding: 2px 4px;
@@ -1673,7 +1672,7 @@ export const AssistUndo = styled.button`
   background: transparent;
   color: var(--platform-colors-text-secondary);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 2px 4px;
 
@@ -1709,10 +1708,10 @@ export const ComposerAttachLabel = styled.label`
   gap: 5px;
   border: 1px dashed
     color-mix(in srgb, var(--platform-colors-text) 20%, transparent);
-  border-radius: 11px;
+  border-radius: var(--pure-chrome-radius, 3px);
   color: var(--platform-colors-text-secondary);
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 3px 10px;
 
@@ -1740,7 +1739,7 @@ export const ComposerSavedMarker = styled.span<{ $failed?: boolean }>`
     $failed
       ? 'var(--puremail-danger-text, #b23a2e)'
       : 'var(--platform-colors-text-tertiary)'};
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 
   &::before {
@@ -1764,7 +1763,7 @@ export const ComposerDiscard = styled.button<{ $armed?: boolean }>`
       ? 'var(--puremail-danger-text, #b23a2e)'
       : 'var(--platform-colors-text-tertiary)'};
   cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   font-weight: ${({ $armed }) => ($armed ? 600 : 400)};
   padding: 4px 6px;
@@ -1786,7 +1785,7 @@ export const InviteCard = styled.section`
   max-width: ${READER_MEASURE}px;
   margin: 0 auto 16px;
   border: 1px solid color-mix(in srgb, var(--platform-colors-text) 12%, transparent);
-  border-radius: 9px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-message-bg);
   overflow: hidden;
 `
@@ -1801,7 +1800,7 @@ export const InviteCardHead = styled.div`
 export const InviteCardLabel = styled.div`
   margin-bottom: 4px;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-label-size);
   letter-spacing: var(--pure-chrome-label-tracking);
   text-transform: uppercase;
@@ -1824,7 +1823,7 @@ export const InviteCardWhen = styled.div`
 export const InviteCardMeta = styled.div`
   margin-top: 3px;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -1857,9 +1856,9 @@ export const InviteStatusPill = styled.span<{ $tone: InviteStatusTone }>`
   flex: none;
   margin-left: auto;
   border: 1px solid ${({ $tone }) => INVITE_TONE[$tone].border};
-  border-radius: 11px;
+  border-radius: var(--pure-chrome-radius, 3px);
   color: ${({ $tone }) => INVITE_TONE[$tone].text};
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 3px 10px;
   white-space: nowrap;
@@ -1888,7 +1887,7 @@ export const InviteStatusMeta = styled.span`
   min-width: 0;
   overflow: hidden;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   text-overflow: ellipsis;
 `
@@ -1905,7 +1904,7 @@ export const InviteCardActions = styled.div`
 export const InviteCardNote = styled.span`
   margin-left: auto;
   color: color-mix(in srgb, var(--platform-colors-text) 42%, transparent);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   white-space: nowrap;
 `
@@ -1922,7 +1921,7 @@ export const ProvenanceLine = styled.div`
   max-width: ${READER_MEASURE}px;
   margin: 0 auto;
   color: color-mix(in srgb, var(--platform-colors-text) 42%, transparent);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   line-height: 1.5;
 `
@@ -1990,21 +1989,18 @@ export const AttachmentChips = styled.div<{ $scroll?: boolean }>`
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px 28px;
   ${({ $scroll }) =>
     $scroll ? 'max-height: 40vh; overflow-y: auto; padding-right: 4px;' : ''}
 `
 
+/** One file on the attachments line: its type, name and size, then its actions. No box around it. */
 export const ReaderAttachmentChip = styled.div`
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
-  padding: 5px 8px 5px 6px;
-  border: 1px solid var(--puremail-line);
-  border-radius: 8px;
-  background: var(--puremail-message-bg);
 `
 
 export const AttachmentChipActions = styled.div`
@@ -2037,20 +2033,18 @@ export const AttachmentRow = styled.div`
   }
 `
 
+/** The file's type in small grey capitals before its name, not a box of its own. */
 export const AttachmentTypeTile = styled.span`
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
   flex: none;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--puremail-line);
-  border-radius: 5px;
-  background: var(--puremail-message-bg);
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
-  font-size: var(--pure-chrome-meta-size);
-  text-transform: lowercase;
+  font-family: var(--platform-typography-font-family);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* small capitals sit high beside the name: down onto its line */
+  position: relative;
+  top: 1px;
 `
 
 export const AttachmentRowText = styled.div`
@@ -2076,7 +2070,7 @@ export const AttachmentRowName = styled.span`
 export const AttachmentRowMeta = styled.span`
   overflow: hidden;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2096,24 +2090,18 @@ export const AttachmentActionButton = styled(Button)`
 
 export const ReaderTimestamp = styled.span`
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
+/** Opens the rest of the details: a small button, in normal case, so it can't be taken for a label. */
 export const ReaderTaskChip = styled.button`
-  border: 0;
-  border-radius: 4px;
-  background: color-mix(in srgb, currentColor 6%, transparent);
-  color: var(--platform-colors-text-secondary);
-  cursor: pointer;
-  font-family: var(--platform-typography-font-family-mono);
-  font-size: var(--pure-chrome-label-size);
-  letter-spacing: var(--pure-chrome-label-tracking);
-  padding: 2px 7px;
-  text-transform: uppercase;
-
-  &:hover {
-    color: var(--platform-colors-text);
+  && {
+    ${quiet}
+    height: 22px;
+    padding: 0 7px;
+    font-size: 11.5px;
+    font-weight: 500;
   }
 `
 
@@ -2128,22 +2116,19 @@ export const ReaderSenderRow = styled.div`
   min-width: 0;
 `
 
-/** Reply on the sender row: the toolbar's primary, small, beside who wrote. */
+/** Reply on the sender row, small, beside who wrote. */
 export const ReaderSenderReply = styled.button`
   flex: none;
   margin-left: 8px;
   height: 24px;
   padding: 0 10px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--pure-chrome-accent);
-  color: var(--pure-chrome-on-accent);
-  font: inherit;
-  font-size: var(--pure-chrome-meta-size);
-  font-weight: 600;
-  cursor: pointer;
-  &:hover { filter: brightness(0.92); }
-  &:focus-visible { outline: 2px solid var(--pure-chrome-accent); outline-offset: 2px; }
+  /* The toolbar's Reply is the one solid action on the page; this one beside the sender is a plain button. */
+  && {
+    ${quiet}
+    height: 24px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
 `
 
 export const ReaderSenderAvatar = styled.span`
@@ -2172,7 +2157,7 @@ export const ReaderSenderTo = styled.span`
   min-width: 0;
   overflow: hidden;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2201,13 +2186,15 @@ export const MessageCard = styled.article<{ $focused?: boolean }>`
   max-width: ${READER_MEASURE}px;
   margin: 0 auto;
   padding: 0 0 8px;
-  /* Messages separate with a rule, not by floating apart. */
+  /* Messages separate with a rule between them, not by floating apart; the first sits under the header's own rule. A focused
+     message has the shared selected look, never a coloured bar down its edge. */
   border: 0;
-  border-top: 1px solid var(--puremail-line);
-  border-left: ${({ $focused }) =>
-    $focused ? '3px solid var(--puremail-accent)' : '0'};
-  padding-left: ${({ $focused }) => ($focused ? '13px' : '0')};
-  background: transparent;
+  & + & {
+    border-top: 1px solid var(--puremail-line);
+  }
+  padding-inline: ${({ $focused }) => ($focused ? '13px' : '0')};
+  background: ${({ $focused }) => ($focused ? 'var(--p-chosen)' : 'transparent')};
+  box-shadow: ${({ $focused }) => ($focused ? 'var(--p-chosen-edge)' : 'none')};
 
   p {
     margin: 10px 0 0;
@@ -2241,9 +2228,29 @@ export const MessageBody = styled.div`
   margin-top: 0;
   max-width: 100%;
   padding: 16px 18px;
-  border-radius: 8px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: #ffffff;
   color: #1f2328;
+
+  /* A plain message has no card of its own, so its words start on the subject's edge. */
+  &[data-follows-theme] {
+    padding-inline: 0;
+  }
+
+  /* A plain message (no colours of its own) sits on the reader's own ground and ink, so in dark mode it is dark too.
+     Designed mail keeps the light page above. */
+  :root[data-platform-theme='dark'] &[data-follows-theme] {
+    --platform-colors-text: var(--n-ink);
+    --platform-colors-text-secondary: var(--n-soft);
+    --platform-colors-text-tertiary: var(--n-faint);
+    --platform-colors-border: var(--n-line);
+    --platform-colors-surface: var(--n-panel);
+    --platform-colors-surface-hover: var(--n-hover);
+    --platform-colors-info: var(--p-working-text);
+    --platform-colors-semantic-blue-text: var(--p-working-text);
+    background: var(--n-sheet);
+    color: var(--n-ink);
+  }
   font-family: var(--platform-typography-font-family);
   font-size: 13.5px;
   line-height: 1.65;
@@ -2331,7 +2338,7 @@ export const MessageBody = styled.div`
 
   pre,
   code {
-    font-family: var(--platform-typography-font-family-mono);
+    font-family: var(--platform-typography-font-family);
     font-size: 0.92em;
   }
 
@@ -2404,46 +2411,23 @@ export const ThreadSignalRow = styled.div`
   align-items: center;
 `
 
+/**
+ * A state on a conversation is a label: a flat tag in the system colour of what it says (red needs doing now, blue wants
+ * a reply, green is done or drafted, amber waits on someone), never a button. A mail label stays quiet grey.
+ */
 export const MailStateChip = styled.span<{
   $tone?: 'priority' | 'reply' | 'draft' | 'waiting' | 'overdue' | 'replied' | 'label'
 }>`
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border: 1px solid
-    ${({ $tone }) =>
-      $tone === 'priority' || $tone === 'overdue'
-        ? 'var(--puremail-danger-border)'
-        : $tone === 'reply'
-        ? 'var(--puremail-info-border)'
+  ${({ $tone }) =>
+    $tone === 'priority' || $tone === 'overdue'
+      ? statusLabel('failed')
+      : $tone === 'reply'
+        ? statusLabel('working')
         : $tone === 'draft' || $tone === 'replied'
-        ? 'var(--puremail-success-border)'
-        : 'var(--puremail-neutral-chip-border)'};
-  border-radius: var(--platform-radius-sm);
-  background: ${({ $tone }) =>
-    $tone === 'priority' || $tone === 'overdue'
-      ? 'var(--puremail-danger-bg)'
-      : $tone === 'reply'
-      ? 'var(--puremail-info-bg)'
-      : $tone === 'draft' || $tone === 'replied'
-      ? 'var(--puremail-success-bg)'
-      : $tone === 'waiting'
-      ? 'var(--puremail-warning-bg)'
-      : 'transparent'};
-  color: ${({ $tone }) =>
-    $tone === 'priority' || $tone === 'overdue'
-      ? 'var(--puremail-danger-text)'
-      : $tone === 'reply'
-      ? 'var(--puremail-info-text)'
-      : $tone === 'draft' || $tone === 'replied'
-      ? 'var(--puremail-success-text)'
-      : $tone === 'waiting'
-      ? 'var(--puremail-warning-text)'
-      : 'var(--puremail-neutral-chip-text)'};
-  font-size: var(--pure-chrome-meta-size);
-  font-weight: 550;
-  white-space: nowrap;
+          ? statusLabel('done')
+          : $tone === 'waiting'
+            ? statusLabel('needs-you')
+            : quietLabel}
 `
 
 
@@ -2477,7 +2461,7 @@ export const CollapsedQuoteBoundary = styled.div`
   gap: 8px;
   margin-top: 8px;
   padding: 6px 9px;
-  border-left: 2px solid var(--platform-colors-border);
+  border: 1px solid var(--platform-colors-border);
   border-radius: var(--platform-radius-sm);
   background: color-mix(
     in srgb,
@@ -2798,7 +2782,7 @@ export const AskSuggestionRow = styled.div`
 export const AskChip = styled.button`
   padding: 4px 10px;
   border: 1px solid var(--platform-colors-border);
-  border-radius: 999px;
+  border-radius: 2px;
   background: transparent;
   color: var(--platform-colors-text-secondary);
   font: inherit;
@@ -3599,9 +3583,6 @@ export const MailNavCount = styled.span`
    not looking, and this is what says so. */
 export const MailNavUnseen = styled.span.attrs(chrome('meta'))`
   flex: none;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--pure-chrome-accent) 14%, transparent);
 
   && {
     color: var(--pure-chrome-accent);
@@ -3670,7 +3651,7 @@ export const AgentSearchChip = styled.button`
   max-width: 100%;
   padding: 2px 8px;
   border: 1px solid var(--platform-colors-border);
-  border-radius: 999px;
+  border-radius: 2px;
   background: transparent;
   color: var(--platform-colors-text-secondary);
   font: inherit;
@@ -3766,7 +3747,7 @@ export const ShortcutKey = styled.dt`
   border-radius: var(--platform-radius-sm);
   background: var(--platform-colors-surface);
   color: var(--platform-colors-text);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   font-weight: 600;
   text-align: center;
@@ -3808,7 +3789,7 @@ export const RecipientChip = styled.span<{ $invalid?: boolean }>`
       $invalid
         ? 'var(--platform-colors-danger, #b3453e)'
         : 'var(--platform-colors-border)'};
-  border-radius: 999px;
+  border-radius: 2px;
   background: ${({ $invalid }) =>
     $invalid
       ? 'color-mix(in srgb, var(--platform-colors-danger, #b3453e) 8%, transparent)'
@@ -4139,7 +4120,7 @@ export const TopSearchPanel = styled.div`
   overscroll-behavior: contain;
   white-space: normal;
   border: 1px solid var(--puremail-line);
-  border-radius: 8px;
+  border-radius: var(--pure-chrome-radius, 3px);
   background: var(--puremail-message-bg, #fff);
   color: var(--platform-colors-text);
   box-shadow: 0 12px 32px color-mix(in srgb, #111827 18%, transparent);
@@ -4275,13 +4256,16 @@ export const NavComposeButton = styled.button`
   font-weight: 500;
   padding: 0 14px;
 
-  &:hover {
-    filter: brightness(0.94);
-  }
-
   svg {
     width: var(--pure-chrome-icon);
     height: var(--pure-chrome-icon);
+  }
+
+  && {
+    ${quiet}
+    ${primaryLook}
+    height: var(--pure-chrome-field-height);
+    font-size: var(--pure-chrome-ui-size);
   }
 `
 
@@ -4306,6 +4290,8 @@ export const NavRailCount = styled.span.attrs(chrome('meta'))<{ $accent?: boolea
 
 export const NavRailSectionTitle = styled.div.attrs(chrome('section-label'))`
   flex: none;
+  /* A plain heading in the sans, not the shared tracked capitals. */
+  && { font-family: var(--platform-typography-font-family); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--platform-colors-text-secondary); }
 `
 
 export const NavRailLabelDot = styled.span<{ $color?: string }>`
@@ -4431,22 +4417,17 @@ export const MailListRow = styled.div.attrs(chrome('list-row'))<{
   font: inherit;
   text-align: left;
 
+  /* The open conversation has the selected look every app shares; ticked ones are a shade of grey. */
   && {
+    border-radius: 0;
     background: ${({ $checked, $active }) =>
-      $checked
-        ? 'color-mix(in srgb, var(--pure-chrome-accent) 10%, transparent)'
-        : $active
-          ? 'var(--pure-chrome-selection)'
-          : 'transparent'};
-    box-shadow: ${({ $active }) =>
-      $active ? 'inset 0 0 0 1px var(--pure-chrome-line)' : 'none'};
+      $active ? 'var(--p-chosen)' : $checked ? 'var(--n-selected)' : 'transparent'};
+    box-shadow: ${({ $active }) => ($active ? 'var(--p-chosen-edge)' : 'none')};
   }
 
   &&:hover {
-    background: ${({ $checked }) =>
-      $checked
-        ? 'color-mix(in srgb, var(--pure-chrome-accent) 14%, transparent)'
-        : 'var(--pure-chrome-hover)'};
+    background: ${({ $checked, $active }) =>
+      $active ? 'var(--p-chosen)' : $checked ? 'var(--n-selected)' : 'var(--n-hover)'};
   }
 `
 
@@ -4489,27 +4470,33 @@ export const RowSender = styled.span<{ $unread?: boolean }>`
   font-weight: ${({ $unread }) => ($unread ? 600 : 400)};
 `
 
+/** A label on a row: a quiet flat tag, its mark in the label's own colour (--lab-colour). */
 export const RowChip = styled.span`
-  display: inline-flex;
+  ${quietLabel}
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`
+
+/** The labels' own column: a fixed width, each label at its natural width from the left, so every subject starts on one line. */
+export const RowLabels = styled.span`
+  display: flex;
+  flex: 0 0 132px;
   align-items: center;
   gap: 4px;
-  flex: none;
-  max-width: 130px;
+  min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--pure-chrome-line);
-  border-radius: 999px;
-  color: var(--platform-colors-text-secondary);
-  font-size: var(--pure-chrome-meta-size);
-  padding: 1px 7px;
-  white-space: nowrap;
+`
+
+/** Room for the priority mark on every row, so the sender column never moves. */
+export const RowMark = styled.span`
+  display: inline-flex;
+  flex: 0 0 6px;
+  align-items: center;
 `
 
 export const RowChipDot = styled.span<{ $color?: string }>`
-  width: 7px;
-  height: 7px;
-  flex: none;
-  background: ${({ $color }) =>
-    $color || 'var(--platform-colors-text-secondary)'};
+  display: none;
 `
 
 export const RowSubject = styled.span<{ $unread?: boolean }>`
@@ -4533,8 +4520,8 @@ export const RowTime = styled.span.attrs(chrome('meta'))`
      the subject beside it is the column that gives. */
   min-width: 64px;
   flex: none;
-  font-variant-numeric: tabular-nums;
   text-align: right;
+  white-space: nowrap;
 `
 
 /**
@@ -4542,23 +4529,10 @@ export const RowTime = styled.span.attrs(chrome('meta'))`
  * positioned so nothing reflows under the cursor.
  */
 export const RowHoverActions = styled.span`
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: none;
+  display: flex;
+  flex: none;
   align-items: center;
   gap: 2px;
-  padding-left: 14px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    var(--pure-chrome-hover) 14px
-  );
-
-  ${MailListRow}:hover & {
-    display: flex;
-  }
 `
 
 export const RowActionButton = styled.span`
@@ -4677,7 +4651,7 @@ export const ComposeTemplateToChip = styled.span`
   border: 1px solid var(--puremail-accent);
   background: var(--puremail-accent-bg);
   color: var(--puremail-accent-text);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   padding: 2px 7px;
 
@@ -4693,7 +4667,7 @@ export const ComposeDockRowMeta = styled.span`
   flex: none;
   margin-left: auto;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -4741,7 +4715,7 @@ export const ComposeDockSecondaryButton = styled.button`
 export const ComposeDockFooterNote = styled.span`
   flex: none;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -4874,7 +4848,7 @@ export const ComposeDockEditor = styled(ComposeRichBody)`
     display: block;
     margin-bottom: 4px;
     color: var(--puremail-accent-text);
-    font-family: var(--platform-typography-font-family-mono);
+    font-family: var(--platform-typography-font-family);
     font-size: var(--pure-chrome-label-size);
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -4928,7 +4902,7 @@ export const ComposeDockAttachmentName = styled.span`
 export const ComposeDockAttachmentMeta = styled.span`
   flex: none;
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
 `
 
@@ -5259,9 +5233,13 @@ export const ComposeQuoteChip = styled.button`
  * compose window seeded with that draft. One composer surface.
  */
 
+/* The reply launcher sits in the message's own reading column, its edges on the words' edges. */
 export const ReplyLaunchStrip = styled.button`
   display: flex;
   width: 100%;
+  max-width: ${READER_MEASURE}px;
+  margin-inline: auto;
+  border-radius: var(--pure-chrome-radius, 3px);
   align-items: center;
   gap: 10px;
   border: 1px solid var(--platform-colors-border);
@@ -5333,7 +5311,7 @@ export const ListPositionBar = styled.div`
 
 export const ListPositionLabel = styled.span`
   color: var(--platform-colors-text-tertiary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   font-variant-numeric: tabular-nums;
 `
@@ -5343,7 +5321,7 @@ export const ListPositionButton = styled.button`
   padding: 2px 6px;
   background: transparent;
   color: var(--platform-colors-text-secondary);
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -5364,7 +5342,7 @@ export const ListPositionInput = styled.input`
   border: 1px solid var(--puremail-line);
   background: var(--puremail-message-bg);
   color: inherit;
-  font-family: var(--platform-typography-font-family-mono);
+  font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   font-variant-numeric: tabular-nums;
 `

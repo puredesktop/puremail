@@ -40,8 +40,9 @@ import {
   PriorityDot,
   RowActionButton,
   RowChip,
-  RowChipDot,
   RowHoverActions,
+  RowLabels,
+  RowMark,
   RowSender,
   RowStar,
   RowSubject,
@@ -737,11 +738,7 @@ export function ThreadRail({
     const label = displayThreadLabels(store, thread, store.drafts)[0]
     if (label) {
       return (
-        <RowChip>
-          <RowChipDot
-            $color={labelColorByName.get(label.toLowerCase())}
-            aria-hidden="true"
-          />
+        <RowChip style={{ '--lab-colour': labelColorByName.get(label.toLowerCase()) } as React.CSSProperties}>
           {label}
         </RowChip>
       )
@@ -823,12 +820,14 @@ export function ThreadRail({
             >
               <Star aria-hidden="true" />
             </RowStar>
-            {thread.priority === 'high' && <PriorityDot />}
+            <RowMark>{thread.priority === 'high' && <PriorityDot />}</RowMark>
             <RowSender $unread={unread}>
               {thread.participants[0]?.name ?? 'Unknown sender'}
             </RowSender>
-            {rowChip(thread)}
-            {teamReads[thread.id] && <MailStateChip $tone="label" title={teamReads[thread.id]!.description}>{teamReads[thread.id]!.label}</MailStateChip>}
+            <RowLabels>
+              {rowChip(thread)}
+              {teamReads[thread.id] && <MailStateChip $tone="label" title={teamReads[thread.id]!.description}>{teamReads[thread.id]!.label}</MailStateChip>}
+            </RowLabels>
             <RowSubject $unread={unread}>
               <strong>{thread.subject}</strong>
               {snippet ? ` — ${snippet}` : ''}
