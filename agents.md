@@ -632,3 +632,12 @@ not raw ICS or attachment contents. Threading metadata is retained for replies. 
 Executive update requests may include a validated Reply-To; the unsent draft, provider draft copies and submitted
 MIME preserve it. That header routes a reply to a role, never authenticates approval. All outbound copies remain
 editable drafts until the person sends; there is no new automatic-send path.
+
+**Asking first.** `createFilter` and `setFilterEnabled` need the person's approval: a filter is a standing rule that acts on all future mail.
+
+## Reads that also save something
+
+These tools are declared `read`, and an agent with read access, thinking mode and evaluations treat them as reads. Each also saves something small on the way, which should move out of the read path (tool risk audit, unit 1 follow-up):
+
+- `listKeptContext`: stamps on each kept message it returns when it was last used, and by whom.
+- `nextArchiveBatch`: saves the sweep's place after every page it walks.

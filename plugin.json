@@ -883,7 +883,7 @@
             },
             "required": ["name", "query", "labelName"]
           },
-          "requiresApproval": false
+          "requiresApproval": true
         },
         {
           "name": "applyFilterRetroactively",
@@ -945,7 +945,7 @@
             },
             "required": ["filter", "enabled"]
           },
-          "requiresApproval": false
+          "requiresApproval": true
         },
         {
           "name": "listBoxes",
