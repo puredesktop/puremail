@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { accountFolderForBoxName, composeFilterQuery } from '../lib/mailFilters'
@@ -283,10 +283,29 @@ export function MailFilterDialog({
     })
   }
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    panelRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [onClose])
+
   return (
     <Backdrop onClick={onClose}>
       <Panel
+        ref={panelRef}
+        tabIndex={-1}
         role="dialog"
+        aria-modal="true"
         aria-label="Create mail filter"
         onClick={event => event.stopPropagation()}
       >
@@ -462,11 +481,22 @@ export function MailFilterDialog({
           </Choice>
         </ChoiceRow>
         <Preview role="status">
-          {query.trim()
-            ? `Matches ${matchCount} existing thread${
-                matchCount === 1 ? '' : 's'
-              }`
-            : 'Enter a query to preview matches'}
+          {query.trim() ? (
+            <>
+              Matches {matchCount} existing thread
+              {matchCount === 1 ? '' : 's'}
+              {target.trim()
+                ? ` · ${
+                    mode === 'box'
+                      ? `Moves into "${target.trim()}" (skips Inbox)`
+                      : `Labels "${target.trim()}" (stays in Inbox)`
+                  }`
+                : ''}
+              {markRead ? ' · Marks read' : ''}
+            </>
+          ) : (
+            'Enter a query to preview matches'
+          )}
         </Preview>
         <ButtonRow>
           <Button size="sm" variant="text" onClick={onClose}>

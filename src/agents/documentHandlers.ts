@@ -173,8 +173,11 @@ export async function saveAttachmentsHandler(
     }
     chosen = candidates.filter(candidate => wanted.some(name => matches(candidate, name)))
   }
+  // Explicitly named files are always saved regardless of type (even if only: 'documents').
   const skipped =
-    only === 'documents' ? chosen.filter(candidate => !isDocumentAttachment(candidate.attachment)) : []
+    wanted.length === 0 && only === 'documents'
+      ? chosen.filter(candidate => !isDocumentAttachment(candidate.attachment))
+      : []
   chosen = chosen.filter(candidate => !skipped.includes(candidate))
 
   const messageOf = new Map(chosen.map(candidate => [candidate.attachment, candidate.message]))

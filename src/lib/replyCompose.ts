@@ -90,11 +90,15 @@ const identitySet = (ownerEmails: string[]): Set<string> =>
 /** Render contacts the way the compose To field parses them back. */
 export function contactsToComposeInput(contacts: MailContact[]): string {
   return contacts
-    .map(contact =>
-      contact.name && contact.name !== contact.email
-        ? `${contact.name} <${contact.email}>`
-        : contact.email,
-    )
+    .map(contact => {
+      const name = contact.name?.trim() ?? ''
+      const email = contact.email.trim()
+      if (!name || name === email) return email
+      const safeName = /[,;"<>\\]/.test(name)
+        ? `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+        : name
+      return `${safeName} <${email}>`
+    })
     .join(', ')
 }
 

@@ -49,6 +49,8 @@ export interface InviteRsvpAccount {
   email: string
   /** Display name; ignored when empty or just the email again. */
   name?: string
+  /** Additional alias addresses owned by the account (from ownerIdentity.emails). */
+  aliases?: string[]
 }
 
 export interface InviteRsvpInput {
@@ -81,11 +83,20 @@ export function buildInviteRsvpDraft(input: InviteRsvpInput): Draft | null {
   if (!organizerEmail) return null
   if (invite.method !== 'REQUEST' || invite.status === 'cancelled') return null
   const accountEmail = account.email.trim()
-  if (!accountEmail || !invite.attendees.some(attendee =>
-    attendee.email.trim().toLowerCase() === accountEmail.toLowerCase())) return null
+  if (!accountEmail) return null
+  const ownAddresses = [
+    accountEmail,
+    ...(account.aliases ?? []).map(alias => alias.trim()).filter(Boolean),
+  ]
+  const ownSet = new Set(ownAddresses.map(address => address.toLowerCase()))
+  const matchedAttendee = invite.attendees.find(attendee =>
+    ownSet.has(attendee.email.trim().toLowerCase()),
+  )
+  if (!matchedAttendee) return null
+  const replyEmail = matchedAttendee.email.trim() || accountEmail
 
   const organizerName = invite.organizer?.name.trim() ?? ''
-  const attendeeName = accountDisplayName(account)
+  const attendeeName = accountDisplayName({ ...account, email: replyEmail })
   const ics = generateIcsReply({
     uid: invite.uid,
     sequence: invite.sequence,
@@ -93,6 +104,7 @@ export function buildInviteRsvpDraft(input: InviteRsvpInput): Draft | null {
     title: invite.title,
     startsAt: invite.startsAt,
     endsAt: invite.endsAt,
+    ...(invite.allDay ? { allDay: true } : {}),
     organizer: {
       email: organizerEmail,
       ...(organizerName && organizerName !== organizerEmail
@@ -100,8 +112,8 @@ export function buildInviteRsvpDraft(input: InviteRsvpInput): Draft | null {
         : {}),
     },
     attendee: {
-      email: accountEmail,
-      ...(attendeeName !== accountEmail ? { name: attendeeName } : {}),
+      email: replyEmail,
+      ...(attendeeName !== replyEmail ? { name: attendeeName } : {}),
     },
     response,
   })

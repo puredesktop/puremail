@@ -23,7 +23,12 @@ import {
   GMAIL_ATTACHMENT_LIMIT_BYTES,
   totalAttachmentBytes,
 } from './mailAttachments'
-import { buildMimeMessage, type MimeAttachmentPart } from './mailMime'
+import {
+  buildMimeMessage,
+  encodeMimeHeaderValue,
+  formatMimeAddressList,
+  type MimeAttachmentPart,
+} from './mailMime'
 import type {
   Attachment,
   Draft,
@@ -92,6 +97,7 @@ interface GmailHeader {
 interface GmailMessagePart {
   mimeType?: string
   filename?: string
+  headers?: GmailHeader[]
   body?: { data?: string; attachmentId?: string; size?: number }
   parts?: GmailMessagePart[]
 }
@@ -122,10 +128,12 @@ function header(message: GmailMessage, name: string): string {
 }
 
 export function parseMailContact(raw: string): MailContact {
-  const match = raw.match(/^\s*"?([^"<]*)"?\s*<([^>]+)>\s*$/)
+  const match = raw.match(/^\s*(?:"((?:\\.|[^"\\])*)"|([^"<]*?))\s*<([^>]+)>\s*$/)
   if (match) {
-    const name = match[1]?.trim() ?? ''
-    const email = match[2]?.trim() ?? ''
+    const quoted = match[1]?.replace(/\\(.)/g, '$1').trim()
+    const unquoted = match[2]?.trim()
+    const name = quoted ?? unquoted ?? ''
+    const email = match[3]?.trim() ?? ''
     return { name: name || email, email }
   }
   const email = raw.trim()
@@ -134,9 +142,9 @@ export function parseMailContact(raw: string): MailContact {
 
 export function parseMailContactList(raw: string): MailContact[] {
   if (!raw.trim()) return []
-  // Split on commas that are NOT inside quoted names or <addr> brackets —
-  // '"Doe, John" <jd@provider.example>' is one contact, not two broken ones.
-  const parts = raw.match(/(?:"[^"]*"|<[^>]*>|[^,])+/g) ?? []
+  // Split on commas that are NOT inside quoted names (supporting escaped quotes)
+  // or <addr> brackets — '"O\"Brien, Pat" <p@x>' is one contact, not two.
+  const parts = raw.match(/(?:"(?:\\.|[^"\\])*"|<[^>]*>|[^,])+/g) ?? []
   return parts
     .map(parseMailContact)
     .filter(contact => contact.email.length > 0)
@@ -155,17 +163,38 @@ function normalizedBase64Url(data: string): string {
   return padding ? `${normalized}${'='.repeat(4 - padding)}` : normalized
 }
 
+function isTextAttachmentMimeType(mimeType: string): boolean {
+  const base = mimeType.split(';')[0]?.trim().toLowerCase() ?? ''
+  return (
+    base.startsWith('text/') ||
+    base === 'application/json' ||
+    base === 'application/xml' ||
+    base === 'image/svg+xml' ||
+    base === 'message/rfc822' ||
+    base.endsWith('+json') ||
+    base.endsWith('+xml')
+  )
+}
+
 function gmailAttachmentContent(data: string, mimeType: string): string {
-  if (
-    mimeType.toLowerCase().startsWith('text/') ||
-    mimeType.toLowerCase().includes('json') ||
-    mimeType.toLowerCase().includes('xml')
-  ) {
+  if (isTextAttachmentMimeType(mimeType)) {
     return decodeBase64Url(data)
   }
   return `data:${
     mimeType || 'application/octet-stream'
   };base64,${normalizedBase64Url(data)}`
+}
+
+function isAttachmentPart(part: GmailMessagePart): boolean {
+  if (part.filename && part.filename.trim().length > 0) return true
+  const disposition = (part.headers ?? []).find(
+    item => item.name.toLowerCase() === 'content-disposition',
+  )?.value
+  return Boolean(disposition && /^\s*attachment\b/i.test(disposition))
+}
+
+function partBaseMimeType(part: GmailMessagePart): string {
+  return part.mimeType?.split(';')[0]?.trim().toLowerCase() ?? ''
 }
 
 function stripHtml(html: string): string {
@@ -189,7 +218,11 @@ function findBodyPart(
   mimeType: string,
 ): string | null {
   if (!part) return null
-  if (part.mimeType === mimeType && part.body?.data) {
+  if (
+    !isAttachmentPart(part) &&
+    partBaseMimeType(part) === mimeType.toLowerCase() &&
+    part.body?.data
+  ) {
     return decodeBase64Url(part.body.data)
   }
   for (const child of part.parts ?? []) {
@@ -218,24 +251,46 @@ function attachmentSizeLabel(size?: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function partContentId(part: GmailMessagePart): string | undefined {
+  const raw = (part.headers ?? []).find(
+    item => item.name.toLowerCase() === 'content-id',
+  )?.value
+  const cleaned = raw?.trim().replace(/^<|>$/g, '').trim()
+  return cleaned || undefined
+}
+
 function extractAttachments(message: GmailMessage): Attachment[] {
   const attachments: Attachment[] = []
   const walk = (part: GmailMessagePart | undefined): void => {
     if (!part) return
-    if (part.filename) {
+    const baseMime = partBaseMimeType(part)
+    const hasPayload = Boolean(part.body?.data || part.body?.attachmentId)
+    const isUnnamedCalendar = !part.filename && baseMime === 'text/calendar' && hasPayload
+    const isUnnamedAttachment = !part.filename && isAttachmentPart(part) && hasPayload
+    const cid = partContentId(part)
+    const isInlineCidImage = Boolean(cid && baseMime.startsWith('image/') && hasPayload)
+    if (part.filename || isUnnamedCalendar || isUnnamedAttachment || isInlineCidImage) {
+      const mimeType = part.mimeType ?? 'application/octet-stream'
       const content = part.body?.data
-        ? decodeBase64Url(part.body.data)
+        ? gmailAttachmentContent(part.body.data, mimeType)
         : undefined
       const attachmentId = part.body?.attachmentId
+      const fallbackName =
+        baseMime === 'text/calendar'
+          ? 'invite.ics'
+          : baseMime.startsWith('image/')
+            ? `inline.${baseMime.split('/')[1] || 'png'}`
+            : 'attachment'
       attachments.push({
         id: `gmail_att_${message.id}_${attachments.length}`,
-        name: part.filename,
-        mimeType: part.mimeType ?? 'application/octet-stream',
+        name: part.filename || fallbackName,
+        mimeType,
         sizeLabel: attachmentSizeLabel(part.body?.size),
         ...(typeof part.body?.size === 'number'
           ? { size: part.body.size }
           : {}),
         ...(content ? { content } : {}),
+        ...(cid ? { contentId: cid } : {}),
         ...(attachmentId
           ? {
               remote: {
@@ -258,8 +313,8 @@ function parsedMessage(message: GmailMessage): MailMessage {
   const html = messageHtml(message)
   const calendarAttachment = attachments.find(
     attachment =>
-      attachment.mimeType.toLowerCase() === 'text/calendar' ||
-      attachment.name.toLowerCase().endsWith('.ics'),
+      attachment.mimeType.split(';')[0]?.trim().toLowerCase() ===
+        'text/calendar' || attachment.name.toLowerCase().endsWith('.ics'),
   )
   const calendarInvite = calendarAttachment?.content
     ? parseCalendarInvite(calendarAttachment.content) ?? undefined
@@ -301,6 +356,9 @@ function parsedMessage(message: GmailMessage): MailMessage {
       ? { listUnsubscribe: header(message, 'List-Unsubscribe') }
       : {}),
     read: !(message.labelIds ?? []).includes('UNREAD'),
+    ...((message.labelIds ?? []).includes('SENT')
+      ? { sentCopyPresent: true }
+      : {}),
     ...((message.labelIds ?? []).includes('DRAFT') ? { isDraft: true } : {}),
     gmailMessageId: message.id,
   }
@@ -370,7 +428,10 @@ function threadPlacement(gmailThread: GmailThread): {
   if (labels.has('DRAFT')) {
     return { mailboxId: GMAIL_DRAFTS_ID, status: 'waiting' }
   }
-  return { mailboxId: GMAIL_SENT_ID, status: 'waiting' }
+  if (labels.has('SENT')) {
+    return { mailboxId: GMAIL_SENT_ID, status: 'waiting' }
+  }
+  return { mailboxId: GMAIL_ARCHIVE_ID, status: 'archived' }
 }
 
 /**
@@ -382,23 +443,40 @@ function coverageForFetch(
   gmailThreads: GmailThread[],
   failedIds: string[],
   truncated: boolean,
+  truncatedBuckets?: GmailThread[][],
 ): MailSyncCoverage | undefined {
   const failedThreadIds = failedIds.map(id => `gmail_thread_${id}`)
   let coveredFrom: string | undefined
   if (truncated) {
-    // The listing is newest-first, so a truncated fetch only covers threads
-    // at least as fresh as the oldest thread it returned.
-    let oldestLatestMs = Number.POSITIVE_INFINITY
-    for (const thread of gmailThreads) {
-      let latestMs = 0
-      for (const message of thread.messages ?? []) {
-        const ms = Number(message.internalDate ?? '0')
-        if (Number.isFinite(ms) && ms > latestMs) latestMs = ms
+    // Each truncated mailbox listing is newest-first. When multiple mailboxes
+    // are fetched together, use the newest (most conservative) oldest-thread
+    // horizon across the truncated buckets so a 6-day-old Trash item cannot
+    // hide a 2-day Inbox truncation gap.
+    const oldestInBucket = (bucket: GmailThread[]): number => {
+      let oldestLatestMs = Number.POSITIVE_INFINITY
+      for (const thread of bucket) {
+        let latestMs = 0
+        for (const message of thread.messages ?? []) {
+          const ms = Number(message.internalDate ?? '0')
+          if (Number.isFinite(ms) && ms > latestMs) latestMs = ms
+        }
+        if (latestMs > 0 && latestMs < oldestLatestMs) oldestLatestMs = latestMs
       }
-      if (latestMs > 0 && latestMs < oldestLatestMs) oldestLatestMs = latestMs
+      return oldestLatestMs
     }
-    coveredFrom = Number.isFinite(oldestLatestMs)
-      ? new Date(oldestLatestMs).toISOString()
+    const buckets =
+      truncatedBuckets && truncatedBuckets.length > 0
+        ? truncatedBuckets
+        : [gmailThreads]
+    let safestHorizonMs = Number.NEGATIVE_INFINITY
+    for (const bucket of buckets) {
+      const oldest = oldestInBucket(bucket)
+      if (Number.isFinite(oldest) && oldest > safestHorizonMs) {
+        safestHorizonMs = oldest
+      }
+    }
+    coveredFrom = Number.isFinite(safestHorizonMs)
+      ? new Date(safestHorizonMs).toISOString()
       : new Date().toISOString()
   }
   if (!coveredFrom && failedThreadIds.length === 0) return undefined
@@ -586,9 +664,6 @@ function toMailStore(
   }
 }
 
-/** Characters allowed unquoted in an RFC 5322 display name (atext + space). */
-const ADDRESS_ATOM_TEXT = /^[A-Za-z0-9 !#$%&'*+/=?^_`{|}~-]*$/
-
 /**
  * Display names went into To/Cc headers unquoted. A name like
  * "Example, Casey C" — one contact, comma inside — splits the address list
@@ -597,20 +672,7 @@ const ADDRESS_ATOM_TEXT = /^[A-Za-z0-9 !#$%&'*+/=?^_`{|}~-]*$/
  * contacts with no usable address are dropped rather than sent as "<>".
  */
 export function formatAddressList(contacts: MailContact[]): string {
-  return contacts
-    .filter(contact => contact.email && contact.email.includes('@'))
-    .map(contact => {
-      const name = contact.name?.trim()
-      if (!name || name === contact.email) return contact.email
-      // eslint-disable-next-line no-control-regex
-      if (/[^\x20-\x7e]/.test(name)) {
-        const encoded = btoa(String.fromCharCode(...new TextEncoder().encode(name)))
-        return `=?UTF-8?B?${encoded}?= <${contact.email}>`
-      }
-      if (ADDRESS_ATOM_TEXT.test(name)) return `${name} <${contact.email}>`
-      return `"${name.replace(/[\\"]/g, '\\$&')}" <${contact.email}>`
-    })
-    .join(', ')
+  return formatMimeAddressList(contacts)
 }
 
 function encodeRfc822(raw: string): string {
@@ -768,8 +830,10 @@ export class GmailMailProvider implements MailProvider {
     }> = []
     const collect = (messageId: string, part?: GmailMessagePart): void => {
       if (!part) return
+      const baseMime = partBaseMimeType(part)
       if (
-        (part.mimeType === 'text/html' || part.mimeType === 'text/plain') &&
+        !isAttachmentPart(part) &&
+        (baseMime === 'text/html' || baseMime === 'text/plain') &&
         part.body?.attachmentId &&
         !part.body.data
       ) {
@@ -804,8 +868,11 @@ export class GmailMailProvider implements MailProvider {
     }
   }
 
-  private async listThreads(query: string): Promise<GmailThread[]> {
-    const { ids } = await this.listThreadIds(query)
+  private async listThreads(
+    query: string,
+    limit?: number,
+  ): Promise<GmailThread[]> {
+    const { ids } = await this.listThreadIds(query, limit)
     return (await this.fetchThreadDetails(ids)).threads
   }
 
@@ -853,15 +920,23 @@ export class GmailMailProvider implements MailProvider {
       ...new Set([...inbox.ids, ...trash.ids, ...sent.ids, ...drafts.ids]),
     ]
     const { threads, failedIds } = await this.fetchThreadDetails(uniqueIds)
+    const threadById = new Map(threads.map(thread => [thread.id, thread]))
+    const truncatedBuckets: GmailThread[][] = []
+    for (const bucket of [inbox, trash, sent, drafts]) {
+      if (!bucket.truncated) continue
+      truncatedBuckets.push(
+        bucket.ids
+          .map(id => threadById.get(id))
+          .filter((item): item is GmailThread => Boolean(item)),
+      )
+    }
     return {
       threads,
       coverage: coverageForFetch(
         threads,
         failedIds,
-        inbox.truncated ||
-          trash.truncated ||
-          sent.truncated ||
-          drafts.truncated,
+        truncatedBuckets.length > 0,
+        truncatedBuckets,
       ),
     }
   }
@@ -1045,9 +1120,14 @@ export class GmailMailProvider implements MailProvider {
       ? [
           ...new Set(
             (this.store?.messages ?? [])
-              .filter(message => message.threadId === input.threadId)
+              .filter(
+                message => message.threadId === input.threadId && !message.isDraft,
+              )
               .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
-              .map(message => message.messageIdHeader)
+              .flatMap(message => [
+                ...(message.references ?? []),
+                ...(message.messageIdHeader ? [message.messageIdHeader] : []),
+              ])
               .filter((id): id is string => Boolean(id)),
           ),
         ]
@@ -1081,13 +1161,14 @@ export class GmailMailProvider implements MailProvider {
       },
       [],
     )
+    const toHeader = formatAddressList(input.draft.to)
     const headerLines = [
       ...(input.draft.sendMessageId ? [`Message-ID: ${input.draft.sendMessageId}`] : []),
-      `To: ${formatAddressList(input.draft.to)}`,
+      ...(toHeader ? [`To: ${toHeader}`] : []),
       ...(cc.length ? [`Cc: ${formatAddressList(cc)}`] : []),
       ...(bcc.length ? [`Bcc: ${formatAddressList(bcc)}`] : []),
       ...(input.draft.replyTo?.length ? [`Reply-To: ${formatAddressList(input.draft.replyTo)}`] : []),
-      `Subject: ${input.draft.subject}`,
+      `Subject: ${encodeMimeHeaderValue(input.draft.subject)}`,
       ...(inReplyTo
         ? [`In-Reply-To: ${inReplyTo}`, `References: ${references.join(' ')}`]
         : []),
@@ -1099,12 +1180,14 @@ export class GmailMailProvider implements MailProvider {
       attachments: mimeAttachments,
     })
     const sent = await this.sendRaw(input, raw, gmailThreadId)
+    const ownEmail =
+      this.store?.accounts[0]?.email ?? this.options.email ?? ''
     const message: MailMessage = {
       id: `gmail_msg_${sent.id}`,
       threadId: input.threadId,
       from: {
-        name: this.options.email ?? 'Me',
-        email: this.options.email ?? '',
+        name: ownEmail || 'Me',
+        email: ownEmail,
       },
       to: input.draft.to,
       cc,
@@ -1226,11 +1309,10 @@ export class GmailMailProvider implements MailProvider {
     }>
   > {
     if (!query.trim()) return []
+    const cappedLimit = Math.min(Math.max(1, Math.round(limit)), 50)
     const threads = await this.listThreads(
-      `q=${encodeURIComponent(query)}&maxResults=${Math.min(
-        Math.max(1, Math.round(limit)),
-        50,
-      )}`,
+      `q=${encodeURIComponent(query)}&maxResults=${cappedLimit}`,
+      cappedLimit,
     )
     const profile = await this.request<{ emailAddress: string }>('/profile')
     const searchStore = toMailStore(
@@ -1267,13 +1349,22 @@ export class GmailMailProvider implements MailProvider {
     if (!query.trim()) return []
     const threads = await this.listThreads(
       `q=${encodeURIComponent(query)}&maxResults=20`,
+      20,
     )
     const profile = await this.request<{ emailAddress: string }>('/profile')
     const searchStore = toMailStore(
       threads,
       profile.emailAddress || this.options.email || 'gmail',
     )
-    return searchMailAndTasks(searchStore, query).map(result => ({ ...result }))
+    const localHits = searchMailAndTasks(searchStore, query).map(result => ({
+      ...result,
+    }))
+    if (localHits.length > 0 || searchStore.threads.length === 0) return localHits
+    return searchStore.threads.map(thread => ({
+      id: thread.id,
+      type: 'thread' as const,
+      title: thread.subject,
+    }))
   }
 
   async getAttachmentContent(
@@ -1335,14 +1426,17 @@ export class GmailMailProvider implements MailProvider {
       })
     }
     if (!this.store) return
-    const labelName = providerLabel?.name ?? labelId
+    const localLabel = this.store.labels.find(label => label.id === labelId)
+    const labelName = providerLabel?.name ?? localLabel?.name ?? labelId
     this.store = {
       ...this.store,
       threads: this.store.threads.map(thread =>
         thread.id === threadId
           ? {
               ...thread,
-              labels: thread.labels.filter(label => label !== labelName),
+              labels: thread.labels.filter(
+                label => label !== labelName && label !== labelId,
+              ),
             }
           : thread,
       ),
@@ -1402,6 +1496,22 @@ export class GmailMailProvider implements MailProvider {
 
   async unarchiveThread(threadId: string): Promise<void> {
     const gmailThreadId = threadId.replace(/^gmail_thread_/, '')
+    const isTrashed =
+      this.store?.threads.find(item => item.id === threadId)?.mailboxId ===
+      GMAIL_TRASH_ID
+    if (isTrashed) {
+      await this.request(`/threads/${gmailThreadId}/untrash`, { method: 'POST' })
+    }
+    await this.request(`/threads/${gmailThreadId}/modify`, {
+      method: 'POST',
+      body: JSON.stringify({ addLabelIds: ['INBOX'] }),
+    })
+    if (this.store) this.store = unarchiveThreadInStore(this.store, threadId)
+  }
+
+  async untrashThread(threadId: string): Promise<void> {
+    const gmailThreadId = threadId.replace(/^gmail_thread_/, '')
+    await this.request(`/threads/${gmailThreadId}/untrash`, { method: 'POST' })
     await this.request(`/threads/${gmailThreadId}/modify`, {
       method: 'POST',
       body: JSON.stringify({ addLabelIds: ['INBOX'] }),
@@ -1532,13 +1642,14 @@ export class GmailMailProvider implements MailProvider {
       },
       [],
     )
+    const toHeader = formatAddressList(draft.to)
     return buildMimeMessage({
       headerLines: [
-        `To: ${formatAddressList(draft.to)}`,
+        ...(toHeader ? [`To: ${toHeader}`] : []),
         ...(cc.length ? [`Cc: ${formatAddressList(cc)}`] : []),
         ...(bcc.length ? [`Bcc: ${formatAddressList(bcc)}`] : []),
         ...(draft.replyTo?.length ? [`Reply-To: ${formatAddressList(draft.replyTo)}`] : []),
-        `Subject: ${draft.subject}`,
+        `Subject: ${encodeMimeHeaderValue(draft.subject)}`,
       ],
       body: draft.body,
       ...(draft.bodyHtml ? { bodyHtml: draft.bodyHtml } : {}),
@@ -1546,13 +1657,18 @@ export class GmailMailProvider implements MailProvider {
     })
   }
 
-  async createDraft(draft: Draft): Promise<string> {
+  private gmailThreadIdForDraft(draft: Draft): string | undefined {
     const thread = this.store?.threads.find(item => item.id === draft.threadId)
-    const gmailThreadId =
+    return (
       thread?.gmailThreadId ??
       (draft.threadId.startsWith('gmail_thread_')
         ? draft.threadId.replace(/^gmail_thread_/, '')
         : undefined)
+    )
+  }
+
+  async createDraft(draft: Draft): Promise<string> {
+    const gmailThreadId = this.gmailThreadIdForDraft(draft)
     const created = await this.request<{ id: string }>('/drafts', {
       method: 'POST',
       idempotent: false,
@@ -1567,11 +1683,15 @@ export class GmailMailProvider implements MailProvider {
   }
 
   async updateDraft(providerDraftId: string, draft: Draft): Promise<void> {
+    const gmailThreadId = this.gmailThreadIdForDraft(draft)
     await this.request(`/drafts/${encodeURIComponent(providerDraftId)}`, {
       method: 'PUT',
       body: JSON.stringify({
         id: providerDraftId,
-        message: { raw: encodeRfc822(this.draftRaw(draft)) },
+        message: {
+          ...(gmailThreadId ? { threadId: gmailThreadId } : {}),
+          raw: encodeRfc822(this.draftRaw(draft)),
+        },
       }),
     })
   }

@@ -148,9 +148,14 @@ export function resolveAttachmentMimeType(
   return OCTET_STREAM_MIME_TYPE
 }
 
+let lastAttachmentIdStamp = 0
+
 /** The id an attachment gets when it is created locally from a file. */
-export function attachmentIdForFileName(name: string, now = Date.now()): string {
-  return `att_${now}_${name.replace(/[^a-z0-9_-]/gi, '_')}`
+export function attachmentIdForFileName(name: string, now?: number): string {
+  const safe = name.replace(/[^a-z0-9_-]/gi, '_')
+  if (now !== undefined) return `att_${now}_${safe}`
+  lastAttachmentIdStamp = Math.max(Date.now(), lastAttachmentIdStamp + 1)
+  return `att_${lastAttachmentIdStamp}_${safe}`
 }
 
 /**
@@ -163,7 +168,7 @@ export function attachmentFromBytes(
   name: string,
   mimeType: string,
   bytes: Uint8Array,
-  now = Date.now(),
+  now?: number,
 ): Attachment {
   const resolvedMime = mimeType.trim() || OCTET_STREAM_MIME_TYPE
   return {
@@ -180,7 +185,7 @@ function dataUriBase64(content: string): string | null {
   const match = content.match(DATA_URI_PATTERN)
   if (!match) return null
   if (!match[0].toLowerCase().includes(';base64,')) return null
-  const raw = content.slice(match[0].length)
+  const raw = content.slice(match[0].length).replace(/\s+/g, '')
   const padding = raw.length % 4
   return padding ? `${raw}${'='.repeat(4 - padding)}` : raw
 }
@@ -393,24 +398,26 @@ export function safeAttachmentFileName(name: string): string {
   const cleaned = name
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f]/g, '')
-    .replace(/[/\\:]/g, '_')
+    .replace(/[/\\:?*"<>|]/g, '_')
     .trim()
-  return cleaned || 'attachment'
+  if (!cleaned || cleaned === '.' || cleaned === '..') return 'attachment'
+  return cleaned
 }
 
-/** "report.pdf" with { "report.pdf" } taken becomes "report (1).pdf". */
+/** "report.pdf" with { "report.pdf" } taken becomes "report (1).pdf". Case-insensitive for macOS/Windows safety. */
 export function uniqueAttachmentFileName(
   name: string,
   taken: ReadonlySet<string>,
 ): string {
   const safe = safeAttachmentFileName(name)
-  if (!taken.has(safe)) return safe
+  const takenLower = new Set([...taken].map(entry => entry.toLowerCase()))
+  if (!takenLower.has(safe.toLowerCase())) return safe
   const dot = safe.lastIndexOf('.')
   const stem = dot > 0 ? safe.slice(0, dot) : safe
   const extension = dot > 0 ? safe.slice(dot) : ''
   for (let counter = 1; ; counter += 1) {
     const candidate = `${stem} (${counter})${extension}`
-    if (!taken.has(candidate)) return candidate
+    if (!takenLower.has(candidate.toLowerCase())) return candidate
   }
 }
 

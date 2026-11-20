@@ -97,14 +97,10 @@ export async function createBootProvider(persistedStore?: MailStore | null): Pro
   const persisted = persistedStore === undefined ? await readPersistedStore() : persistedStore
   const settings = { ...persisted?.settings, ...readPersistedSettings() }
   const demoBoot = async (notice?: string) => {
-    // Seed the demo mailbox when there is nothing to show. A persisted store
-    // with no threads at all is the same dead end as no store: the demo
-    // provider has no server to fetch from, so an empty one stays empty
-    // forever with no way for the user to get out of it.
-    const store =
-      persisted && persisted.threads.length > 0
-        ? persisted
-        : demoMailStoreForNow()
+    // Preserve any persisted store (even with zero threads) so drafts, runs,
+    // filters, saved views, and tasks are never wiped on boot when an account
+    // is disconnected or empty.
+    const store = persisted ?? demoMailStoreForNow()
     return {
       source: 'demo' as const,
       provider: new DemoMailProvider(applyPersistedSettings(store, settings)),

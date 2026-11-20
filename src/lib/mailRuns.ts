@@ -275,13 +275,29 @@ export function recipientsFromGrid(
   }
 }
 
-/** `,` `;` or tab — whichever the header line uses most. */
+/** `,` `;` or tab — whichever the header line uses most outside quoted fields. */
 export function detectCsvDelimiter(text: string): ',' | ';' | '\t' {
-  const firstLine = text.split(/\r?\n/, 1)[0] ?? ''
+  const firstLine = text.split(/\r\n|\r|\n/, 1)[0] ?? ''
+  const tally: Record<',' | ';' | '\t', number> = { ',': 0, ';': 0, '\t': 0 }
+  let inQuotes = false
+  for (let i = 0; i < firstLine.length; i += 1) {
+    const ch = firstLine[i]!
+    if (ch === '"') {
+      if (inQuotes && firstLine[i + 1] === '"') {
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+    if (!inQuotes && (ch === ',' || ch === ';' || ch === '\t')) {
+      tally[ch] += 1
+    }
+  }
   const counts: Array<[',' | ';' | '\t', number]> = [
-    [',', (firstLine.match(/,/g) ?? []).length],
-    [';', (firstLine.match(/;/g) ?? []).length],
-    ['\t', (firstLine.match(/\t/g) ?? []).length],
+    [',', tally[',']],
+    [';', tally[';']],
+    ['\t', tally['\t']],
   ]
   counts.sort((a, b) => b[1] - a[1])
   return counts[0]![1] > 0 ? counts[0]![0] : ','
@@ -289,7 +305,7 @@ export function detectCsvDelimiter(text: string): ',' | ';' | '\t' {
 
 /**
  * RFC 4180-ish CSV: quoted fields, doubled quotes, embedded newlines,
- * CRLF or LF rows. Trailing empty lines are dropped.
+ * CRLF, LF, or CR-only rows. Trailing empty lines are dropped.
  */
 export function parseCsv(
   text: string,
@@ -299,7 +315,7 @@ export function parseCsv(
   let row: string[] = []
   let field = ''
   let quoted = false
-  const source = text.replace(/^﻿/, '')
+  const source = text.replace(/^\uFEFF/, '')
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index]!
     if (quoted) {
@@ -315,7 +331,9 @@ export function parseCsv(
       }
       continue
     }
-    if (char === '"') {
+    // Only enter quoted mode at the start of a field (RFC 4180) so mid-field
+    // quotes like `Joe "Boss" Smith` do not swallow subsequent rows.
+    if (char === '"' && field.length === 0) {
       quoted = true
       continue
     }
@@ -324,8 +342,8 @@ export function parseCsv(
       field = ''
       continue
     }
-    if (char === '\r') continue
-    if (char === '\n') {
+    if (char === '\r' || char === '\n') {
+      if (char === '\r' && source[index + 1] === '\n') index += 1
       row.push(field)
       rows.push(row)
       row = []
@@ -507,11 +525,12 @@ export function emailedThisMonth(
   const year = now.getUTCFullYear()
   const month = now.getUTCMonth()
   return store.messages.some(message => {
+    if (message.isDraft || message.optimistic) return false
     if (!owners.has(message.from.email.trim().toLowerCase())) return false
     const at = new Date(message.receivedAt)
     if (Number.isNaN(at.getTime())) return false
     if (at.getUTCFullYear() !== year || at.getUTCMonth() !== month) return false
-    return [...message.to, ...(message.cc ?? [])].some(
+    return [...message.to, ...(message.cc ?? []), ...(message.bcc ?? [])].some(
       contact => contact.email.trim().toLowerCase() === target,
     )
   })
@@ -582,11 +601,12 @@ export function templateNoteSlotHtml(): string {
   return `<div ${RUN_NOTE_ATTR}=""><p>{{${RUN_NOTE_TOKEN}}}</p></div>`
 }
 
-const NOTE_TOKEN_PATTERN = new RegExp(`\\{\\{\\s*${RUN_NOTE_TOKEN}\\s*\\}\\}`, 'gi')
+const NOTE_TOKEN_TEST = new RegExp(`\\{\\{\\s*${RUN_NOTE_TOKEN}\\s*\\}\\}`, 'i')
+const NOTE_TOKEN_GLOBAL = new RegExp(`\\{\\{\\s*${RUN_NOTE_TOKEN}\\s*\\}\\}`, 'gi')
 
 export function bodyHasNoteSlot(body: { body: string; bodyHtml?: string }): boolean {
   if (body.bodyHtml && findNoteRegions(body.bodyHtml).length > 0) return true
-  return NOTE_TOKEN_PATTERN.test(body.bodyHtml ?? '') || NOTE_TOKEN_PATTERN.test(body.body)
+  return NOTE_TOKEN_TEST.test(body.bodyHtml ?? '') || NOTE_TOKEN_TEST.test(body.body)
 }
 
 /**
@@ -607,7 +627,7 @@ export function renderRunBodyHtml(
     cursor = region.end
   }
   html += templateHtml.slice(cursor)
-  html = html.replace(NOTE_TOKEN_PATTERN, emptyNoteRegionHtml())
+  html = html.replace(NOTE_TOKEN_GLOBAL, emptyNoteRegionHtml())
   const substituted = substituteRunTokens(html, values, { html: true })
   return { html: substituted.text, missing: substituted.missing }
 }
@@ -616,7 +636,7 @@ export function renderRunBodyText(
   templateText: string,
   values: Record<string, string>,
 ): { text: string; missing: string[] } {
-  const withoutNote = templateText.replace(NOTE_TOKEN_PATTERN, '')
+  const withoutNote = templateText.replace(NOTE_TOKEN_GLOBAL, '')
   return substituteRunTokens(withoutNote, values)
 }
 
@@ -668,7 +688,12 @@ export function finalizeRunDraftForSend(draft: Draft): Draft {
   if (!draft.bodyHtml) return draft
   const finalized = finalizeRunBodyHtml(draft.bodyHtml)
   if (!finalized.changed) return draft
-  return { ...draft, bodyHtml: finalized.html }
+  const plainBody = stripHtmlToText(finalized.html).replace(/\n{3,}/g, '\n\n').trim()
+  return {
+    ...draft,
+    bodyHtml: finalized.html,
+    ...(plainBody ? { body: plainBody } : {}),
+  }
 }
 
 /** The note text a draft carries in its slot ('' when empty or absent). */
@@ -1021,15 +1046,38 @@ export function renderRun(
   let created = 0
   let updated = 0
 
+  // Match existing items by normalized recipient email (falling back to rowIndex
+  // only when the recipient email is unavailable) so reordering or replacing a
+  // CSV preserves sent status and personal notes on the right person.
+  const emailForItem = (item: MailRunItem): string => {
+    const draft = drafts.find(entry => entry.id === item.draftId)
+    const fromDraft = draft?.to[0]?.email?.trim().toLowerCase()
+    if (fromDraft) return fromDraft
+    const label = item.label ?? ''
+    const labelMatch = /<([^>]+)>/.exec(label)
+    if (labelMatch?.[1]) return labelMatch[1].trim().toLowerCase()
+    return label.includes('@') ? label.trim().toLowerCase() : ''
+  }
+  const byEmail = new Map<string, MailRunItem>()
   const byRow = new Map<number, MailRunItem>()
   for (const item of run.items) {
+    const email = emailForItem(item)
+    if (email && !byEmail.has(email)) byEmail.set(email, item)
     if (item.rowIndex !== undefined) byRow.set(item.rowIndex, item)
   }
 
-  // Unsent items whose row is gone or now invalid: draft and thread go.
+  const validEmails = new Set<string>()
+  for (const rowIndex of validation.validRowIndexes) {
+    const fields = renderRunDraftFields(run, template, rowIndex)
+    if (fields?.to.email) validEmails.add(fields.to.email.trim().toLowerCase())
+  }
+
+  // Unsent items whose recipient is gone or now invalid: draft and thread go.
   for (const item of run.items) {
     if (item.rowIndex === undefined || runItemLocked(item)) continue
-    if (validSet.has(item.rowIndex)) continue
+    const email = emailForItem(item)
+    const stillPresent = email ? validEmails.has(email) : validSet.has(item.rowIndex)
+    if (stillPresent) continue
     const draft = drafts.find(entry => entry.id === item.draftId)
     if (draft && !draft.sentAt) {
       drafts = drafts.filter(entry => entry.id !== draft.id)
@@ -1038,26 +1086,43 @@ export function renderRun(
         messages.some(message => message.threadId === draft.threadId)
       if (!stillHosted) threads = threads.filter(thread => thread.id !== draft.threadId)
     }
+    if (email) byEmail.delete(email)
     byRow.delete(item.rowIndex)
   }
 
   const renderedItems: MailRunItem[] = []
+  const consumedItemIds = new Set<string>()
   for (const rowIndex of validation.validRowIndexes) {
     const fields = renderRunDraftFields(run, template, rowIndex)
     if (!fields) continue
     fields.missing.forEach(token => missingTokens.add(token))
-    const existing = byRow.get(rowIndex)
+    const recipientEmail = fields.to.email.trim().toLowerCase()
+    const matchedByEmail = recipientEmail ? byEmail.get(recipientEmail) : undefined
+    const existing =
+      (matchedByEmail && !consumedItemIds.has(matchedByEmail.draftId)
+        ? matchedByEmail
+        : undefined) ??
+      (() => {
+        const candidate = byRow.get(rowIndex)
+        if (!candidate || consumedItemIds.has(candidate.draftId)) return undefined
+        const candidateEmail = emailForItem(candidate)
+        return !candidateEmail || candidateEmail === recipientEmail ? candidate : undefined
+      })()
+    if (existing) consumedItemIds.add(existing.draftId)
     const existingDraft = existing
       ? drafts.find(draft => draft.id === existing.draftId)
       : undefined
     if (existing && runItemLocked(existing)) {
-      renderedItems.push(existing)
+      renderedItems.push({ ...existing, rowIndex })
       continue
     }
     if (existingDraft && !existingDraft.sentAt) {
-      // Keep a note the user already typed into this recipient's slot.
+      // Keep a note the user already typed into this recipient's slot, in both HTML and plain text.
       const note = noteTextFromBodyHtml(existingDraft.bodyHtml)
       const bodyHtml = note ? setNoteInBodyHtml(fields.bodyHtml, note) ?? fields.bodyHtml : fields.bodyHtml
+      const plainBody = note
+        ? stripHtmlToText(finalizeRunBodyHtml(bodyHtml).html).replace(/\n{3,}/g, '\n\n').trim() || fields.body
+        : fields.body
       const { bodyHtml: _stale, ...kept } = existingDraft
       const next: Draft = {
         ...kept,
@@ -1065,7 +1130,7 @@ export function renderRun(
         cc: template.cc ?? [],
         bcc: template.bcc ?? [],
         subject: fields.subject,
-        body: fields.body,
+        body: plainBody,
         bodyHtml,
         attachments: template.attachments,
         updatedAt: now,
@@ -1076,12 +1141,13 @@ export function renderRun(
       drafts = drafts.map(draft => (draft.id === next.id ? next : draft))
       threads = threads.map(thread =>
         thread.id === next.threadId
-          ? { ...thread, subject: fields.subject, participants: [from, fields.to], summary: fields.body.trim().slice(0, 160) || 'Draft message', lastMessageAt: now }
+          ? { ...thread, subject: fields.subject, participants: [from, fields.to], summary: plainBody.trim().slice(0, 160) || 'Draft message', lastMessageAt: now }
           : thread,
       )
       updated += 1
       renderedItems.push({
         ...existing!,
+        rowIndex,
         status: existing!.status === 'missing' ? 'pending' : existing!.status,
         label: draftLabel(next),
         noteAdded: Boolean(note),

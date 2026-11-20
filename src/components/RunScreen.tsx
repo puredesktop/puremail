@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { runAgentRefs, runItemAgentRefs } from '../lib/agentRefs'
 import type { SendStoreDraftOptions, SendStoreDraftResult } from '../lib/mailSendRelease'
 import {
@@ -148,6 +148,10 @@ export function RunScreen({
   const { card, setters } = useRunCard(draft)
   const composeToRef = useRef<HTMLInputElement>(null)
   const surfaceRef = useRef<HTMLElement>(null)
+  const [inspectingDoneItem, setInspectingDoneItem] = useState(false)
+  useEffect(() => {
+    setInspectingDoneItem(false)
+  }, [run.id])
 
   // Autosave: the card writes into its draft when typing pauses, and is
   // flushed before every navigation and on leaving the screen.
@@ -193,6 +197,7 @@ export function RunScreen({
   const goTo = (index: number): void => {
     if (index < 0 || index >= run.items.length) return
     saveCardRef.current()
+    if (run.status === 'done') setInspectingDoneItem(true)
     updateRun(run.id, current => setRunCursor(current, index))
   }
   const goNext = (): void => {
@@ -338,7 +343,10 @@ export function RunScreen({
 
       <RunBodyRow>
         <RunCardColumn>
-          {run.status === 'done' && !draft ? (
+          {run.status === 'done' &&
+          !draft &&
+          !inspectingDoneItem &&
+          item?.status !== 'sending' ? (
             <RunPanel role="status">
               <RunPanelKicker>Run complete</RunPanelKicker>
               <RunPanelTitle>{run.name}</RunPanelTitle>

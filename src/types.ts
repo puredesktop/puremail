@@ -128,6 +128,8 @@ export interface Attachment {
   /** Exact byte size when known (Gmail part metadata or local File.size). */
   size?: number
   content?: string
+  /** Optional Content-ID header value (without angle brackets) for inline cid: images. */
+  contentId?: string
   remote?:
     | {
         provider: 'gmail'
@@ -156,6 +158,7 @@ export interface MailCalendarInvite {
   location?: string
   startsAt: string
   endsAt: string
+  allDay?: boolean
   timeZone: string
   organizer?: MailContact
   attendees: Array<
@@ -164,6 +167,7 @@ export interface MailCalendarInvite {
     }
   >
   recurrenceRule?: string
+  recurrenceId?: string
   rawSource: string
 }
 
@@ -670,6 +674,7 @@ export type QueuedMailActionType =
   | 'archive'
   | 'unarchive'
   | 'trash'
+  | 'untrash'
   | 'markRead'
   | 'markUnread'
   | 'label'
@@ -950,6 +955,7 @@ export interface MailProvider {
   labelThread(threadId: string, labelId: string): Promise<void>
   archiveThread(threadId: string): Promise<void>
   unarchiveThread?(threadId: string): Promise<void>
+  untrashThread?(threadId: string): Promise<void>
   moveThread(threadId: string, mailboxId: string): Promise<void>
   deleteThread(threadId: string): Promise<void>
   markThreadRead(threadId: string, read: boolean): Promise<void>

@@ -278,8 +278,27 @@ export function applyStoreFileChanges(store: MailStore, changes: StoreFileChange
       next[field] = [...held]
     } else if (shape.kind === 'object') {
       const held = { ...((next[field] ?? {}) as Record<string, unknown>) }
-      for (const item of removed) delete held[item.key]
-      for (const item of upserts) held[item.key] = item.value
+      for (const item of removed) {
+        if (
+          held[item.key] === undefined ||
+          (item.over !== undefined &&
+            recordFingerprint(held[item.key]) !== item.over)
+        ) {
+          continue
+        }
+        delete held[item.key]
+      }
+      for (const item of upserts) {
+        // Preserve edits made locally while the async save/sync was in flight.
+        if (
+          held[item.key] !== undefined &&
+          (item.over === undefined ||
+            recordFingerprint(held[item.key]) !== item.over)
+        ) {
+          continue
+        }
+        held[item.key] = item.value
+      }
       next[field] = held
     } else if (shape.kind === 'records') {
       const list = (next[field] ?? []) as Record<string, unknown>[]

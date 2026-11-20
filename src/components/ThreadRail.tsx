@@ -163,6 +163,7 @@ export function ThreadListToolbar({
   setStore,
 }: ThreadListToolbarProps): React.ReactElement {
   const [newLabelName, setNewLabelName] = useState('')
+  const [customSnoozeAt, setCustomSnoozeAt] = useState('')
   const [openMenu, setOpenMenu] = useState<
     'label' | 'move' | 'snooze' | 'more' | null
   >(null)
@@ -180,8 +181,12 @@ export function ThreadListToolbar({
   const checkedAccountId = filteredThreads.find(thread =>
     checkedSet.has(thread.id),
   )?.accountId
+  // Only offer genuine move destinations (never Drafts/Sent, which are not move targets).
   const moveTargets = store.mailboxes.filter(
-    mailbox => mailbox.accountId === checkedAccountId,
+    mailbox =>
+      mailbox.accountId === checkedAccountId &&
+      mailbox.role !== 'drafts' &&
+      mailbox.role !== 'sent',
   )
   const scheduledThreadIds = useMemo(
     () =>
@@ -224,8 +229,8 @@ export function ThreadListToolbar({
       <SquareCheck
         type="button"
         role="checkbox"
-        aria-checked={allChecked}
-        aria-label={allChecked ? 'Clear selection' : 'Select all threads'}
+        aria-checked={allChecked ? true : selectionCount > 0 ? 'mixed' : false}
+        aria-label={selectionCount > 0 ? 'Clear selection' : 'Select all threads'}
         $checked={selectionCount > 0}
         onClick={() =>
           selectionCount > 0 ? clearThreadSelection() : selectAllThreads()
@@ -401,6 +406,53 @@ export function ThreadListToolbar({
                       {preset.label}
                     </BulkMenuItem>
                   ))}
+                  <BulkMenuItem
+                    as="div"
+                    role="none"
+                    style={{
+                      cursor: 'default',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <input
+                      type="datetime-local"
+                      value={customSnoozeAt}
+                      aria-label="Custom snooze time"
+                      style={{
+                        border: 0,
+                        outline: 'none',
+                        background: 'transparent',
+                        color: 'inherit',
+                        font: 'inherit',
+                        fontSize: 12,
+                      }}
+                      onClick={event => event.stopPropagation()}
+                      onChange={event =>
+                        setCustomSnoozeAt(event.currentTarget.value)
+                      }
+                    />
+                    <Button
+                      size="sm"
+                      disabled={
+                        !customSnoozeAt ||
+                        !Number.isFinite(Date.parse(customSnoozeAt)) ||
+                        Date.parse(customSnoozeAt) <= Date.now()
+                      }
+                      onClick={() => {
+                        const ms = Date.parse(customSnoozeAt)
+                        if (!Number.isFinite(ms) || ms <= Date.now()) return
+                        act({
+                          type: 'snooze',
+                          snoozedUntil: new Date(ms).toISOString(),
+                        })
+                        setCustomSnoozeAt('')
+                      }}
+                    >
+                      Hide
+                    </Button>
+                  </BulkMenuItem>
                 </BulkMenu>
               )}
             </BulkMenuWrap>
@@ -688,11 +740,25 @@ export function ThreadRail({
   const padBottom =
     Math.max(0, filteredThreads.length - visibleRange.end) * rowHeight
 
+  const formatExactDateTime = (iso: string): string => {
+    const parsed = new Date(iso)
+    if (Number.isNaN(parsed.getTime())) return iso
+    return parsed.toLocaleString(undefined, {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    })
+  }
+
   /** The one chip a row gets: its state if it has one, else its first label. */
   const rowChip = (thread: MailThread): React.ReactElement | null => {
     if (thread.status === 'snoozed' && thread.snoozedUntil) {
       return (
-        <RowChip title="Hidden until this time">
+        <RowChip title={`Hidden until ${formatExactDateTime(thread.snoozedUntil)}`}>
           until {formatThreadListTime(thread.snoozedUntil)}
         </RowChip>
       )
@@ -710,7 +776,7 @@ export function ThreadRail({
     const scheduled = scheduledByThread.get(thread.id)
     if (scheduled) {
       return (
-        <RowChip title="A send is scheduled">
+        <RowChip title={`Scheduled to send ${formatExactDateTime(scheduled.sendAt)}`}>
           sends {formatThreadListTime(scheduled.sendAt)}
         </RowChip>
       )
@@ -832,11 +898,15 @@ export function ThreadRail({
               <strong>{thread.subject}</strong>
               {snippet ? ` — ${snippet}` : ''}
             </RowSubject>
-            <RowTime>
-              {formatThreadListTime(
-                filteredThreadSortTimes.get(thread.id) ?? thread.lastMessageAt,
-              )}
-            </RowTime>
+            {(() => {
+              const sortIso =
+                filteredThreadSortTimes.get(thread.id) ?? thread.lastMessageAt
+              return (
+                <RowTime as="time" dateTime={sortIso} title={formatExactDateTime(sortIso)}>
+                  {formatThreadListTime(sortIso)}
+                </RowTime>
+              )
+            })()}
             <RowHoverActions aria-hidden={false}>
               <RowActionButton
                 role="button"

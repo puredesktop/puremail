@@ -6,6 +6,7 @@ import {
 } from '../lib/peopleDirectory'
 import { X } from 'lucide-react'
 import {
+  formatRecipientToken,
   isValidEmailAddress,
   parseRecipientInput,
   rankedCorrespondents,
@@ -33,7 +34,7 @@ export interface RecipientChipsInputProps {
 }
 
 function contactToken(name: string, email: string): string {
-  return name && name !== email ? `${name} <${email}>` : email
+  return formatRecipientToken(name, email)
 }
 
 /**
@@ -124,10 +125,34 @@ export function RecipientChipsInput({
     const token = raw.trim().replace(/[,;]+$/, '')
     setPending('')
     if (!token) return
-    commitChips([
-      ...chips.map(chip => contactToken(chip.name, chip.email)),
-      token,
-    ])
+    const parsedIncoming = parseRecipientInput(token)
+    const nextTokens = [...chips.map(chip => contactToken(chip.name, chip.email))]
+    const existingEmails = new Set(chipEmails)
+    for (const item of parsedIncoming) {
+      const normalized = item.email.trim().toLowerCase()
+      if (isValidEmailAddress(item.email) && existingEmails.has(normalized)) {
+        continue
+      }
+      if (normalized) existingEmails.add(normalized)
+      nextTokens.push(contactToken(item.name, item.email))
+    }
+    commitChips(nextTokens)
+  }
+
+  const editChip = (index: number): void => {
+    const target = chips[index]
+    if (!target) return
+    const restored = contactToken(target.name, target.email)
+    removeChip(index)
+    setPending(restored)
+    setMenuOpen(true)
+    window.setTimeout(() => {
+      const input = localInputRef.current
+      if (input) {
+        input.focus()
+        input.setSelectionRange(restored.length, restored.length)
+      }
+    }, 0)
   }
 
   const removeChip = (index: number): void => {
@@ -149,6 +174,13 @@ export function RecipientChipsInput({
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    // Commit typed text before ⌘Enter / Ctrl+Enter bubbles up to Send.
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      if ((localInputRef.current?.value ?? pending).trim()) {
+        commitPending()
+      }
+      return
+    }
     const menuShowing = menuOpen && suggestions.length > 0
     if (event.key === 'ArrowDown' && menuShowing) {
       event.preventDefault()
@@ -197,11 +229,35 @@ export function RecipientChipsInput({
             <RecipientChip
               key={`${chip.email}-${index}`}
               $invalid={!valid}
+              tabIndex={!valid ? 0 : undefined}
+              role={!valid ? 'button' : undefined}
+              aria-label={
+                !valid
+                  ? `Invalid recipient ${chip.email} — press Enter or click to edit`
+                  : undefined
+              }
               title={
                 valid
-                  ? chip.email
-                  : `"${chip.email}" is not a valid email address`
+                  ? `${chip.email} (double-click to edit)`
+                  : `"${chip.email}" is not a valid email address — click or press Enter to edit`
               }
+              onClick={event => {
+                if (!valid) {
+                  event.stopPropagation()
+                  editChip(index)
+                }
+              }}
+              onDoubleClick={event => {
+                event.stopPropagation()
+                editChip(index)
+              }}
+              onKeyDown={event => {
+                if (!valid && (event.key === 'Enter' || event.key === ' ')) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  editChip(index)
+                }
+              }}
             >
               <span>
                 {chip.name && chip.name !== chip.email

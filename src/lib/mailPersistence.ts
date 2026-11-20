@@ -547,12 +547,22 @@ export async function syncStoreFile(store: MailStore): Promise<StoreFileChanges>
  */
 async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<DraftsFileChanges> {
   const now = new Date().toISOString()
+  const clearConsumedDiscards = (consumed: Array<[string, string]>): void => {
+    for (const [id, deletedAt] of consumed) {
+      if (thisCopy.discards.get(id) === deletedAt) {
+        thisCopy.discards.delete(id)
+      }
+    }
+  }
   for (let attempt = 0; attempt < MAX_MERGE_TRIES; attempt++) {
     const { raw, file, version } = await readDraftsFile()
+    // Snapshot only the discards included in this merge so any discard made
+    // while IPC is in flight is preserved for the next save.
+    const consumedDiscards = [...thisCopy.discards.entries()]
     const { value, changes } = mergedDraftsFile(store, file, now)
     if (sameContent(value, raw, ignoreHomes)) {
       agreeWithFile(file, version)
-      thisCopy.discards.clear()
+      clearConsumedDiscards(consumedDiscards)
       return holdArrivals(changes, store)
     }
     const written = await writePlatformStorageJson({
@@ -563,7 +573,7 @@ async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<Dr
     })
     if (written.conflict) continue
     agreeWithFile(parseDraftsFile(JSON.parse(JSON.stringify(value))), written.version)
-    thisCopy.discards.clear()
+    clearConsumedDiscards(consumedDiscards)
     return holdArrivals(changes, store)
   }
   throw new Error('Other copies of Mail kept saving at the same moment. Your drafts are safe here and will be saved on the next try.')

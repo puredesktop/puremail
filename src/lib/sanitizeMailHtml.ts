@@ -282,6 +282,13 @@ function urlScheme(rawValue: string): string | null {
   return match ? match[1]! : null
 }
 
+function normalizeUrlAttrValue(rawValue: string): string {
+  // Strip leading/trailing C0 control chars & spaces and embedded ASCII tab/CR/LF
+  // so sanitized attributes cannot smuggle schemes or bypass remote-image blocking.
+  // eslint-disable-next-line no-control-regex
+  return rawValue.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '').replace(/[\t\r\n]/g, '')
+}
+
 function isAllowedHref(value: string): boolean {
   const scheme = urlScheme(value)
   return scheme !== null && HREF_SCHEMES.has(scheme)
@@ -723,10 +730,22 @@ function collectMessageStyleSheets(doc: Document): string[] {
   return sheets
 }
 
-function sanitizeAttributes(element: Element, tag: string): void {
+function sanitizeAttributes(
+  element: Element,
+  tag: string,
+  options: { preserveRunNoteAttr?: boolean } = {},
+): void {
   const allowed = PER_TAG_ALLOWED_ATTRS[tag]
   for (const attr of [...element.attributes]) {
     const name = attr.name.toLowerCase()
+    if (
+      options.preserveRunNoteAttr &&
+      tag === 'div' &&
+      name === 'data-run-note' &&
+      attr.value === ''
+    ) {
+      continue
+    }
     if (GLOBAL_ALLOWED_ATTRS.has(name) || allowed?.has(name)) continue
     if (name === 'style') {
       const filtered = filterInlineStyle(attr.value)
@@ -792,12 +811,22 @@ function sanitizeAttributes(element: Element, tag: string): void {
     }
   }
   const href = element.getAttribute('href')
-  if (href !== null && !isAllowedHref(href)) element.removeAttribute('href')
+  if (href !== null) {
+    const normalizedHref = normalizeUrlAttrValue(href)
+    if (!isAllowedHref(normalizedHref)) element.removeAttribute('href')
+    else if (normalizedHref !== href) element.setAttribute('href', normalizedHref)
+  }
   const src = element.getAttribute('src')
   if(tag==='video'||tag==='audio') {
-    if(src!==null && !/^cid:[a-z0-9@._-]+$/i.test(src) && !new RegExp(`^data:${tag}/(?:mp4|webm|ogg|mpeg|mp3|wav);base64,[a-z0-9+/=\\s]+$`,'i').test(src))element.removeAttribute('src')
+    const normalizedSrc = src !== null ? normalizeUrlAttrValue(src) : null
+    if(normalizedSrc!==null && !/^cid:[a-z0-9@._-]+$/i.test(normalizedSrc) && !new RegExp(`^data:${tag}/(?:mp4|webm|ogg|mpeg|mp3|wav);base64,[a-z0-9+/=\\s]+$`,'i').test(normalizedSrc))element.removeAttribute('src')
+    else if (normalizedSrc !== null && normalizedSrc !== src) element.setAttribute('src', normalizedSrc)
     element.setAttribute('controls','');element.setAttribute('preload','none')
-  } else if (src !== null && !isAllowedSrc(src)) element.removeAttribute('src')
+  } else if (src !== null) {
+    const normalizedSrc = normalizeUrlAttrValue(src)
+    if (!isAllowedSrc(normalizedSrc)) element.removeAttribute('src')
+    else if (normalizedSrc !== src) element.setAttribute('src', normalizedSrc)
+  }
   if (tag === 'a' && element.hasAttribute('href')) {
     // Mail content must never script or navigate its opener.
     element.setAttribute('target', '_blank')
@@ -805,7 +834,10 @@ function sanitizeAttributes(element: Element, tag: string): void {
   }
 }
 
-function sanitizeNode(node: Node): void {
+function sanitizeNode(
+  node: Node,
+  options: { preserveRunNoteAttr?: boolean } = {},
+): void {
   if (node.nodeType === node.TEXT_NODE) return
   if (node.nodeType !== node.ELEMENT_NODE) {
     // Comments (incl. conditional comments), CDATA, processing instructions.
@@ -821,15 +853,15 @@ function sanitizeNode(node: Node): void {
     }
     // Unknown but harmless wrapper (center, section, font…): keep the
     // content, drop the element — after sanitizing the children in place.
-    for (const child of [...element.childNodes]) sanitizeNode(child)
+    for (const child of [...element.childNodes]) sanitizeNode(child, options)
     const parent = element.parentNode
     if (!parent) return
     while (element.firstChild) parent.insertBefore(element.firstChild, element)
     element.remove()
     return
   }
-  sanitizeAttributes(element, tag)
-  for (const child of [...element.childNodes]) sanitizeNode(child)
+  sanitizeAttributes(element, tag, options)
+  for (const child of [...element.childNodes]) sanitizeNode(child, options)
 }
 
 /**
@@ -891,13 +923,17 @@ function hasExplicitSpacing(block: Element): boolean {
  */
 let messageScopeCounter = 0
 
-function sanitizedMailBody(html: string): string {
+function sanitizedMailBody(
+  html: string,
+  options: { preserveRunNoteAttr?: boolean } = {},
+): string {
   const doc = new DOMParser().parseFromString(html || '', 'text/html')
   // Capture embedded sheets BEFORE the walk removes every <style> (and the
   // walk never visits <head>, where newsletters actually put them).
   const rawSheets = collectMessageStyleSheets(doc)
-  for (const child of [...doc.body.childNodes]) sanitizeNode(child)
-  collapseSpacerBlocks(doc.body)
+  for (const child of [...doc.body.childNodes]) sanitizeNode(child, options)
+  // Keep empty Run note regions (`<div data-run-note="">`) intact in compose.
+  if (!options.preserveRunNoteAttr) collapseSpacerBlocks(doc.body)
   const scopeClass = `pm-msg-${++messageScopeCounter}`
   const css = rawSheets
     .map(sheet => filterMessageStyleSheet(sheet, scopeClass))
@@ -921,9 +957,11 @@ function sanitizedMailBody(html: string): string {
 
 export function sanitizeMailHtml(
   html: string,
-  options: { allowRemoteImages?: boolean } = {},
+  options: { allowRemoteImages?: boolean; preserveRunNoteAttr?: boolean } = {},
 ): string {
-  const clean = sanitizedMailBody(html)
+  const clean = sanitizedMailBody(html, {
+    preserveRunNoteAttr: options.preserveRunNoteAttr,
+  })
   if (options.allowRemoteImages) return clean
   return blockRemoteImagesInMailHtml(clean).html
 }

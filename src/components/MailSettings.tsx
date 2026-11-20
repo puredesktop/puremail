@@ -11,7 +11,7 @@ import {
   suggestMailFilters,
 } from '../lib/mailFilters'
 import { quoteQueryValue, saveMailView } from '../lib/mailQuery'
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Pencil } from 'lucide-react'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
@@ -282,8 +282,10 @@ const MAIL_PROVIDER_OPTIONS: Array<{
 
 export interface MailSettingsProps {
   onRunTriage: (ids?:string[],options?:import('../lib/typedTriage').TriageRunOptions) => Promise<import('../lib/typedTriage').TriageRunSummary>
-  /** Reboot the mail provider decision after an IMAP account is saved. */
+  /** Reboot the mail provider decision after an IMAP account is saved or removed. */
   onImapConnected?: () => void
+  /** Flush pending debounced store/draft persistence before a reboot remounts the shell. */
+  flushStorePersistence?: () => Promise<void>
   store: MailStore
   setStore: React.Dispatch<React.SetStateAction<MailStore>>
   setCommandNotice: React.Dispatch<React.SetStateAction<string>>
@@ -334,6 +336,7 @@ const SETTINGS_HELP: Record<string, string> = {
 export function MailSettings({
   onRunTriage,
   onImapConnected,
+  flushStorePersistence,
   store,
   setStore,
   setCommandNotice,
@@ -515,7 +518,12 @@ export function MailSettings({
               : 'The password is stored OS-encrypted and read by the shell when dialing; sending reuses it until a separate SMTP password is saved.') +
             ' PureMail is rebooting onto this account now.',
         })
-        onImapConnected?.()
+        const reboot = () => onImapConnected?.()
+        if (flushStorePersistence) {
+          void flushStorePersistence().catch(() => undefined).finally(reboot)
+        } else {
+          reboot()
+        }
       })
       .catch(error => {
         setProviderTestResult({
@@ -587,9 +595,27 @@ export function MailSettings({
         ? 'Account deactivated — connection, passwords, and the synced copy were removed.'
         : 'Connection removed; its stored passwords were deleted.',
     )
-    if (wasActiveImapAccount) onImapConnected?.()
+    if (wasActiveImapAccount) {
+      const reboot = () => onImapConnected?.()
+      if (flushStorePersistence) {
+        void flushStorePersistence().catch(() => undefined).finally(reboot)
+      } else {
+        reboot()
+      }
+    }
   }
   const [gmailDisconnecting, setGmailDisconnecting] = useState(false)
+  useEffect(() => {
+    if (!providerDrawerOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setProviderDrawerOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [providerDrawerOpen, setProviderDrawerOpen])
   /**
    * Deactivate Gmail: drop the shell-side tokens, then strip the synced
    * Gmail mirror from the local store. The shell watcher in PureMailShell
@@ -1867,7 +1893,12 @@ export function MailSettings({
                       <Button
                         size="sm"
                         variant="text"
-                        title="Apply this rule to every existing match, including threads it already processed — the recovery path when a server action failed and left matches in the inbox."
+                        disabled={!rule.enabled}
+                        title={
+                          rule.enabled
+                            ? 'Apply this rule to every existing match, including threads it already processed — the recovery path when a server action failed and left matches in the inbox.'
+                            : 'Enable this filter before running it over existing threads.'
+                        }
                         onClick={() =>
                           setStore(current => {
                             const run = runMailFilters(

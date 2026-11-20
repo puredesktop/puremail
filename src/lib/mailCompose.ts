@@ -22,26 +22,114 @@ export function isValidEmailAddress(email: string): boolean {
   return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)*\.[a-zA-Z]{2,}$/.test(trimmed)
 }
 
+/** Split a recipient list on `,`, `;`, or newlines outside `"..."` quotes and `<...>` brackets. */
+export function splitRecipientTokens(value: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  let inQuotes = false
+  let inAngle = false
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i]!
+    if (inQuotes) {
+      current += ch
+      if (ch === '\\' && i + 1 < value.length) {
+        current += value[i + 1]!
+        i += 1
+      } else if (ch === '"') {
+        inQuotes = false
+      }
+      continue
+    }
+    if (ch === '"' && !inAngle) {
+      inQuotes = true
+      current += ch
+      continue
+    }
+    if (ch === '<') {
+      inAngle = true
+      current += ch
+      continue
+    }
+    if (ch === '>') {
+      inAngle = false
+      current += ch
+      continue
+    }
+    if (!inAngle && (ch === ',' || ch === ';' || ch === '\n' || ch === '\r')) {
+      const trimmed = current.trim()
+      if (trimmed) tokens.push(trimmed)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  const trimmed = current.trim()
+  if (trimmed) tokens.push(trimmed)
+  return tokens
+}
+
+/** Serialize one contact token, quoting display names that contain delimiters. */
+export function formatRecipientToken(name: string, email: string): string {
+  const cleanEmail = email.trim()
+  const cleanName = name.trim()
+  if (!cleanName || cleanName === cleanEmail) return cleanEmail
+  const safeName = /[,;"<>\\]/.test(cleanName)
+    ? `"${cleanName.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+    : cleanName
+  return `${safeName} <${cleanEmail}>`
+}
+
 /**
- * Parse a comma/semicolon separated recipient input into contacts,
- * supporting both `Name <email>` and bare `email` tokens. Invalid tokens
- * are kept (with the raw text as email) so the UI can mark them clearly
- * instead of silently dropping them.
+ * Parse a comma/semicolon/newline separated recipient input into contacts,
+ * supporting quoted `"Doe, Jane" <email>`, `Name <email>`, and bare `email`.
+ * Invalid tokens are kept (with the raw text as email) so the UI can mark
+ * them clearly instead of silently dropping them.
  */
 export function parseRecipientInput(value: string): MailContact[] {
-  return value
-    .split(/[,;]/)
-    .map(token => token.trim())
-    .filter(Boolean)
-    .map(token => {
-      const bracketed = token.match(/^(.*?)[\s]*<([^<>]*)>$/)
-      if (bracketed) {
-        const name = bracketed[1]?.trim().replace(/^"|"$/g, '') ?? ''
-        const email = bracketed[2]?.trim() ?? ''
-        return { name: name || email, email }
+  return splitRecipientTokens(value).map(token => {
+    const bracketed = token.match(
+      /^\s*(?:"((?:\\.|[^"\\])*)"|([^<>]*?))\s*<([^<>]*)>\s*$/,
+    )
+    if (bracketed) {
+      const rawName =
+        bracketed[1] !== undefined
+          ? bracketed[1].replace(/\\(.)/g, '$1').trim()
+          : (bracketed[2]?.trim() ?? '')
+      const email = bracketed[3]?.trim() ?? ''
+      return { name: rawName || email, email }
+    }
+    return { name: token, email: token }
+  })
+}
+
+/**
+ * Find normalized email addresses repeated across To, Cc, and Bcc fields (or
+ * repeated within the same field) so the composer can warn before sending
+ * without silently removing or moving recipients.
+ */
+export function duplicateRecipientsAcrossFields(fields: {
+  to: MailContact[]
+  cc?: MailContact[]
+  bcc?: MailContact[]
+}): Array<{ email: string; fields: Array<'To' | 'Cc' | 'Bcc'> }> {
+  const map = new Map<string, { email: string; fields: Array<'To' | 'Cc' | 'Bcc'> }>()
+  const record = (label: 'To' | 'Cc' | 'Bcc', list: MailContact[] | undefined) => {
+    for (const contact of list ?? []) {
+      const email = contact.email.trim()
+      if (!isValidEmailAddress(email)) continue
+      const key = email.toLowerCase()
+      const existing = map.get(key)
+      if (existing) {
+        existing.fields.push(label)
+      } else {
+        map.set(key, { email, fields: [label] })
       }
-      return { name: token, email: token }
-    })
+    }
+  }
+  record('To', fields.to)
+  record('Cc', fields.cc)
+  record('Bcc', fields.bcc)
+  return [...map.values()].filter(entry => entry.fields.length > 1)
 }
 
 /** Recipients from an input string whose addresses fail validation. */
@@ -130,12 +218,26 @@ const ATTACHMENT_MENTION_PATTERNS = [
 ]
 
 /**
- * True when the body talks about an attachment. Used by the send flow to
- * ask a quiet "no attachments yet — send anyway?" before the message goes
- * out without one.
+ * True when the user's own text (excluding quoted reply/forward history)
+ * talks about an attachment. Used by the send flow to ask a quiet
+ * "no attachments yet — send anyway?" before the message goes out without one.
  */
 export function bodyMentionsAttachment(body: string): boolean {
-  const text = body.trim()
+  const lines = body.split(/\r?\n/)
+  const freshLines: string[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (
+      /^On .+ wrote:\s*$/i.test(trimmed) ||
+      /^-{3,}\s*Forwarded message\s*-{3,}$/i.test(trimmed) ||
+      /^-{3,}\s*Original Message\s*-{3,}$/i.test(trimmed)
+    ) {
+      break
+    }
+    if (trimmed.startsWith('>')) continue
+    freshLines.push(line)
+  }
+  const text = freshLines.join('\n').trim()
   if (!text) return false
   return ATTACHMENT_MENTION_PATTERNS.some(pattern => pattern.test(text))
 }

@@ -21,6 +21,7 @@ import {
   fileThreadToBox,
   runMailFilters,
   setMailFilterEnabled,
+  type MailFilterMutation,
 } from '../lib/mailFilters'
 import { isImapMailboxId } from '../lib/imapMailProvider'
 import {
@@ -121,7 +122,8 @@ export function listThreadsHandler(
 ): AgentToolHandlerResult {
   const accountId = requireAccount(context)
   const query = optionalString(args, 'query') ?? ''
-  const limit = optionalNumber(args, 'limit') ?? DEFAULT_LIST_LIMIT
+  const rawLimit = optionalNumber(args, 'limit') ?? DEFAULT_LIST_LIMIT
+  const limit = Math.max(0, Math.floor(rawLimit))
   const resolved = resolveThreadQuery(context.store, accountId, query, context.now)
   const entries = resolved.entries.slice(0, limit)
   context.noteAgentSearch({ query: resolved.query, total: resolved.total })
@@ -560,11 +562,13 @@ export function listDraftsHandler(
 ): AgentToolHandlerResult {
   const threadId = optionalString(args, 'threadId')
   const includeSent = args.includeSent === true
+  const rawLimit = optionalNumber(args, 'limit') ?? DEFAULT_LIST_LIMIT
+  const limit = Math.max(0, Math.floor(rawLimit))
   const drafts = context.store.drafts
     .filter(draft => (includeSent ? true : !draft.sentAt))
     .filter(draft => (threadId ? draft.threadId === threadId : true))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, optionalNumber(args, 'limit') ?? DEFAULT_LIST_LIMIT)
+    .slice(0, limit)
   return ok({
     total: drafts.length,
     drafts: drafts.map(draft => draftSummary(context, draft, false)),
@@ -611,21 +615,24 @@ export function updateDraftHandler(
   if (editBlock) throw new AgentMailToolError(editBlock)
   const expectedVersion = requireString(args, 'expectedVersion')
   if (expectedVersion !== draftEditVersion(draft)) throw new AgentMailToolError('The draft changed. Read getDraft again before editing.')
+  // Allow explicit empty strings on subject/cc/bcc so callers can clear them.
+  const clearableString = (key: string): string | undefined =>
+    typeof args[key] === 'string' ? (args[key] as string).trim() : undefined
   const patch = {
     ...(optionalString(args, 'body') !== undefined
       ? { body: optionalString(args, 'body') }
       : {}),
-    ...(optionalString(args, 'subject') !== undefined
-      ? { subject: optionalString(args, 'subject') }
+    ...(clearableString('subject') !== undefined
+      ? { subject: clearableString('subject') }
       : {}),
     ...(optionalString(args, 'to') !== undefined
       ? { to: optionalString(args, 'to') }
       : {}),
-    ...(optionalString(args, 'cc') !== undefined
-      ? { cc: optionalString(args, 'cc') }
+    ...(clearableString('cc') !== undefined
+      ? { cc: clearableString('cc') }
       : {}),
-    ...(optionalString(args, 'bcc') !== undefined
-      ? { bcc: optionalString(args, 'bcc') }
+    ...(clearableString('bcc') !== undefined
+      ? { bcc: clearableString('bcc') }
       : {}),
   }
   if (Object.keys(patch).length === 0) {
@@ -1093,16 +1100,22 @@ export function applyFilterRetroactivelyHandler(
       }.`,
     )
   }
-  const run = runMailFilters(context.store, accountId, {
-    includeAlreadyRun: true,
-    ruleIds: [rule.id],
+  let mutations: MailFilterMutation[] = []
+  let totalHits = 0
+  context.setStore(current => {
+    const run = runMailFilters(current, accountId, {
+      includeAlreadyRun: true,
+      ruleIds: [rule.id],
+    })
+    mutations = run.mutations
+    totalHits = run.totalHits
+    return run.store
   })
-  context.setStore(() => run.store)
-  context.fireFilterMutations?.(run.mutations)
+  context.fireFilterMutations?.(mutations)
   return ok({
     applied: rule.name,
-    threadsAffected: run.totalHits,
-    remoteMutations: run.mutations.length,
+    threadsAffected: totalHits,
+    remoteMutations: mutations.length,
   })
 }
 
@@ -1162,7 +1175,10 @@ export function setFilterEnabledHandler(
   args: Record<string, unknown>,
 ): AgentToolHandlerResult {
   const rule = filterByNameOrId(context, requireString(args, 'filter'))
-  const enabled = args.enabled === true
+  if (typeof args.enabled !== 'boolean') {
+    throw new AgentMailToolError('Argument "enabled" must be a boolean (true or false).')
+  }
+  const enabled = args.enabled
   context.setStore(store => setMailFilterEnabled(store, rule.id, enabled))
   return ok({ filter: rule.name, enabled })
 }
@@ -1229,9 +1245,13 @@ export async function fileThreadHandler(
       note: 'Moved to that folder on the mail server. No local rule was created.',
     })
   }
-  const filed = fileThreadToBox(context.store, accountId, threadId, box)
-  context.setStore(() => filed.store)
-  context.fireFilterMutations?.(filed.mutations)
+  let mutations: MailFilterMutation[] = []
+  context.setStore(current => {
+    const filed = fileThreadToBox(current, accountId, threadId, box)
+    mutations = filed.mutations
+    return filed.store
+  })
+  context.fireFilterMutations?.(mutations)
   return ok({
     filed: thread.subject,
     box,

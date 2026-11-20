@@ -86,8 +86,35 @@ function messageHtml(message: MailMessage): string {
     .filter(([, value]) => value.trim())
     .map(([label, value]) => `<tr><th>${label}</th><td>${escapeHtml(value)}</td></tr>`)
     .join('')
-  const body = message.bodyHtml?.trim()
-    ? sanitizeMailHtml(message.bodyHtml, { allowRemoteImages: false })
+  const SAFE_RASTER_DATA_URI =
+    /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[a-z0-9+/=\s]+$/i
+  let rawBodyHtml = message.bodyHtml?.trim() ?? ''
+  if (rawBodyHtml && message.attachments.length > 0) {
+    const cidMap = new Map<string, string>()
+    for (const attachment of message.attachments) {
+      if (
+        attachment.contentId &&
+        attachment.content &&
+        SAFE_RASTER_DATA_URI.test(attachment.content.trim())
+      ) {
+        cidMap.set(
+          attachment.contentId.replace(/^<|>$/g, '').toLowerCase(),
+          attachment.content.trim().replace(/\s+/g, ''),
+        )
+      }
+    }
+    if (cidMap.size > 0) {
+      rawBodyHtml = rawBodyHtml.replace(
+        /src=(["'])cid:([^"']+)\1/gi,
+        (whole, quote: string, cid: string) => {
+          const resolved = cidMap.get(cid.replace(/^<|>$/g, '').toLowerCase())
+          return resolved ? `src=${quote}${escapeHtml(resolved)}${quote}` : whole
+        },
+      )
+    }
+  }
+  const body = rawBodyHtml
+    ? sanitizeMailHtml(rawBodyHtml, { allowRemoteImages: false })
     : plainTextHtml(message.body)
   const attachments = message.attachments.length
     ? `<div class="attachments"><strong>Attachments</strong><ul>${message.attachments
@@ -169,10 +196,11 @@ export async function saveMailAsPdf(
   // the PDF as one of Mail's app objects, which agents need to read it back.
   const scratch = await deps.scratchDir()
   if (!scratch) throw new Error('PureMail has no folder to prepare the PDF in.')
-  const htmlPath = joinFolderPath(scratch, 'mail-print.html')
+  const runId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const htmlPath = joinFolderPath(scratch, `mail-print-${runId}.html`)
+  const pdfPath = joinFolderPath(scratch, `mail-print-${runId}.pdf`)
   await deps.writeText(htmlPath, buildMailPdfHtml(input))
-  const printed = (await deps.print({ htmlPath, outputPath: joinFolderPath(scratch, 'mail-print.pdf') }))
-    || joinFolderPath(scratch, 'mail-print.pdf')
+  const printed = (await deps.print({ htmlPath, outputPath: pdfPath })) || pdfPath
   const pdf = await deps.readBinary(printed)
   if (pdf.truncated) throw new Error('The PDF is too large to save.')
   if (!pdf.base64 || pdf.byteLength === 0) throw new Error('The PDF came out empty.')

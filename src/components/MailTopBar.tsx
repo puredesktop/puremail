@@ -19,6 +19,7 @@ import {
   deleteMailView,
   parseMailQuery,
   quoteQueryValue,
+  renameMailView,
   saveMailView,
   type MailQueryTerm,
 } from '../lib/mailQuery'
@@ -171,13 +172,26 @@ export function MailTopBar({
   useOutsideClose(searchWrapRef, searchPanelOpen, () =>
     setSearchPanelOpen(false),
   )
+  const isBareNavigationQuery = (query: string): boolean => {
+    const trimmed = query.trim().toLowerCase()
+    return (
+      !trimmed ||
+      trimmed === 'in:inbox' ||
+      trimmed === 'in:sent' ||
+      trimmed === 'in:archive' ||
+      trimmed === 'in:trash' ||
+      trimmed === 'in:drafts' ||
+      trimmed === 'is:starred' ||
+      trimmed === 'is:snoozed'
+    )
+  }
   useEffect(() => {
     if (!searchPanelOpen) {
-      setDraftQueryState('')
+      setDraftQueryState(isBareNavigationQuery(currentQuery) ? '' : currentQuery)
       draftDirtyRef.current = false
       setBuilderOpen(false)
     }
-  }, [searchPanelOpen])
+  }, [searchPanelOpen, currentQuery])
   useEffect(() => {
     if (!draftDirtyRef.current) return
     const target = draftQuery.trim() ? draftQuery : 'in:inbox'
@@ -295,19 +309,20 @@ export function MailTopBar({
   )
   const removeQueryChip = (chip: { term: MailQueryTerm }): void => {
     const parsed = parseMailQuery(currentQuery)
-    setCurrentQuery(
-      buildMailQuery({
-        ...parsed,
-        terms: parsed.terms.filter(
-          term =>
-            !(
-              term.field === chip.term.field &&
-              term.value === chip.term.value &&
-              term.negated === chip.term.negated
-            ),
-        ),
-      }),
-    )
+    const nextQuery = buildMailQuery({
+      ...parsed,
+      terms: parsed.terms.filter(
+        term =>
+          !(
+            term.field === chip.term.field &&
+            term.value === chip.term.value &&
+            term.negated === chip.term.negated
+          ),
+      ),
+    })
+    draftDirtyRef.current = false
+    setDraftQueryState(isBareNavigationQuery(nextQuery) ? '' : nextQuery)
+    setCurrentQuery(nextQuery)
   }
   // Armed naming instead of window.prompt: prompt() silently no-ops inside
   // the sandboxed shell iframe, so "Save as view" would look dead there.
@@ -352,9 +367,7 @@ export function MailTopBar({
                 <SlidersHorizontal aria-hidden="true" size={13} /> operators
               </Button>
 
-              {/* Chips repeat the input verbatim for a single term — they
-                  only earn their row as per-term removers. */}
-              {activeQueryChips.length > 1 &&
+              {activeQueryChips.length > 0 &&
                 activeQueryChips.map(chip => (
                   <RecipientChip key={chip.key}>
                     <span>{chip.label}</span>
@@ -367,6 +380,19 @@ export function MailTopBar({
                     </button>
                   </RecipientChip>
                 ))}
+              {currentQuery !== 'in:inbox' && (
+                <Button
+                  size="sm"
+                  variant="subtle"
+                  onClick={() => {
+                    draftDirtyRef.current = false
+                    setDraftQueryState('')
+                    setCurrentQuery('in:inbox')
+                  }}
+                >
+                  Clear all
+                </Button>
+              )}
               {viewNameDraft === null ? (
                 <Button
                   size="sm"
@@ -401,7 +427,14 @@ export function MailTopBar({
                       if (event.key !== 'Enter' || !viewNameDraft.trim())
                         return
                       setStore(current =>
-                        saveMailView(current, viewNameDraft, currentQuery),
+                        savedViewForQuery
+                          ? renameMailView(
+                              current,
+                              savedViewForQuery.id,
+                              viewNameDraft,
+                              currentQuery,
+                            )
+                          : saveMailView(current, viewNameDraft, currentQuery),
                       )
                       setViewNameDraft(null)
                     }}
@@ -411,7 +444,14 @@ export function MailTopBar({
                     disabled={!viewNameDraft.trim()}
                     onClick={() => {
                       setStore(current =>
-                        saveMailView(current, viewNameDraft, currentQuery),
+                        savedViewForQuery
+                          ? renameMailView(
+                              current,
+                              savedViewForQuery.id,
+                              viewNameDraft,
+                              currentQuery,
+                            )
+                          : saveMailView(current, viewNameDraft, currentQuery),
                       )
                       setViewNameDraft(null)
                     }}
@@ -482,7 +522,25 @@ export function MailTopBar({
                   <ListButton
                     key={`remote-${result.type}-${result.id}`}
                     onClick={() => {
-                      if (result.type === 'thread') openResultThread(result.id)
+                      if (result.type === 'thread') {
+                        openResultThread(result.id)
+                        return
+                      }
+                      const matchedMessage = store.messages.find(
+                        message =>
+                          message.id === result.id ||
+                          message.attachments.some(att => att.id === result.id),
+                      )
+                      if (matchedMessage) {
+                        openResultThread(matchedMessage.threadId)
+                        return
+                      }
+                      const matchedTask = store.tasks.find(
+                        task => task.id === result.id && task.source?.threadId,
+                      )
+                      if (matchedTask?.source?.threadId) {
+                        openResultThread(matchedTask.source.threadId)
+                      }
                     }}
                   >
                     <Subject>{result.title}</Subject>

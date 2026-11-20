@@ -63,9 +63,14 @@ export async function prepareMailDrop(
     const file = readContentTransfer(value)
     if (file.kind !== 'file') throw new Error('Invalid file.')
     name = file.name
-    const match = file.dataUrl.match(/^data:([^;]+);base64,([\s\S]+)$/)!
+    const match = file.dataUrl.match(/^data:([^;]+);base64,([\s\S]*)$/)
+    if (!match) throw new Error('Invalid file data.')
     mime = match[1]
-    bytes = Uint8Array.from(atob(match[2]), (c) => c.charCodeAt(0))
+    bytes = match[2]
+      ? Uint8Array.from(atob(match[2].replace(/\s+/g, '')), (c) =>
+          c.charCodeAt(0),
+        )
+      : new Uint8Array(0)
     alt = name
     if (mime === 'image/svg+xml') {
       const image = readAssetTransfer(

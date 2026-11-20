@@ -160,15 +160,22 @@ export function ReadingRoom({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (timesOpen) {
         event.preventDefault()
         event.stopPropagation()
-        void leave()
+        setTimesOpen(false)
+        return
       }
+      // Let child dialogs/editors close first instead of exiting the room.
+      if (keeping || generalOpen || editingGeneral !== null) return
+      event.preventDefault()
+      event.stopPropagation()
+      void leave()
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [onBack, replyText, record, replyError])
+  }, [onBack, replyText, record, replyError, identity, keeping, generalOpen, editingGeneral, timesOpen])
 
   const save = async (passage: Pending, text: string) => {
     const note: MessageNote = { id: newId(), kind: passage.kind, quote: passage.quote, start: passage.start, end: passage.end, text: text.trim(), createdAt: new Date().toISOString() }
@@ -264,9 +271,9 @@ export function ReadingRoom({
                 </BarButton>
               </div>
             </ReplyBox>
-            {generalOpen || notes.some(note=>!note.quote) ? <WholeNote>
+            {generalOpen || notes.some(note => !note.quote && (showPrivate || note.kind !== 'private')) ? <WholeNote>
               <label htmlFor="reading-room-whole-note">General note</label>
-              {notes.filter(note=>!note.quote&&(showPrivate||note.kind!=='private')).map(note=><NoteCard key={note.id} data-ink={note.kind}><div className="body"><p className="text">{note.text}</p>{editingGeneral===note.id ? <InkEditor initialText={note.text} initialKind={note.kind} allowHighlight={false} onCancel={()=>setEditingGeneral(null)} onSave={(text,kind)=>{void room.updateNote(identity.messageId,note.id,{text:text.trim(),kind});setEditingGeneral(null)}}/> : null}<div className="actions"><span>{note.kind==='private'?'Private':'For the reply'}</span><button type="button" onClick={()=>setEditingGeneral(note.id)}>Edit</button><button type="button" onClick={()=>void room.removeNote(identity.messageId,note.id)}>Delete</button></div></div></NoteCard>)}
+              {notes.filter(note=>!note.quote&&(showPrivate||note.kind!=='private')).map(note=><NoteCard key={note.id} data-ink={note.kind}><div className="body"><p className="text">{note.text}</p>{editingGeneral===note.id ? <InkEditor initialText={note.text} initialKind={note.kind} allowHighlight={false} onCancel={()=>setEditingGeneral(null)} onSave={(text,kind)=>{if(!text.trim())return;void room.updateNote(identity.messageId,note.id,{text:text.trim(),kind});setEditingGeneral(null)}}/> : null}<div className="actions"><span>{note.kind==='private'?'Private':'For the reply'}</span><button type="button" onClick={()=>setEditingGeneral(note.id)}>Edit</button><button type="button" onClick={()=>void room.removeNote(identity.messageId,note.id)}>Delete</button></div></div></NoteCard>)}
               {generalOpen ? <InkEditor id="reading-room-whole-note" initialText="" initialKind={noteKind} allowHighlight={false} onCancel={()=>setGeneralOpen(false)} saveLabel="Add note" onSave={(text,kind)=>{if(text.trim())void save({kind,quote:'',start:0,end:0},text)}}/> : null}
             </WholeNote> : null}
             <Prose $fontSize={fontSize}>

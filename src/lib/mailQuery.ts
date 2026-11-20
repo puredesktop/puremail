@@ -34,6 +34,7 @@ export type MailQueryField =
   | 'from'
   | 'to'
   | 'cc'
+  | 'bcc'
   | 'subject'
   | 'label'
   | 'has'
@@ -56,6 +57,7 @@ const FIELDS: MailQueryField[] = [
   'from',
   'to',
   'cc',
+  'bcc',
   'subject',
   'label',
   'has',
@@ -85,15 +87,17 @@ const SORT_VALUES = new Set<MailQuerySort>([
   'subject',
 ])
 
-const OPERATOR_PATTERN = new RegExp(
-  `(-?)(${FIELDS.join('|')}|sort|limit):(?:"([^"]*)"|(\\S+))`,
-  'gi',
+const OPERATOR_TOKEN = new RegExp(
+  `^(-?)(${FIELDS.join('|')}|sort|limit):(?:"((?:\\\\.|[^"\\\\])*)"|(\\S+))$`,
+  'i',
 )
 
 export const DEFAULT_MAIL_QUERY_SORT: MailQuerySort = 'newest'
 
 function quote(value: string): string {
-  return /\s/.test(value) ? `"${value}"` : value
+  return /[\s"\\]/.test(value)
+    ? `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+    : value
 }
 
 /** Quote a value for interpolation into a query string. */
@@ -101,46 +105,95 @@ export function quoteQueryValue(value: string): string {
   return quote(value)
 }
 
+/** Split a query string into whitespace-delimited tokens while keeping quoted spans intact. */
+function tokenizeQuery(input: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  let inQuotes = false
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i]!
+    if (inQuotes) {
+      current += ch
+      if (ch === '\\' && i + 1 < input.length) {
+        current += input[i + 1]!
+        i += 1
+      } else if (ch === '"') {
+        inQuotes = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inQuotes = true
+      current += ch
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        tokens.push(current)
+        current = ''
+      }
+      continue
+    }
+    current += ch
+  }
+  if (current) tokens.push(current)
+  return tokens
+}
+
 /** Parse a query string. Unknown operators and bad values stay as free text. */
 export function parseMailQuery(input: string): MailQuery {
   const query: MailQuery = { terms: [], text: '', sort: DEFAULT_MAIL_QUERY_SORT }
   const textParts: string[] = []
-  let lastIndex = 0
-  OPERATOR_PATTERN.lastIndex = 0
-  for (;;) {
-    const match = OPERATOR_PATTERN.exec(input)
-    if (!match) break
-    textParts.push(input.slice(lastIndex, match.index))
-    lastIndex = OPERATOR_PATTERN.lastIndex
+  for (const token of tokenizeQuery(input)) {
+    const match = OPERATOR_TOKEN.exec(token)
+    if (!match) {
+      textParts.push(token)
+      continue
+    }
     const negated = match[1] === '-'
     const field = (match[2] ?? '').toLowerCase()
-    const value = (match[3] ?? match[4] ?? '').trim()
+    const rawValue =
+      match[3] !== undefined
+        ? match[3].replace(/\\(.)/g, '$1')
+        : (match[4] ?? '')
+    const value = rawValue.trim()
     if (!value) {
-      textParts.push(match[0])
+      textParts.push(token)
       continue
     }
     if (field === 'sort') {
       const lowered = value.toLowerCase() as MailQuerySort
       if (SORT_VALUES.has(lowered)) query.sort = lowered
-      else textParts.push(match[0])
+      else textParts.push(token)
       continue
     }
     if (field === 'limit') {
       const parsed = Number(value)
       if (Number.isInteger(parsed) && parsed > 0) query.limit = parsed
-      else textParts.push(match[0])
+      else textParts.push(token)
       continue
     }
     if (field === 'has' && !HAS_VALUES.has(value.toLowerCase())) {
-      textParts.push(match[0])
+      textParts.push(token)
       continue
     }
     if (field === 'is' && !IS_VALUES.has(value.toLowerCase())) {
-      textParts.push(match[0])
+      textParts.push(token)
       continue
     }
     if (field === 'triage' && !isAiTriageVerdict(value.toLowerCase())) {
-      textParts.push(match[0])
+      textParts.push(token)
+      continue
+    }
+    if ((field === 'before' || field === 'after') && parseAbsoluteDate(value) === null) {
+      textParts.push(token)
+      continue
+    }
+    if (
+      (field === 'older_than' || field === 'newer_than') &&
+      parseRelativeDuration(value) === null
+    ) {
+      textParts.push(token)
       continue
     }
     query.terms.push({
@@ -149,7 +202,6 @@ export function parseMailQuery(input: string): MailQuery {
       negated,
     })
   }
-  textParts.push(input.slice(lastIndex))
   query.text = textParts.join(' ').replace(/\s+/g, ' ').trim()
   return query
 }
@@ -214,9 +266,9 @@ function parseAbsoluteDate(value: string): number | null {
   return Number.isFinite(ms) ? ms : null
 }
 
-/** `30d`, `12h`, `2w`, `6m` → milliseconds. Bare numbers mean days. */
+/** `30d`, `12h`, `2w`, `6m`, `1y` → milliseconds. Bare numbers mean days. */
 function parseRelativeDuration(value: string): number | null {
-  const match = /^(\d+)\s*([hdwm]?)$/i.exec(value.trim())
+  const match = /^(\d+)\s*([hdwmy]?)$/i.exec(value.trim())
   if (!match) return null
   const amount = Number(match[1])
   if (!Number.isFinite(amount)) return null
@@ -226,6 +278,7 @@ function parseRelativeDuration(value: string): number | null {
   if (unit === 'h') return amount * hour
   if (unit === 'w') return amount * 7 * day
   if (unit === 'm') return amount * 30 * day
+  if (unit === 'y') return amount * 365 * day
   return amount * day
 }
 
@@ -391,6 +444,7 @@ function buildThreadFacts(store: MailStore, threads: MailThread[]): ThreadFacts[
       haystack: [
         thread.subject,
         thread.summary,
+        ...thread.labels,
         // People are what users search for most: names as well as
         // addresses, senders as well as recipients.
         ...thread.participants.flatMap(contact => [
@@ -402,6 +456,15 @@ function buildThreadFacts(store: MailStore, threads: MailThread[]): ThreadFacts[
           message.from.name,
           message.from.email,
           ...message.to.flatMap(contact => [contact.name, contact.email]),
+          ...(message.cc ?? []).flatMap(contact => [
+            contact.name,
+            contact.email,
+          ]),
+          ...(message.bcc ?? []).flatMap(contact => [
+            contact.name,
+            contact.email,
+          ]),
+          ...(message.attachments ?? []).map(attachment => attachment.name),
         ]),
       ]
         .join('\n')
@@ -427,6 +490,13 @@ function termHolds(
         return threadHasUnsentDraft(store, thread.id)
       }
       const ids = mailboxIdsForToken(store, value)
+      const namesInbox = store.mailboxes.some(
+        mailbox => ids.has(mailbox.id) && mailbox.role === 'inbox',
+      )
+      // Snoozed threads stay hidden from Inbox until they wake.
+      if (namesInbox && thread.status === 'snoozed') {
+        return false
+      }
       const namesSent = store.mailboxes.some(mailbox => ids.has(mailbox.id) && mailbox.role === 'sent')
       return ids.has(thread.mailboxId) || namesSent && messages.some(message => !message.isDraft && (message.sentCopyPresent || message.deliveryAccepted))
     }
@@ -436,6 +506,8 @@ function termHolds(
       return messages.some(message => contactMatches(message.to, value))
     case 'cc':
       return messages.some(message => contactMatches(message.cc ?? [], value))
+    case 'bcc':
+      return messages.some(message => contactMatches(message.bcc ?? [], value))
     case 'subject':
       return thread.subject.toLowerCase().includes(value.toLowerCase())
     case 'label':
@@ -464,22 +536,22 @@ function termHolds(
     }
     case 'before': {
       const ms = parseAbsoluteDate(value)
-      if (ms === null) return true
+      if (ms === null) return false
       return Date.parse(thread.lastMessageAt) < ms
     }
     case 'after': {
       const ms = parseAbsoluteDate(value)
-      if (ms === null) return true
+      if (ms === null) return false
       return Date.parse(thread.lastMessageAt) >= ms
     }
     case 'older_than': {
       const duration = parseRelativeDuration(value)
-      if (duration === null) return true
+      if (duration === null) return false
       return Date.parse(thread.lastMessageAt) < nowMs - duration
     }
     case 'newer_than': {
       const duration = parseRelativeDuration(value)
-      if (duration === null) return true
+      if (duration === null) return false
       return Date.parse(thread.lastMessageAt) >= nowMs - duration
     }
     case 'triage':
@@ -598,13 +670,30 @@ export function resolveThreadQuery(
       (namesMailbox || !trash.has(thread.mailboxId)),
   )
 
-  const text = parsed.text.toLowerCase()
+  // Tokenize free text into quoted phrases + whitespace-delimited words so
+  // multi-word queries match with AND semantics instead of requiring adjacency.
+  const textNeedles = parsed.text
+    ? tokenizeQuery(parsed.text)
+        .map(token => {
+          const unquoted =
+            token.length >= 2 && token.startsWith('"') && token.endsWith('"')
+              ? token.slice(1, -1).replace(/\\(.)/g, '$1')
+              : token
+          return unquoted.trim().toLowerCase()
+        })
+        .filter(Boolean)
+    : []
   const matched = buildThreadFacts(store, scoped).filter(facts => {
     for (const term of parsed.terms) {
       const holds = termHolds(store, facts, term, nowMs)
       if (term.negated ? holds : !holds) return false
     }
-    if (text && !facts.haystack.includes(text)) return false
+    if (
+      textNeedles.length > 0 &&
+      !textNeedles.every(needle => facts.haystack.includes(needle))
+    ) {
+      return false
+    }
     return true
   })
 
@@ -690,6 +779,21 @@ export function countThreadQuery(
  * existing name replaces its query rather than creating a duplicate the
  * user cannot tell apart in the sidebar.
  */
+function viewIdForName(name: string): string {
+  const ascii = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  if (ascii) return `view_${ascii}`
+  // Deterministic non-colliding ID for non-ASCII view names (e.g. CJK/emoji).
+  let hash = 2166136261
+  for (const byte of new TextEncoder().encode(name.toLowerCase())) {
+    hash ^= byte
+    hash = Math.imul(hash, 16777619)
+  }
+  return `view_u${(hash >>> 0).toString(36)}`
+}
+
 export function saveMailView(
   store: MailStore,
   name: string,
@@ -710,17 +814,59 @@ export function saveMailView(
       ),
     }
   }
+  const baseId = viewIdForName(trimmed)
+  const existingIds = new Set((store.savedViews ?? []).map(view => view.id))
+  let id = baseId
+  let suffix = 2
+  while (existingIds.has(id)) {
+    id = `${baseId}_${suffix}`
+    suffix += 1
+  }
   return {
     ...store,
     savedViews: [
       ...(store.savedViews ?? []),
       {
-        id: `view_${trimmed.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+        id,
         name: trimmed,
         query: canonical,
         createdAt: now,
       },
     ],
+  }
+}
+
+/** Rename an existing saved view in place (without creating a duplicate). */
+export function renameMailView(
+  store: MailStore,
+  viewId: string,
+  newName: string,
+  query?: string,
+): MailStore {
+  const trimmed = newName.trim()
+  if (!trimmed) return store
+  const views = store.savedViews ?? []
+  const target = views.find(view => view.id === viewId)
+  if (!target) return store
+  const canonical =
+    query !== undefined ? buildMailQuery(parseMailQuery(query)) : target.query
+  // Never silently delete an unrelated saved view when renaming to an existing name.
+  if (
+    views.some(
+      view =>
+        view.id !== viewId &&
+        view.name.trim().toLowerCase() === trimmed.toLowerCase(),
+    )
+  ) {
+    return store
+  }
+  return {
+    ...store,
+    savedViews: views.map(view =>
+      view.id === viewId
+        ? { ...view, name: trimmed, query: canonical }
+        : view,
+    ),
   }
 }
 

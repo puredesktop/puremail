@@ -37,6 +37,11 @@ import {
   MailFilterDialog,
   type MailFilterDialogSubmit,
 } from './MailFilterDialog'
+import { replyAllContacts } from '../lib/replyCompose'
+import { unsnoozeThread } from '../lib/mailSnooze'
+import { enqueueMailAction } from '../lib/mailActionQueue'
+import { cancelScheduledSend } from '../lib/mailScheduledSend'
+import { stripQuotedHtmlHistory } from '../lib/mailTextUtils'
 import {
   clearFilterRunMarkers,
   addMailFilter,
@@ -378,6 +383,8 @@ export interface ThreadReaderProps {
   topBar?: React.ReactNode
   focusReply: () => void
   focusReplyAll: () => void
+  /** Intercept mailto: links in message bodies to open PureMail's composer. */
+  onOpenMailto?: (mailtoHref: string) => void
   askThreadAgent: (question: string) => Promise<string>
   summarizeSelectedThread: () => Promise<{
     summary: string
@@ -413,29 +420,54 @@ export interface ThreadReaderProps {
  * Its own component so the work can be memoized on the only two things it
  * depends on. A render that changes neither now costs nothing.
  */
+const remoteImagesCache = new Map<string, boolean>()
+
+function cachedMailHtmlHasRemoteImages(bodyHtml: string): boolean {
+  const cached = remoteImagesCache.get(bodyHtml)
+  if (cached !== undefined) return cached
+  const result = mailHtmlHasRemoteImages(bodyHtml)
+  if (remoteImagesCache.size >= 200) {
+    const firstKey = remoteImagesCache.keys().next().value
+    if (firstKey !== undefined) remoteImagesCache.delete(firstKey)
+  }
+  remoteImagesCache.set(bodyHtml, result)
+  return result
+}
+
 export const SanitizedMessageBody = memo(function SanitizedMessageBody({
   bodyHtml,
   allowRemoteImages,
+  onOpenMailto,
 }: {
   bodyHtml: string
   allowRemoteImages: boolean
+  onOpenMailto?: (mailtoHref: string) => void
 }): ReactElement {
   const html = useMemo(
     () => sanitizeMailHtml(bodyHtml, { allowRemoteImages }),
     [bodyHtml, allowRemoteImages],
   )
   // The sandboxed iframe cannot reliably open `target="_blank"` links, so
-  // web links route through the shell to the system browser. mailto: keeps
-  // its native behavior.
-  const onBodyClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
-    const target = event.target as Element | null
-    const anchor = target?.closest?.('a[href]')
-    const href = anchor?.getAttribute('href') ?? ''
-    if (/^https?:/i.test(href)) {
-      event.preventDefault()
-      void openExternalUrl(href)
-    }
-  }, [])
+  // web links route through the shell to the system browser, and mailto:
+  // opens PureMail's own composer when wired.
+  const onBodyClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      const target = event.target as Element | null
+      const anchor = target?.closest?.('a[href]')
+      // eslint-disable-next-line no-control-regex
+      const href = (anchor?.getAttribute('href') ?? '')
+        .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '')
+        .replace(/[\t\r\n]/g, '')
+      if (/^https?:/i.test(href)) {
+        event.preventDefault()
+        void openExternalUrl(href)
+      } else if (/^mailto:/i.test(href) && onOpenMailto) {
+        event.preventDefault()
+        onOpenMailto(href)
+      }
+    },
+    [onOpenMailto],
+  )
   return (
     <MessageBody
       onClick={onBodyClick}
@@ -501,6 +533,7 @@ export function ThreadReader({
   topBar,
   focusReply,
   focusReplyAll,
+  onOpenMailto,
   askThreadAgent,
   summarizeSelectedThread,
   createSelectedThreadDraft,
@@ -1291,9 +1324,29 @@ export function ThreadReader({
   const headerDirection = headerMessage
     ? messageDirectionForAccount(headerMessage, selectedAccount?.email)
     : 'incoming'
-  const headerScheduled = (store.scheduledSends ?? []).some(
+  const activeScheduledEntries = (store.scheduledSends ?? []).filter(
     entry =>
       entry.status === 'scheduled' && entry.threadId === selectedThread.id,
+  )
+  const headerScheduled = activeScheduledEntries.length > 0
+  const replyAllAudience = useMemo(() => {
+    const replyTarget =
+      latestInboundMessage(selectedMessages, selectedAccount?.email ?? '') ??
+      headerMessage
+    if (!replyTarget) return null
+    const ownerEmails = [
+      selectedAccount?.email ?? '',
+      ...(store.settings.ownerIdentities?.emails ?? []),
+    ].filter(Boolean)
+    const audience = replyAllContacts(replyTarget, ownerEmails)
+    const total = audience.to.length + audience.cc.length
+    return total > 0
+      ? { toCount: audience.to.length, ccCount: audience.cc.length, total }
+      : null
+  }, [selectedMessages, headerMessage, selectedAccount?.email, store.settings.ownerIdentities?.emails])
+  const selectedThreadInTrash = store.mailboxes.some(
+    mailbox =>
+      mailbox.id === selectedThread.mailboxId && mailbox.role === 'trash',
   )
   const readerStateLabel = headerScheduled
     ? 'Scheduled'
@@ -1551,9 +1604,26 @@ export function ThreadReader({
             <ReaderToolbarPrimary type="button" onClick={focusReply}>
               {replyPrimaryLabel}
             </ReaderToolbarPrimary>
-            <ReaderToolbarButton type="button" data-goes-next onClick={focusReplyAll}>
+            <ReaderToolbarButton
+              type="button"
+              data-goes-next
+              onClick={focusReplyAll}
+              title={
+                replyAllAudience
+                  ? `Reply all (${replyAllAudience.toCount} To${
+                      replyAllAudience.ccCount
+                        ? `, ${replyAllAudience.ccCount} Cc`
+                        : ''
+                    })`
+                  : 'Reply all'
+              }
+            >
               <ReplyAll aria-hidden="true" />
-              <ReaderToolbarLabel>all</ReaderToolbarLabel>
+              <ReaderToolbarLabel>
+                {replyAllAudience && replyAllAudience.total > 1
+                  ? `all (${replyAllAudience.total})`
+                  : 'all'}
+              </ReaderToolbarLabel>
             </ReaderToolbarButton>
             <ReaderToolbarButton type="button" data-goes-next onClick={forwardSelectedThread}>
               <Forward aria-hidden="true" />
@@ -1748,6 +1818,72 @@ export function ThreadReader({
                 }}
               >
                 Filter like this…
+              </BulkMenuItem>
+              {selectedThread.status === 'snoozed' && (
+                <BulkMenuItem
+                  role="menuitem"
+                  onClick={() => {
+                    const threadId = selectedThread.id
+                    setStore(current => unsnoozeThread(current, threadId))
+                    const provider = mailProviderRef.current
+                    if (activeProvider !== 'demo') {
+                      if (provider?.unarchiveThread) {
+                        void provider.unarchiveThread(threadId).catch(() => {
+                          setStore(current =>
+                            enqueueMailAction(current, 'unarchive', threadId),
+                          )
+                        })
+                      } else {
+                        setStore(current =>
+                          enqueueMailAction(current, 'unarchive', threadId),
+                        )
+                      }
+                    }
+                    setCommandNotice('Thread unsnoozed and returned to Inbox.')
+                    setThreadMenuOpen(false)
+                  }}
+                >
+                  Unsnooze
+                </BulkMenuItem>
+              )}
+              {headerScheduled && (
+                <BulkMenuItem
+                  role="menuitem"
+                  onClick={() => {
+                    setStore(current =>
+                      activeScheduledEntries.reduce(
+                        (acc, entry) => cancelScheduledSend(acc, entry.id),
+                        current,
+                      ),
+                    )
+                    setCommandNotice('Scheduled send cancelled — draft kept in Drafts.')
+                    setThreadMenuOpen(false)
+                  }}
+                >
+                  Cancel scheduled send
+                </BulkMenuItem>
+              )}
+              {selectedThreadInTrash && (
+                <BulkMenuItem
+                  role="menuitem"
+                  onClick={() => {
+                    unarchiveSelectedThread()
+                    setThreadMenuOpen(false)
+                  }}
+                >
+                  Restore to Inbox
+                </BulkMenuItem>
+              )}
+              <BulkMenuItem
+                role="menuitem"
+                onClick={() => {
+                  setThreadMenuOpen(false)
+                  if (typeof window !== 'undefined' && typeof window.print === 'function') {
+                    window.print()
+                  }
+                }}
+              >
+                Print…
               </BulkMenuItem>
               {!isStandaloneDevMode() && (
                 <BulkMenuItem
@@ -2335,63 +2471,9 @@ export function ThreadReader({
                       {providerName(activeProvider)} yet.
                     </Meta>
                   )}
-                  {body.hasCollapsedHistory ? (
-                    <MessageBody data-follows-theme="">
-                      {body.segments.map((segment, segmentIndex) => {
-                        if (segment.type === 'quote') {
-                          return quotedExpanded ? (
-                            <ExpandedQuoteBlock
-                              key={`${message.id}-quote-${segmentIndex}`}
-                            >
-                              <ExpandedQuoteHeader>
-                                <span>{segment.label}</span>
-                                <TextLinkButton
-                                  type="button"
-                                  onClick={() =>
-                                    setQuotedHistoryOpen(
-                                      message.id,
-                                      false,
-                                    )
-                                  }
-                                >
-                                  Hide
-                                </TextLinkButton>
-                              </ExpandedQuoteHeader>
-                              {segment.text
-                                .split('\n')
-                                .map((line, lineIndex) => (
-                                  <p
-                                    key={`${message.id}-quote-line-${segmentIndex}-${lineIndex}`}
-                                  >
-                                    {line || '\u00a0'}
-                                  </p>
-                                ))}
-                            </ExpandedQuoteBlock>
-                          ) : (
-                            <CollapsedQuoteBoundary
-                              key={`${message.id}-quote-${segmentIndex}`}
-                            >
-                              <span>{segment.label} hidden</span>
-                              <TextLinkButton
-                                type="button"
-                                onClick={() =>
-                                  setQuotedHistoryOpen(message.id, true)
-                                }
-                              >
-                                Open
-                              </TextLinkButton>
-                            </CollapsedQuoteBoundary>
-                          )
-                        }
-                        return plainTextParagraphs(
-                          segment.text,
-                          `${message.id}-text-${segmentIndex}`,
-                        )
-                      })}
-                    </MessageBody>
-                  ) : message.bodyHtml ? (
+                  {message.bodyHtml ? (
                     (() => {
-                      const hasRemoteImages = mailHtmlHasRemoteImages(
+                      const hasRemoteImages = cachedMailHtmlHasRemoteImages(
                         message.bodyHtml,
                       )
                       const senderEmail = message.from?.email ?? ''
@@ -2433,6 +2515,10 @@ export function ThreadReader({
                           }))
                         }
                       }
+                      const htmlHistory = stripQuotedHtmlHistory(message.bodyHtml)
+                      const visibleHtml = htmlHistory.quotedHtml
+                        ? htmlHistory.html
+                        : message.bodyHtml
                       return (
                         <>
                           {hasRemoteImages && (
@@ -2496,12 +2582,104 @@ export function ThreadReader({
                             </CollapsedQuoteBoundary>
                           )}
                           <SanitizedMessageBody
-                            bodyHtml={message.bodyHtml}
+                            bodyHtml={visibleHtml}
                             allowRemoteImages={decision.load}
+                            onOpenMailto={onOpenMailto}
                           />
+                          {htmlHistory.quotedHtml &&
+                            (quotedExpanded ? (
+                              <ExpandedQuoteBlock>
+                                <ExpandedQuoteHeader>
+                                  <span>Quoted history</span>
+                                  <TextLinkButton
+                                    type="button"
+                                    aria-expanded={true}
+                                    onClick={() =>
+                                      setQuotedHistoryOpen(message.id, false)
+                                    }
+                                  >
+                                    Hide
+                                  </TextLinkButton>
+                                </ExpandedQuoteHeader>
+                                <SanitizedMessageBody
+                                  bodyHtml={htmlHistory.quotedHtml}
+                                  allowRemoteImages={decision.load}
+                                  onOpenMailto={onOpenMailto}
+                                />
+                              </ExpandedQuoteBlock>
+                            ) : (
+                              <CollapsedQuoteBoundary>
+                                <span>Quoted history hidden</span>
+                                <TextLinkButton
+                                  type="button"
+                                  aria-expanded={false}
+                                  onClick={() =>
+                                    setQuotedHistoryOpen(message.id, true)
+                                  }
+                                >
+                                  Open
+                                </TextLinkButton>
+                              </CollapsedQuoteBoundary>
+                            ))}
                         </>
                       )
                     })()
+                  ) : body.hasCollapsedHistory ? (
+                    <MessageBody data-follows-theme="">
+                      {body.segments.map((segment, segmentIndex) => {
+                        if (segment.type === 'quote') {
+                          return quotedExpanded ? (
+                            <ExpandedQuoteBlock
+                              key={`${message.id}-quote-${segmentIndex}`}
+                            >
+                              <ExpandedQuoteHeader>
+                                <span>{segment.label}</span>
+                                <TextLinkButton
+                                  type="button"
+                                  aria-expanded={true}
+                                  onClick={() =>
+                                    setQuotedHistoryOpen(
+                                      message.id,
+                                      false,
+                                    )
+                                  }
+                                >
+                                  Hide
+                                </TextLinkButton>
+                              </ExpandedQuoteHeader>
+                              {segment.text
+                                .split('\n')
+                                .map((line, lineIndex) => (
+                                  <p
+                                    key={`${message.id}-quote-line-${segmentIndex}-${lineIndex}`}
+                                  >
+                                    {line || '\u00a0'}
+                                  </p>
+                                ))}
+                            </ExpandedQuoteBlock>
+                          ) : (
+                            <CollapsedQuoteBoundary
+                              key={`${message.id}-quote-${segmentIndex}`}
+                            >
+                              <span>{segment.label} hidden</span>
+                              <TextLinkButton
+                                type="button"
+                                aria-expanded={false}
+                                onClick={() =>
+                                  setQuotedHistoryOpen(message.id, true)
+                                }
+                              >
+                                Open
+                              </TextLinkButton>
+                            </CollapsedQuoteBoundary>
+                          )
+                        }
+                        return plainTextParagraphs(
+                          segment.text,
+                          `${message.id}-text-${segmentIndex}`,
+                        )
+                      })}
+                    </MessageBody>
                   ) : (
                     <MessageBody data-follows-theme="">
                       {plainTextParagraphs(message.body, `${message.id}-body`)}

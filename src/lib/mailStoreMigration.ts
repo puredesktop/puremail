@@ -188,8 +188,10 @@ const FILED_DRAFT_THREAD_PREFIX = 'thread_draft_'
  * still reachable, which is the property that matters.
  */
 function reattachRehomedDrafts(store: MailStore): MailStore {
-  const rehomed = store.drafts.filter(draft =>
-    draft.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX),
+  const rehomed = store.drafts.filter(
+    draft =>
+      typeof draft.threadId === 'string' &&
+      draft.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX),
   )
   if (rehomed.length === 0) return store
 
@@ -200,7 +202,12 @@ function reattachRehomedDrafts(store: MailStore): MailStore {
   const reattachedThreadIds = new Set<string>()
 
   const drafts = store.drafts.map(draft => {
-    if (!draft.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX)) return draft
+    if (
+      typeof draft.threadId !== 'string' ||
+      !draft.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX)
+    ) {
+      return draft
+    }
     const source =
       draft.replyIntent?.threadId ??
       (draft.sourceMessageId
@@ -211,11 +218,23 @@ function reattachRehomedDrafts(store: MailStore): MailStore {
     return { ...draft, threadId: source }
   })
 
-  const stillHosting = new Set(
-    drafts
-      .filter(draft => draft.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX))
+  const stillHosting = new Set([
+    ...drafts
+      .filter(
+        draft =>
+          typeof draft.threadId === 'string' &&
+          draft.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX),
+      )
       .map(draft => draft.threadId),
-  )
+    ...store.messages
+      .filter(
+        message =>
+          message.deliveryAccepted &&
+          typeof message.threadId === 'string' &&
+          message.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX),
+      )
+      .map(message => message.threadId),
+  ])
   return {
     ...store,
     drafts,
@@ -225,12 +244,14 @@ function reattachRehomedDrafts(store: MailStore): MailStore {
         stillHosting.has(thread.id),
     ),
     // Messages that belonged to a dropped synthetic thread (the local copy of
-    // a send) would otherwise linger pointing at nothing.
+    // a send) would otherwise linger pointing at nothing, unless it is a
+    // confirmed delivery receipt.
     messages: store.messages.filter(
       message =>
-        !reattachedThreadIds.has(message.threadId) &&
-        (!message.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX) ||
-          stillHosting.has(message.threadId)),
+        message.deliveryAccepted ||
+        (!reattachedThreadIds.has(message.threadId) &&
+          (!message.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX) ||
+            stillHosting.has(message.threadId))),
     ),
   }
 }

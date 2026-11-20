@@ -14,7 +14,12 @@ import {
   normalizeMessageId,
   threadIdForKey,
 } from './mailThreading'
-import { buildMimeMessage, type MimeAttachmentPart } from './mailMime'
+import {
+  buildMimeMessage,
+  encodeMimeHeaderValue,
+  formatMimeAddressList,
+  type MimeAttachmentPart,
+} from './mailMime'
 import {
   DEFAULT_MAIL_FETCH_WINDOW,
   mailFetchWindowStartDate,
@@ -30,6 +35,7 @@ import type {
   MailWalkCursor,
   MailWalkPage,
   MailProviderCapabilities,
+  MailSettings,
   MailStore,
   MailThread,
   ProviderDraftRef,
@@ -55,6 +61,8 @@ export interface ImapEnvelopeAttachment {
   filename: string
   contentType: string
   size: number
+  /** Optional Content-ID header (without angle brackets) for inline cid: images. */
+  contentId?: string
 }
 
 export interface ImapEnvelope {
@@ -515,6 +523,7 @@ function attachmentsOfEnvelope(folderPath: string, envelope: ImapEnvelope): Atta
     mimeType: attachment.contentType,
     sizeLabel: formatAttachmentBytes(attachment.size),
     size: attachment.size,
+    ...(attachment.contentId ? { contentId: attachment.contentId.replace(/^<|>$/g, '').trim() } : {}),
     remote: {
       provider: 'imap' as const,
       folderPath,
@@ -578,15 +587,17 @@ export class ImapMailProvider implements MailProvider {
     )
   }
 
-  async fetchStore(): Promise<MailStore> {
+  async fetchStore(settingsOverride?: Partial<MailSettings>): Promise<MailStore> {
     await this.options.imap.connect()
     this.folders = await this.options.imap.listFolders()
+    const effectiveSettings = {
+      ...emptyMailStore().settings,
+      ...(this.options.settings ?? {}),
+      ...(settingsOverride ?? {}),
+    }
     const base = {
       ...emptyMailStore(),
-      settings: {
-        ...emptyMailStore().settings,
-        ...(this.options.settings ?? {}),
-      },
+      settings: effectiveSettings,
     }
     const account = {
       id: IMAP_ACCOUNT_ID,
@@ -614,20 +625,41 @@ export class ImapMailProvider implements MailProvider {
     // "Last 30 days" has to mean 30 days: the window the user chose picks
     // the messages, server-side, instead of the newest N by sequence.
     const windowStart = mailFetchWindowStartDate(
-      this.options.settings?.fetchWindow ?? DEFAULT_MAIL_FETCH_WINDOW,
+      effectiveSettings.fetchWindow ?? DEFAULT_MAIL_FETCH_WINDOW,
     ).toISOString()
     const fetched: { folder: ImapFolder; envelope: ImapEnvelope; handle: string }[] = []
     /** Copies of a message we skipped, still needed so moves reach them. */
     const extraLocations = new Map<string, ThreadLocation[]>()
     const seenMessageIds = new Map<string, string>()
-    // Real folders before virtual mirrors: with Proton's All Mail every
-    // message exists twice, and the copy worth keeping is the one in the
-    // folder it actually lives in.
+    // Real folders before virtual mirrors, and INBOX before Archive/Sent/Trash/Drafts
+    // so alphabetical IMAP listings never file an active inbox conversation under
+    // Archive/Drafts/Sent or let a stale Drafts copy shadow a Sent copy.
+    const roleRank = (role: Mailbox['role']): number => {
+      switch (role) {
+        case 'inbox':
+          return 0
+        case 'custom':
+          return 1
+        case 'archive':
+          return 2
+        case 'sent':
+          return 3
+        case 'trash':
+          return 4
+        case 'drafts':
+          return 5
+        default:
+          return 6
+      }
+    }
     const foldersRealFirst = [
-      ...this.folders.filter(folder => !folder.virtual),
+      ...this.folders
+        .filter(folder => !folder.virtual)
+        .sort((a, b) => roleRank(a.role) - roleRank(b.role)),
       ...this.folders.filter(folder => folder.virtual),
     ]
     let draftsCovered = foldersRealFirst.some(folder => folder.role === 'drafts')
+    let truncatedHorizonMs = Number.NEGATIVE_INFINITY
     for (const folder of foldersRealFirst) {
       // Walk the window newest-first, a page at a time, until the folder
       // runs out. A cap that quietly cut the window was the whole bug.
@@ -644,14 +676,29 @@ export class ImapMailProvider implements MailProvider {
           beforeUid,
         )
         if (batch.length === 0) { exhausted = true; break }
-        envelopes.push(...batch)
-        const lowest = Math.min(...batch.map(item => item.uid))
+        const freshBatch =
+          beforeUid === undefined
+            ? batch
+            : batch.filter(item => item.uid < beforeUid!)
+        if (freshBatch.length === 0) break
+        envelopes.push(...freshBatch)
+        const lowest = Math.min(...freshBatch.map(item => item.uid))
         // A page that could not go lower would repeat itself forever.
         if (batch.length < FOLDER_FETCH_PAGE) { exhausted = true; break }
         if (beforeUid !== undefined && lowest >= beforeUid) break
         beforeUid = lowest
       }
       if (folder.role === 'drafts' && !exhausted) draftsCovered = false
+      if (folder.role !== 'drafts' && !exhausted && envelopes.length > 0) {
+        let oldestMs = Number.POSITIVE_INFINITY
+        for (const envelope of envelopes) {
+          const ms = Date.parse(envelope.date)
+          if (Number.isFinite(ms) && ms < oldestMs) oldestMs = ms
+        }
+        if (Number.isFinite(oldestMs) && oldestMs > truncatedHorizonMs) {
+          truncatedHorizonMs = oldestMs
+        }
+      }
       for (const envelope of envelopes) {
         const handle = `uid_${folder.path}_${envelope.uid}`
         const messageId = normalizeMessageId(envelope.messageId)
@@ -715,8 +762,22 @@ export class ImapMailProvider implements MailProvider {
           })
         }
         const thread = threads.find(item => item.id === threadId)!
+        // Merge participants across all messages in the thread.
+        const knownEmails = new Set(
+          thread.participants.map(contact => contact.email.toLowerCase()),
+        )
+        for (const contact of [envelope.from, ...envelope.to]) {
+          const keyEmail = contact.email.toLowerCase()
+          if (keyEmail && !knownEmails.has(keyEmail)) {
+            knownEmails.add(keyEmail)
+            thread.participants.push(contact)
+          }
+        }
         if (envelope.date > thread.lastMessageAt) {
           thread.lastMessageAt = envelope.date
+          if (role !== 'drafts' && envelope.body) {
+            thread.summary = envelope.body.slice(0, 160)
+          }
         }
         if (envelope.flags.includes('\\Flagged')) {
           if (!starredThreadIds.includes(threadId))
@@ -809,7 +870,13 @@ export class ImapMailProvider implements MailProvider {
       messages,
       drafts,
       starredThreadIds,
-      syncCoverage: { messagesCoveredFrom: windowStart, draftsCovered },
+      syncCoverage: {
+        messagesCoveredFrom: windowStart,
+        draftsCovered,
+        ...(Number.isFinite(truncatedHorizonMs)
+          ? { coveredFrom: new Date(truncatedHorizonMs).toISOString() }
+          : {}),
+      },
     }
     return this.store
   }
@@ -897,7 +964,7 @@ export class ImapMailProvider implements MailProvider {
   }
 
   async sync(store?: MailStore): Promise<MailStore> {
-    const fresh = await this.fetchStore()
+    const fresh = await this.fetchStore(store?.settings)
     // Windowed refreshes do not invalidate locations of older loaded mail.
     // IDs encode the real folder and UID, including after an app restart.
     for (const message of store?.messages ?? []) {
@@ -932,25 +999,48 @@ export class ImapMailProvider implements MailProvider {
     }
   }
 
+  private folderRoleForPath(path: string): Mailbox['role'] | undefined {
+    return this.folders.find(folder => folder.path === path)?.role
+  }
+
+  private async moveThreadToFolder(
+    threadId: string,
+    targetPath: string,
+    options: { preserveSentAndDrafts?: boolean } = {},
+  ): Promise<void> {
+    const moved = new Set<string>()
+    await this.eachLocation(
+      threadId,
+      async location => {
+        if (location.folder === targetPath) return
+        if (options.preserveSentAndDrafts) {
+          const role = this.folderRoleForPath(location.folder)
+          if (role === 'sent' || role === 'drafts') return
+        }
+        await this.options.imap.move(location.folder, location.uid, targetPath)
+        moved.add(`${location.folder}\0${location.uid}`)
+      },
+      { skipVirtual: true },
+    )
+    this.locations.set(
+      threadId,
+      (this.locations.get(threadId) ?? []).map(location =>
+        moved.has(`${location.folder}\0${location.uid}`)
+          ? { ...location, folder: targetPath }
+          : location,
+      ),
+    )
+  }
+
   private async moveThreadToRole(
     threadId: string,
     role: Mailbox['role'],
   ): Promise<void> {
     const target = this.folderByRole(role)
     if (!target) throw new Error(`No ${role} folder on this account.`)
-    await this.eachLocation(
-      threadId,
-      location =>
-        this.options.imap.move(location.folder, location.uid, target.path),
-      { skipVirtual: true },
-    )
-    this.locations.set(
-      threadId,
-      (this.locations.get(threadId) ?? []).map(location => ({
-        ...location,
-        folder: target.path,
-      })),
-    )
+    await this.moveThreadToFolder(threadId, target.path, {
+      preserveSentAndDrafts: role !== 'trash',
+    })
   }
 
   async archiveThread(threadId: string): Promise<void> {
@@ -966,17 +1056,20 @@ export class ImapMailProvider implements MailProvider {
     await this.moveThreadToRole(threadId, 'inbox')
   }
 
+  async untrashThread(threadId: string): Promise<void> {
+    await this.moveThreadToRole(threadId, 'inbox')
+  }
+
   async deleteThread(threadId: string): Promise<void> {
     await this.moveThreadToRole(threadId, 'trash')
   }
 
   async moveThread(threadId: string, mailboxId: string): Promise<void> {
     const path = mailboxId.replace(/^imap_mbx_/, '')
-    await this.eachLocation(
-      threadId,
-      location => this.options.imap.move(location.folder, location.uid, path),
-      { skipVirtual: true },
-    )
+    const targetRole = this.folderRoleForPath(path)
+    await this.moveThreadToFolder(threadId, path, {
+      preserveSentAndDrafts: targetRole !== 'trash',
+    })
   }
 
   async markThreadRead(threadId: string, read: boolean): Promise<void> {
@@ -1055,35 +1148,33 @@ export class ImapMailProvider implements MailProvider {
     })
   }
 
-  private async draftRaw(draft: Draft, messageId?: string): Promise<string> {
+  private async draftRaw(
+    draft: Draft,
+    messageId?: string,
+    options: { includeBcc?: boolean; dateHeader?: string; attachments?: MimeAttachmentPart[] } = {},
+  ): Promise<string> {
     const cc = draft.cc ?? []
-    const bcc = draft.bcc ?? []
-    const format = (contacts: MailContact[]): string =>
-      contacts
-        .map(contact =>
-          contact.name && contact.name !== contact.email
-            ? `${contact.name} <${contact.email}>`
-            : contact.email,
-        )
-        .join(', ')
+    const bcc = options.includeBcc === false ? [] : (draft.bcc ?? [])
     const threadMessages = (this.store?.messages ?? []).filter(message => message.threadId === draft.threadId && !message.isDraft).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
     const references = [...new Set(threadMessages.flatMap(message => [...(message.references ?? []), ...(message.messageIdHeader ? [message.messageIdHeader] : [])]))]
     const inReplyTo = draft.sourceMessageId ? threadMessages.find(message => message.id === draft.sourceMessageId)?.messageIdHeader ?? references.at(-1) : references.at(-1)
+    const attachments = options.attachments ?? await this.resolveOutgoingAttachments(draft.attachments)
+    const toHeader = formatMimeAddressList(draft.to)
     return buildMimeMessage({
       headerLines: [
-        `Date: ${new Date().toUTCString()}`,
+        `Date: ${options.dateHeader ?? new Date().toUTCString()}`,
         `Message-ID: ${messageId ?? imapDraftMessageId(draft)}`,
         ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${references.join(' ')}`] : []),
         `From: ${this.options.email}`,
-        `To: ${format(draft.to)}`,
-        ...(cc.length ? [`Cc: ${format(cc)}`] : []),
-        ...(bcc.length ? [`Bcc: ${format(bcc)}`] : []),
-        ...(draft.replyTo?.length ? [`Reply-To: ${format(draft.replyTo)}`] : []),
-        `Subject: ${draft.subject}`,
+        ...(toHeader ? [`To: ${toHeader}`] : []),
+        ...(cc.length ? [`Cc: ${formatMimeAddressList(cc)}`] : []),
+        ...(bcc.length ? [`Bcc: ${formatMimeAddressList(bcc)}`] : []),
+        ...(draft.replyTo?.length ? [`Reply-To: ${formatMimeAddressList(draft.replyTo)}`] : []),
+        `Subject: ${encodeMimeHeaderValue(draft.subject)}`,
       ],
       body: draft.body,
       ...(draft.bodyHtml ? { bodyHtml: draft.bodyHtml } : {}),
-      attachments: await this.resolveOutgoingAttachments(draft.attachments),
+      attachments,
     })
   }
 
@@ -1233,8 +1324,27 @@ export class ImapMailProvider implements MailProvider {
 
   async send(input: SendDraftInput): Promise<MailMessage> {
     const messageId = input.draft.sendMessageId ?? `<puremail-${crypto.randomUUID()}@${this.options.email.split('@')[1] || 'localhost'}>`
-    let raw: string
-    try { raw = await this.draftRaw(input.draft, messageId) } catch (error) {
+    const dateHeader = new Date().toUTCString()
+    let smtpRaw: string
+    let sentRaw: string
+    try {
+      const resolvedAttachments = await this.resolveOutgoingAttachments(input.draft.attachments)
+      // RFC 5322 §3.6.3: strip Bcc from the message transmitted over SMTP so
+      // To/Cc recipients never see Bcc addresses, while keeping Bcc in the
+      // user's own Sent copy.
+      smtpRaw = await this.draftRaw(input.draft, messageId, {
+        includeBcc: false,
+        dateHeader,
+        attachments: resolvedAttachments,
+      })
+      sentRaw = (input.draft.bcc?.length ?? 0) > 0
+        ? await this.draftRaw(input.draft, messageId, {
+            includeBcc: true,
+            dateHeader,
+            attachments: resolvedAttachments,
+          })
+        : smtpRaw
+    } catch (error) {
       throw new MailSendError(`Message not sent: ${error instanceof Error ? error.message : 'Attachments could not be prepared.'}`, 'not_sent')
     }
     const warnings: string[] = []
@@ -1243,7 +1353,7 @@ export class ImapMailProvider implements MailProvider {
       ...(input.draft.cc ?? []),
       ...(input.draft.bcc ?? []),
     ].map(contact => contact.email)
-    const submission = await this.options.smtp.send(raw, this.options.email, recipients)
+    const submission = await this.options.smtp.send(smtpRaw, this.options.email, recipients)
     const rejectedRecipients = submission?.rejected ?? []
     if (rejectedRecipients.length) warnings.push(`Sent to the accepted recipients, but the mail server rejected: ${rejectedRecipients.join(', ')}. Do not resend the original message; write separately to these addresses after correcting them.`)
     // Some SMTP services file Sent themselves; only append a missing copy.
@@ -1252,7 +1362,7 @@ export class ImapMailProvider implements MailProvider {
     if (sent) {
       try {
         const copies = await this.options.imap.fetchMessages(sent.path, 1, undefined, undefined, { name: 'Message-ID', value: messageId })
-        if (!copies.some(copy => copy.messageId === messageId)) await this.options.imap.append(sent.path, raw)
+        if (!copies.some(copy => copy.messageId === messageId)) await this.options.imap.append(sent.path, sentRaw)
         sentCopyPresent = true
       } catch {
         warnings.push('The server accepted this message, but saving its IMAP Sent copy failed. Do not resend it.')
@@ -1267,7 +1377,7 @@ export class ImapMailProvider implements MailProvider {
       messageIdHeader: messageId,
       deliveryAccepted: true,
       sentCopyPresent,
-      ...(!sentCopyPresent ? { sentCopyMime: raw } : {}),
+      ...(!sentCopyPresent ? { sentCopyMime: sentRaw } : {}),
       ...(rejectedRecipients.length ? { deliveryRejectedRecipients: rejectedRecipients } : {}),
       ...(warnings.length ? { deliveryWarnings: warnings } : {}),
       id: `imap_sent_${Date.now()}`,
@@ -1301,17 +1411,17 @@ export class ImapMailProvider implements MailProvider {
     if (!sent) throw new Error('No Sent folder is available on this account.')
     const copies = await this.options.imap.fetchMessages(sent.path, 1, undefined, undefined, { name: 'Message-ID', value: message.messageIdHeader! })
     if (!copies.some(copy => copy.messageId === message.messageIdHeader)) {
-      const format = (contacts: MailContact[]) => contacts.map(contact => contact.name && contact.name !== contact.email ? `${contact.name} <${contact.email}>` : contact.email).join(', ')
+      const toHeader = formatMimeAddressList(message.to)
       const raw = message.sentCopyMime ?? buildMimeMessage({
         headerLines: [
           `Date: ${new Date(message.receivedAt).toUTCString()}`,
           `Message-ID: ${message.messageIdHeader}`,
           `From: ${this.options.email}`,
-          `To: ${format(message.to)}`,
-          ...(message.cc?.length ? [`Cc: ${format(message.cc)}`] : []),
-          ...(message.bcc?.length ? [`Bcc: ${format(message.bcc)}`] : []),
-          ...(message.replyTo?.length ? [`Reply-To: ${format(message.replyTo)}`] : []),
-          `Subject: ${message.subject}`,
+          ...(toHeader ? [`To: ${toHeader}`] : []),
+          ...(message.cc?.length ? [`Cc: ${formatMimeAddressList(message.cc)}`] : []),
+          ...(message.bcc?.length ? [`Bcc: ${formatMimeAddressList(message.bcc)}`] : []),
+          ...(message.replyTo?.length ? [`Reply-To: ${formatMimeAddressList(message.replyTo)}`] : []),
+          `Subject: ${encodeMimeHeaderValue(message.subject)}`,
           ...(message.inReplyTo ? [`In-Reply-To: ${message.inReplyTo}`] : []),
           ...(message.references?.length ? [`References: ${message.references.join(' ')}`] : []),
         ],
