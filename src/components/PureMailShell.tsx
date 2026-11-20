@@ -116,7 +116,6 @@ import {
   reapplyLocalMailChangesSinceSnapshot,
   applyMailCopyRepair,
   qaStatusForDraft,
-  snoozeThread,
   removeProviderAccountData,
   recoverMailDraftSync,
   selectInviteMirrorCandidates,
@@ -126,7 +125,7 @@ import {
 import { mergeThreadFragment } from '../lib/mailStoreData'
 import { replyStateInStore } from '../lib/mailReplyState'
 import { MailDrawerDrafts, draftEditVersion } from '../lib/mailDrawerDrafts'
-import { osReveal, sendPromptToDrawerAgent, toggleAgentDrawer } from '../bridge/platformBridge'
+import { openExternalUrl, osReveal, sendPromptToDrawerAgent, toggleAgentDrawer } from '../bridge/platformBridge'
 import {
   buildInviteRsvpDraft,
   isInviteRsvpResponse,
@@ -162,8 +161,13 @@ import {
 } from '../lib/mailNotifications'
 import {
   cancelScheduledSend,
+  cancelScheduledSendsForDraft,
 } from '../lib/mailScheduledSend'
-import { clearSnoozeReturnMarker, wakeDueSnoozes } from '../lib/mailSnooze'
+import {
+  clearSnoozeReturnMarker,
+  unsnoozeThread,
+  wakeDueSnoozes,
+} from '../lib/mailSnooze'
 import {
   askAgentAboutThread,
   summarizeThread,
@@ -176,6 +180,7 @@ import {
 } from '../lib/mailUnsubscribe'
 import {
   applyBulkTriageAction,
+  bulkSnoozeThreads,
   bulkTriageActionSummary,
   queuedActionForBulkTriage,
   setThreadStarred,
@@ -438,20 +443,25 @@ export function PureMailShell({
     candidates: readonly MailFilterMutation[],
   ): void => {
     const provider = mailProviderRef.current
-    const mutations = candidates.filter(mutation => {
-      const key = `${mutation.kind}:${mutation.threadId}`
-      if (firedFilterMutationsRef.current.has(key)) return false
+    if (!provider || candidates.length === 0) return
+    const lastAtByThread = new Map(
+      storeRef.current.threads.map(t => [t.id, t.lastMessageAt]),
+    )
+    const keyedMutations = candidates.flatMap(mutation => {
+      const target = mutation.kind === 'move' ? `:${mutation.mailboxId}` : ''
+      const key = `${mutation.kind}:${mutation.threadId}${target}:${lastAtByThread.get(mutation.threadId) ?? ''}`
+      if (firedFilterMutationsRef.current.has(key)) return []
       firedFilterMutationsRef.current.add(key)
-      return true
+      return [{ mutation, key }]
     })
-    if (!provider || mutations.length === 0) return
+    if (keyedMutations.length === 0) return
     // SERIALIZED, not parallel: a boot pass over a filtered backlog fired
     // dozens of Gmail calls at once and drew 429 "too many concurrent
-    // requests". One at a time with a breath between; failures warn and
-    // the next sync reconciles.
+    // requests". One at a time with a breath between; failures clear their
+    // dedup key and run marker so the next sync or "Run now" can retry.
     void (async () => {
       const failedThreadIds: string[] = []
-      for (const mutation of mutations) {
+      for (const { mutation, key } of keyedMutations) {
         try {
           if (mutation.kind === 'archive') {
             await provider.archiveThread(mutation.threadId)
@@ -463,10 +473,7 @@ export function PureMailShell({
           }
         } catch (error) {
           console.warn('[puremail] filter mutation failed', error)
-          // The run marker was stamped optimistically; a failed server
-          // action must void it, or the thread sits in the inbox forever —
-          // filtered on paper, unfiled in fact. Cleared markers make the
-          // next sync's engine pass retry.
+          firedFilterMutationsRef.current.delete(key)
           if (mutation.kind !== 'markRead') {
             failedThreadIds.push(mutation.threadId)
           }
@@ -661,14 +668,6 @@ export function PureMailShell({
   const [attachmentActionErrors, setAttachmentActionErrors] = useState<
     Record<string, string>
   >({})
-  useEffect(() => {
-    if (!attachmentPreview || typeof window === 'undefined') return undefined
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setAttachmentPreview(null)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [attachmentPreview])
   const [commandNotice, setCommandNotice] = useState(
     initialNotice ??
       (initialSyncPending
@@ -1083,7 +1082,7 @@ export function PureMailShell({
   const unreadIds = useMemo(() => unreadThreadIds(store), [store])
   const filteredThreads = useMemo(
     () => filterThreadsByListFilter(queryResult.threads, listFilter, unreadIds, store),
-    [queryResult.threads, listFilter, unreadIds],
+    [queryResult.threads, listFilter, unreadIds, store],
   )
   const unreadInView = useMemo(
     () => filteredThreads.filter(thread => unreadIds.has(thread.id)).length,
@@ -1145,10 +1144,11 @@ export function PureMailShell({
     if (compactInRoom && !reading && currentQuery !== 'in:inbox') setCurrentQuery('in:inbox')
   }, [compactInRoom, reading, currentQuery])
 
-  const signatureValue = (store.settings?.signature ?? '').replace(
-    /\\n/g,
-    '\n',
-  )
+  const signatureValue = (
+    defaultSignatureForAccount(store.settings, selectedAccount?.id)?.body ??
+    store.settings?.signature ??
+    ''
+  ).replace(/\\n/g, '\n')
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -1509,12 +1509,12 @@ export function PureMailShell({
     return () => { cancelled = true; controller.abort() }
   }, [selectedThreadId, providerBacked, mailFetching])
 
-  // Opening a thread marks it read — locally so unread badges clear right
-  // away, and in Gmail so the UNREAD label cannot resurrect it on the next
-  // fetch. Keyed on the selected thread id only: "Mark unread" on the open
-  // thread must stick until the user navigates away and back.
+  // Opening a thread in reading mode marks it read — locally so unread badges
+  // clear right away, and on the provider so UNREAD cannot resurrect it on the
+  // next fetch. Gated on `reading` so switching folders or archiving from the
+  // list never silently marks unopened threads read.
   useEffect(() => {
-    if (!selectedThreadId) return
+    if (!reading || !selectedThreadId) return
     const hasUnread = storeRef.current.messages.some(
       message => message.threadId === selectedThreadId && !message.read,
     )
@@ -1526,14 +1526,21 @@ export function PureMailShell({
         .markThreadRead(selectedThreadId, true)
         .then(() => setStore(readChange.acknowledge))
         .catch(error => {
+          setStore(current =>
+            enqueueMailAction(current, 'markRead', selectedThreadId),
+          )
           setCommandNotice(
             error instanceof Error
-              ? `Could not mark the thread read at ${providerName(activeProvider)}; it may show unread again after the next fetch. (${error.message})`
-              : `Could not mark the thread read at ${providerName(activeProvider)}; it may show unread again after the next fetch.`,
+              ? `Could not mark the thread read at ${providerName(activeProvider)}; queued for retry. (${error.message})`
+              : `Could not mark the thread read at ${providerName(activeProvider)}; queued for retry.`,
           )
         })
+    } else if (activeProvider === 'demo') {
+      setStore(readChange.acknowledge)
+    } else {
+      setStore(current => enqueueMailAction(current, 'markRead', selectedThreadId))
     }
-  }, [selectedThreadId, providerBacked])
+  }, [reading, selectedThreadId, providerBacked, activeProvider])
 
   const refreshMail = useCallback(
     async (trigger: 'manual' | 'auto' | 'boot' = 'manual'): Promise<void> => {
@@ -1724,18 +1731,31 @@ export function PureMailShell({
   useEffect(() => {
     if (typeof window === 'undefined') return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || event.defaultPrevented) return
 
       // The annotation reader owns Escape and returns to its original view.
-      // Do not let the mail index handler intercept it during capture.
       if (roomScreen?.kind === 'reading') return
 
-      // The docked compose window layers its own Escape (open menus close
-      // first, then it minimizes) — a press with focus inside it is its
-      // business, never the reader's or the overlays'.
+      // Topmost shell-owned overlays that rely on this listener close first.
+      if (attachmentPreview !== null) {
+        event.preventDefault()
+        event.stopPropagation()
+        setAttachmentPreview(null)
+        return
+      }
+      if (unsubscribeDrawerOpen) {
+        event.preventDefault()
+        event.stopPropagation()
+        setUnsubscribeDrawerOpen(false)
+        return
+      }
+
+      // Let open child dialogs/popovers/menus handle Escape first.
       if (
         event.target instanceof Element &&
-        event.target.closest('[data-puremail-compose-dock]')
+        event.target.closest(
+          '[data-puremail-compose-dock], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
+        )
       ) {
         return
       }
@@ -1776,54 +1796,94 @@ export function PureMailShell({
       }
     }
 
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
   }, [
+    attachmentPreview,
     composeMode,
     mailSettingsOpen,
     providerDrawerOpen,
     reading,
     roomScreen,
+    unsubscribeDrawerOpen,
   ])
+
+  const nextAdjacentThread = (threadId: string): MailThread | undefined => {
+    const idx = filteredThreads.findIndex(thread => thread.id === threadId)
+    if (idx < 0) return filteredThreads[0]
+    return filteredThreads[idx + 1] ?? filteredThreads[idx - 1]
+  }
 
   const archiveSelectedThread = (): void => {
     if (!selectedThread) return
-    const nextThread = filteredThreads.find(
-      thread => thread.id !== selectedThread.id,
-    )
+    const targetId = selectedThread.id
+    const nextThread = nextAdjacentThread(targetId)
+    let undone = false
+    const undoArchive = (): void => {
+      if (undone) return
+      undone = true
+      setStore(current => ({
+        ...unarchiveThread(current, targetId),
+        queuedActions: (current.queuedActions ?? []).filter(
+          q => !(q.threadId === targetId && q.type === 'archive'),
+        ),
+      }))
+      setSelectedThreadId(targetId)
+      const provider = mailProviderRef.current
+      if (activeProvider !== 'demo') {
+        if (provider?.unarchiveThread) {
+          void provider.unarchiveThread(targetId).catch(() => {
+            setStore(current => enqueueMailAction(current, 'unarchive', targetId))
+          })
+        } else {
+          setStore(current => enqueueMailAction(current, 'unarchive', targetId))
+        }
+      }
+      setCommandNotice('Archive undone — returned to Inbox.')
+    }
     if (providerBacked) {
       void providerBacked
-        .archiveThread(selectedThread.id)
+        .archiveThread(targetId)
         .then(() => {
-          setStore(current => archiveThread(current, selectedThread.id))
+          setStore(current => archiveThread(current, targetId))
           setSelectedThreadId(nextThread?.id ?? '')
-          setCommandNotice(`Archived at ${providerName(activeProvider)}.`)
+          showToast(`Archived at ${providerName(activeProvider)}.`, {
+            label: 'Undo',
+            run: undoArchive,
+          })
         })
         .catch(error => {
-          setCommandNotice(
+          setStore(current =>
+            enqueueMailAction(archiveThread(current, targetId), 'archive', targetId),
+          )
+          setSelectedThreadId(nextThread?.id ?? '')
+          showToast(
             error instanceof Error
-              ? error.message
-              : `Could not archive at ${providerName(activeProvider)}.`,
+              ? `Archived locally (queued for sync: ${error.message}).`
+              : 'Archived locally (queued for sync).',
+            { label: 'Undo', run: undoArchive },
           )
         })
       return
     }
-    setStore(current => archiveThread(current, selectedThread.id))
+    setStore(current => archiveThread(current, targetId))
     setSelectedThreadId(nextThread?.id ?? '')
-    setCommandNotice('Archived. Sync pending.')
+    showToast('Archived. Sync pending.', { label: 'Undo', run: undoArchive })
   }
 
   const unarchiveSelectedThread = (): void => {
     if (!selectedThread) return
-    const nextThread = filteredThreads.find(
-      thread => thread.id !== selectedThread.id,
+    const targetId = selectedThread.id
+    const isTrashed = storeRef.current.mailboxes.some(
+      mailbox => mailbox.id === selectedThread.mailboxId && mailbox.role === 'trash',
     )
+    const nextThread = nextAdjacentThread(targetId)
     let restoredMailboxName = 'Inbox'
     const applyLocalUnarchive = (): void => {
       setStore(current => {
-        const next = unarchiveThread(current, selectedThread.id)
+        const next = unarchiveThread(current, targetId)
         const restoredThread = next.threads.find(
-          thread => thread.id === selectedThread.id,
+          thread => thread.id === targetId,
         )
         restoredMailboxName =
           next.mailboxes.find(
@@ -1833,24 +1893,35 @@ export function PureMailShell({
       })
       setSelectedThreadId(nextThread?.id ?? '')
     }
-    if (providerBacked?.unarchiveThread) {
-      void providerBacked
-        .unarchiveThread(selectedThread.id)
+    const restoreCall = isTrashed
+      ? providerBacked?.untrashThread ?? providerBacked?.unarchiveThread
+      : providerBacked?.unarchiveThread
+    if (restoreCall) {
+      void restoreCall
+        .call(providerBacked, targetId)
         .then(() => {
           applyLocalUnarchive()
-          setCommandNotice(`Unarchived to ${restoredMailboxName} in Gmail.`)
+          setCommandNotice(
+            isTrashed
+              ? `Restored to ${restoredMailboxName} at ${providerName(activeProvider)}.`
+              : `Unarchived to ${restoredMailboxName} at ${providerName(activeProvider)}.`,
+          )
         })
         .catch(error => {
           setCommandNotice(
             error instanceof Error
               ? error.message
-              : `Could not unarchive at ${providerName(activeProvider)}.`,
+              : `Could not restore at ${providerName(activeProvider)}.`,
           )
         })
       return
     }
     applyLocalUnarchive()
-    setCommandNotice(`Unarchived to ${restoredMailboxName}. Sync pending.`)
+    setCommandNotice(
+      isTrashed
+        ? `Restored to ${restoredMailboxName}. Sync pending.`
+        : `Unarchived to ${restoredMailboxName}. Sync pending.`,
+    )
   }
 
 
@@ -1947,6 +2018,34 @@ export function PureMailShell({
         }, now, identity).store,
     )
     setCommandNotice('Your open message was saved to Drafts.')
+  }
+
+  /**
+   * Start a brand-new compose message from Sidebar "Compose", CompactInbox,
+   * or the `c` shortcut. If the compose window currently holds a reply/draft,
+   * stash it safely and reset to a fresh blank message instead of trapping
+   * the user on the existing reply.
+   */
+  const startNewCompose = (): void => {
+    if (composeHoldsDraft(composeMode) && composeContext !== null) {
+      if (pendingSend?.target === 'compose') {
+        undoPendingSend(pendingSend.id)
+      }
+      if (composeWindowHasContent()) {
+        stashOpenCompose()
+      }
+      setComposeTo('')
+      setComposeCc('')
+      setComposeBcc('')
+      setComposeCcBccOpen(false)
+      setComposeSubject('')
+      setComposeBody('')
+      setComposeBodyHtml('')
+      setComposeAttachments([])
+      clearComposeReplyContext()
+      setComposeSession(session => session + 1)
+    }
+    openCompose()
   }
 
   /**
@@ -2050,7 +2149,7 @@ export function PureMailShell({
         const widened = widenDraftToReplyAll(
           existing,
           inbound,
-          selectedAccount?.email ?? '',
+          ownerEmails,
         )
         if (widened !== existing) {
           setStore(current => ({
@@ -2091,16 +2190,22 @@ export function PureMailShell({
       setComposeCcBccOpen(
         (draftToSeed.cc?.length ?? 0) + (draftToSeed.bcc?.length ?? 0) > 0,
       )
-      setComposeSubject(draftToSeed.subject)
+      setComposeSubject(
+        draftToSeed.subject === '(no subject)' ? '' : draftToSeed.subject,
+      )
       setComposeBody(draftToSeed.body)
       setComposeBodyHtml(draftToSeed.bodyHtml ?? '')
       setComposeAttachments(draftToSeed.attachments)
-      // An existing draft's body is its own — forward drafts already carry
-      // the forwarded content, and reopened drafts keep what they had. The
-      // quote chip is offered fresh only for reply kinds, where the quoted
-      // history lives outside the draft body.
+      // Avoid duplicating quoted thread history when reopening a draft whose
+      // saved body or HTML already includes the quote block.
+      const draftAlreadyHasQuote =
+        /<blockquote\b/i.test(draftToSeed.bodyHtml ?? '') ||
+        /\nOn .+ wrote:\n/i.test(draftToSeed.body) ||
+        draftToSeed.body.includes('---------- Forwarded message ---------')
       setComposeQuote(
-        kind === 'forward' || kind === 'draft' ? null : fields?.quote ?? null,
+        kind === 'forward' || kind === 'draft' || draftAlreadyHasQuote
+          ? null
+          : fields?.quote ?? null,
       )
     } else {
       const seeded = options.seedBody?.trim() ?? ''
@@ -2182,6 +2287,25 @@ export function PureMailShell({
     setComposeBcc('')
     setComposeCcBccOpen(Boolean(fields.cc))
     setComposeSubject(fields.subject)
+    // Carry the source message's attachments when switching into Forward, and
+    // drop auto-carried source attachments if switching back to Reply/Reply all.
+    if (kind === 'forward' && composeContext.kind !== 'forward') {
+      const sourceAttachments = message?.attachments ?? []
+      if (sourceAttachments.length > 0) {
+        setComposeAttachments(current => {
+          const existingIds = new Set(current.map(att => att.id))
+          return [
+            ...current,
+            ...sourceAttachments.filter(att => !existingIds.has(att.id)),
+          ]
+        })
+      }
+    } else if (composeContext.kind === 'forward' && kind !== 'forward') {
+      const sourceIds = new Set((message?.attachments ?? []).map(att => att.id))
+      setComposeAttachments(current =>
+        current.filter(att => !sourceIds.has(att.id)),
+      )
+    }
     // Only a still-collapsed quote re-derives; once expanded it is body.
     setComposeQuote(current => (current ? fields.quote : current))
     setComposeContext({ ...composeContext, kind })
@@ -2216,33 +2340,67 @@ export function PureMailShell({
    */
   const deleteSelectedThread = (): void => {
     if (!selectedThread) return
-    const nextThread = filteredThreads.find(
-      thread => thread.id !== selectedThread.id,
-    )
+    const targetId = selectedThread.id
+    const nextThread = nextAdjacentThread(targetId)
+    let undone = false
+    const undoTrash = (): void => {
+      if (undone) return
+      undone = true
+      setStore(current => ({
+        ...unarchiveThread(current, targetId),
+        queuedActions: (current.queuedActions ?? []).filter(
+          q => !(q.threadId === targetId && q.type === 'trash'),
+        ),
+      }))
+      setSelectedThreadId(targetId)
+      const provider = mailProviderRef.current
+      if (activeProvider !== 'demo' && isProviderThreadId(targetId)) {
+        const restoreCall = provider?.untrashThread ?? provider?.unarchiveThread
+        if (restoreCall) {
+          void restoreCall.call(provider, targetId).catch(() => {
+            setStore(current => enqueueMailAction(current, 'untrash', targetId))
+          })
+        } else {
+          setStore(current => enqueueMailAction(current, 'untrash', targetId))
+        }
+      }
+      setCommandNotice('Restored from Trash.')
+    }
     // A locally-created thread (a re-homed draft) does not exist at the
     // provider, so trashing it there fails and the old provider-first path
     // left it undeletable: the error surfaced and the local store was never
     // touched. Delete those locally.
-    if (providerBacked && isProviderThreadId(selectedThread.id)) {
+    if (providerBacked && isProviderThreadId(targetId)) {
       void providerBacked
-        .deleteThread(selectedThread.id)
+        .deleteThread(targetId)
         .then(() => {
-          setStore(current => deleteThread(current, selectedThread.id))
+          setStore(current => deleteThread(current, targetId))
           setSelectedThreadId(nextThread?.id ?? '')
-          setCommandNotice(`Moved to Trash at ${providerName(activeProvider)}.`)
+          showToast(`Moved to Trash at ${providerName(activeProvider)}.`, {
+            label: 'Undo',
+            run: undoTrash,
+          })
         })
         .catch(error => {
-          setCommandNotice(
+          setStore(current =>
+            enqueueMailAction(deleteThread(current, targetId), 'trash', targetId),
+          )
+          setSelectedThreadId(nextThread?.id ?? '')
+          showToast(
             error instanceof Error
-              ? error.message
-              : `Could not move the thread to Trash at ${providerName(activeProvider)}.`,
+              ? `Moved to Trash locally (queued for sync: ${error.message}).`
+              : 'Moved to Trash locally (queued for sync).',
+            { label: 'Undo', run: undoTrash },
           )
         })
       return
     }
-    setStore(current => deleteThread(current, selectedThread.id))
+    setStore(current => deleteThread(current, targetId))
     setSelectedThreadId(nextThread?.id ?? '')
-    setCommandNotice('Moved to Trash. Sync pending.')
+    showToast('Moved to Trash. Sync pending.', {
+      label: 'Undo',
+      run: undoTrash,
+    })
   }
 
   const markSelectedUnread = (): void => {
@@ -2327,10 +2485,15 @@ export function PureMailShell({
     // id while its filed thread keeps the old one, and that mismatch left
     // the thread behind in Drafts with its content gone.
     setStore(current =>
-      pruneOrphanedDraftThreads({
-        ...current,
-        drafts: current.drafts.filter(item => item.id !== draftId),
-      }),
+      pruneOrphanedDraftThreads(
+        cancelScheduledSendsForDraft(
+          {
+            ...current,
+            drafts: current.drafts.filter(item => item.id !== draftId),
+          },
+          draftId,
+        ),
+      ),
     )
     if (activeReplyDraftId === draftId) {
       setActiveReplyDraftId(null)
@@ -2379,16 +2542,40 @@ export function PureMailShell({
     const rsvp = buildInviteRsvpDraft({
       invite,
       response,
-      account: { email: account.email, name: account.name },
+      account: {
+        email: account.email,
+        name: account.name,
+        aliases: storeRef.current.settings.ownerIdentities?.emails,
+      },
       threadId: message.threadId,
       timestamp: new Date().toISOString(),
     })
     if (!rsvp) throw new Error('This invitation cannot be answered by this account.')
-    rsvp.id = `invite_rsvp_${account.id}_${invite.uid}_${response}`
-    if (storeRef.current.messages.some(item => item.deliveryAccepted && item.sentDraftId === rsvp.id)) return
-    const existing = storeRef.current.drafts.find(item => item.id === rsvp.id)
-    if (existing && draftDelivery(storeRef.current, existing.id).state === 'unconfirmed') throw new Error('The previous RSVP send was not confirmed. Check Sent before retrying.')
-    const savedRsvp = { ...existing, ...rsvp }
+    // Include sequence so reschedules are never deduped against older sequences,
+    // and only skip when the latest accepted RSVP for this sequence already has
+    // the exact same response (allowing Accept -> Decline -> Accept changes).
+    const rsvpSeqPrefix = `invite_rsvp_${account.id}_${invite.uid}_seq${invite.sequence}_`
+    const latestAcceptedRsvp = [...storeRef.current.messages]
+      .filter(
+        item =>
+          item.deliveryAccepted &&
+          typeof item.sentDraftId === 'string' &&
+          item.sentDraftId.startsWith(rsvpSeqPrefix),
+      )
+      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0]
+    if (latestAcceptedRsvp?.sentDraftId?.startsWith(`${rsvpSeqPrefix}${response}`)) {
+      return
+    }
+    const unconfirmedExisting = storeRef.current.drafts.find(
+      item =>
+        item.id.startsWith(rsvpSeqPrefix) &&
+        draftDelivery(storeRef.current, item.id).state === 'unconfirmed',
+    )
+    if (unconfirmedExisting) {
+      throw new Error('The previous RSVP send was not confirmed. Check Sent before retrying.')
+    }
+    rsvp.id = `${rsvpSeqPrefix}${response}_${Date.now()}`
+    const savedRsvp = { ...rsvp }
     setStore(current => ({ ...current, drafts: [...current.drafts.filter(item => item.id !== rsvp.id), savedRsvp] }))
     markDraftSending(rsvp.id, true)
     try { await sendDraftThroughProvider(provider, savedRsvp) } finally { markDraftSending(rsvp.id, false) }
@@ -2480,11 +2667,15 @@ export function PureMailShell({
 
   const addFollowUp = (): void => {
     if (!selectedThread) return
-    const due = new Date(
+    const wakeDate = new Date(
       Date.now() + followUpSettings.defaultDelayDays * 24 * 60 * 60 * 1000,
     )
-      .toISOString()
-      .slice(0, 10)
+    wakeDate.setHours(9, 0, 0, 0)
+    if (wakeDate.getTime() <= Date.now()) {
+      wakeDate.setDate(wakeDate.getDate() + 1)
+    }
+    const wakeIso = wakeDate.toISOString()
+    const due = `${wakeDate.getFullYear()}-${String(wakeDate.getMonth() + 1).padStart(2, '0')}-${String(wakeDate.getDate()).padStart(2, '0')}`
     const shouldSnooze =
       followUpSettings.defaultMode === 'snooze' ||
       followUpSettings.defaultMode === 'snooze_and_task'
@@ -2498,8 +2689,10 @@ export function PureMailShell({
         }
       : null
     setStore(current => {
+      // Use bulkSnoozeThreads so store.snoozes gets a real wake record and
+      // wakeDueSnoozes returns the thread on schedule.
       const next = shouldSnooze
-        ? snoozeThread(current, selectedThread.id, due)
+        ? bulkSnoozeThreads(current, [selectedThread.id], wakeIso)
         : current
       return task ? { ...next, tasks: [...next.tasks, task] } : next
     })
@@ -2943,6 +3136,173 @@ export function PureMailShell({
   ): void => {
     if (!threadIds.length) return
     const summary = bulkTriageActionSummary(action, threadIds.length)
+    const beforeStore = storeRef.current
+    const threadIdSet = new Set(threadIds)
+    // Snapshot which threads actually change for mixed-selection read/star undo.
+    const changedReadIds =
+      action.type === 'read'
+        ? threadIds.filter(id => {
+            const hasUnread = beforeStore.messages.some(
+              msg => msg.threadId === id && !msg.read,
+            )
+            return action.read ? hasUnread : !hasUnread
+          })
+        : []
+    const changedStarIds =
+      action.type === 'star'
+        ? threadIds.filter(id => {
+            const wasStarred = (beforeStore.starredThreadIds ?? []).includes(id)
+            return action.starred ? !wasStarred : wasStarred
+          })
+        : []
+    let undone = false
+    let inFlightSettled: Promise<unknown> = Promise.resolve()
+    const dropQueuedOfType = (
+      current: MailStore,
+      queuedType: string,
+    ): MailStore => ({
+      ...current,
+      queuedActions: (current.queuedActions ?? []).filter(
+        q => !(threadIdSet.has(q.threadId) && q.type === queuedType),
+      ),
+    })
+    const buildUndoAction = (): { label: string; run: () => void } | undefined => {
+      if (action.type === 'archive' || action.type === 'trash') {
+        const isTrash = action.type === 'trash'
+        return {
+          label: 'Undo',
+          run: () => {
+            if (undone) return
+            undone = true
+            setStore(current =>
+              threadIds.reduce(
+                (acc, id) => unarchiveThread(acc, id),
+                dropQueuedOfType(current, isTrash ? 'trash' : 'archive'),
+              ),
+            )
+            void inFlightSettled.finally(() => {
+              const provider = mailProviderRef.current
+              if (activeProvider === 'demo') return
+              const restoreFn = isTrash
+                ? provider?.untrashThread ?? provider?.unarchiveThread
+                : provider?.unarchiveThread
+              const fallbackQueueType = isTrash ? 'untrash' : 'unarchive'
+              for (const id of threadIds) {
+                if (restoreFn) {
+                  void restoreFn.call(provider, id).catch(() => {
+                    setStore(current =>
+                      enqueueMailAction(current, fallbackQueueType, id),
+                    )
+                  })
+                } else {
+                  setStore(current =>
+                    enqueueMailAction(current, fallbackQueueType, id),
+                  )
+                }
+              }
+            })
+            setCommandNotice(
+              isTrash
+                ? 'Restored from Trash.'
+                : 'Archive undone — returned to Inbox.',
+            )
+          },
+        }
+      }
+      if (action.type === 'snooze') {
+        return {
+          label: 'Undo',
+          run: () => {
+            if (undone) return
+            undone = true
+            setStore(current =>
+              threadIds.reduce(
+                (acc, id) => unsnoozeThread(acc, id),
+                dropQueuedOfType(current, 'snooze'),
+              ),
+            )
+            void inFlightSettled.finally(() => {
+              const provider = mailProviderRef.current
+              if (activeProvider === 'demo') return
+              for (const id of threadIds) {
+                if (provider?.unarchiveThread) {
+                  void provider.unarchiveThread(id).catch(() => {
+                    setStore(current => enqueueMailAction(current, 'unarchive', id))
+                  })
+                } else {
+                  setStore(current => enqueueMailAction(current, 'unarchive', id))
+                }
+              }
+            })
+            setCommandNotice('Snooze undone — returned to Inbox.')
+          },
+        }
+      }
+      if (action.type === 'read' && changedReadIds.length > 0) {
+        return {
+          label: 'Undo',
+          run: () => {
+            if (undone) return
+            undone = true
+            const prevType = action.read ? 'markRead' : 'markUnread'
+            setStore(current =>
+              applyBulkTriageAction(
+                dropQueuedOfType(current, prevType),
+                changedReadIds,
+                { type: 'read', read: !action.read },
+              ),
+            )
+            void inFlightSettled.finally(() => {
+              const provider = mailProviderRef.current
+              if (activeProvider === 'demo') return
+              const queueType = !action.read ? 'markRead' : 'markUnread'
+              for (const id of changedReadIds) {
+                if (provider) {
+                  void provider.markThreadRead(id, !action.read).catch(() => {
+                    setStore(current => enqueueMailAction(current, queueType, id))
+                  })
+                } else {
+                  setStore(current => enqueueMailAction(current, queueType, id))
+                }
+              }
+            })
+            setCommandNotice(action.read ? 'Marked unread.' : 'Marked read.')
+          },
+        }
+      }
+      if (action.type === 'star' && changedStarIds.length > 0) {
+        return {
+          label: 'Undo',
+          run: () => {
+            if (undone) return
+            undone = true
+            const prevType = action.starred ? 'star' : 'unstar'
+            setStore(current =>
+              applyBulkTriageAction(
+                dropQueuedOfType(current, prevType),
+                changedStarIds,
+                { type: 'star', starred: !action.starred },
+              ),
+            )
+            void inFlightSettled.finally(() => {
+              const provider = mailProviderRef.current
+              if (activeProvider === 'demo') return
+              const queueType = !action.starred ? 'star' : 'unstar'
+              for (const id of changedStarIds) {
+                if (provider?.setThreadStarred) {
+                  void provider.setThreadStarred(id, !action.starred).catch(() => {
+                    setStore(current => enqueueMailAction(current, queueType, id))
+                  })
+                }
+              }
+            })
+            setCommandNotice(action.starred ? 'Removed star.' : 'Starred.')
+          },
+        }
+      }
+      return undefined
+    }
+    const undoToastAction = buildUndoAction()
     // OPTIMISTIC: the click answers immediately — local store applies, the
     // selection clears, and the notice shows before any provider round-trip.
     // Provider calls settle in the background; failures enqueue for replay
@@ -2960,11 +3320,20 @@ export function PureMailShell({
     clearThreadSelection()
     recordTriageOperation(`mail.triage.${action.type}`, summary)
     if (!providerBacked) {
-      setCommandNotice(`${summary} Sync pending.`)
+      if (undoToastAction) {
+        showToast(`${summary} Sync pending.`, undoToastAction)
+      } else {
+        setCommandNotice(`${summary} Sync pending.`)
+      }
       return
     }
-    setCommandNotice(`${summary} Syncing…`)
+    if (undoToastAction) {
+      showToast(`${summary} Syncing…`, undoToastAction)
+    } else {
+      setCommandNotice(`${summary} Syncing…`)
+    }
     const enqueueForReplay = (failedThreadIds: string[]): void => {
+      if (undone) return
       const encoded = queuedActionForBulkTriage(action)
       setStore(current =>
         failedThreadIds.reduce(
@@ -2984,9 +3353,16 @@ export function PureMailShell({
       providerBacked.bulkModifyThreads
     ) {
       const encoded = queuedActionForBulkTriage(action)
-      void providerBacked
-        .bulkModifyThreads(threadIds, encoded.type, encoded.payload)
-        .then(() => setCommandNotice(summary))
+      const bulkPromise = providerBacked.bulkModifyThreads(
+        threadIds,
+        encoded.type,
+        encoded.payload,
+      )
+      inFlightSettled = bulkPromise.catch(() => undefined)
+      void bulkPromise
+        .then(() => {
+          if (!undone) setCommandNotice(summary)
+        })
         .catch(() => enqueueForReplay(threadIds))
       return
     }
@@ -3019,7 +3395,7 @@ export function PureMailShell({
           if (isImapMailboxId(action.mailboxId)) {
             return providerBacked.moveThread(threadId, action.mailboxId)
           }
-          const target = store.mailboxes.find(
+          const target = storeRef.current.mailboxes.find(
             mailbox => mailbox.id === action.mailboxId,
           )
           if (target?.role === 'custom' || target?.role === 'archive') {
@@ -3039,12 +3415,15 @@ export function PureMailShell({
       promise: providerCallFor(threadId),
     }))
     if (calls.every(call => call.promise === null)) {
-      setCommandNotice(summary)
+      if (!undone) setCommandNotice(summary)
       return
     }
-    void Promise.allSettled(
+    const settledAll = Promise.allSettled(
       calls.map(call => call.promise ?? Promise.resolve()),
-    ).then(results => {
+    )
+    inFlightSettled = settledAll
+    void settledAll.then(results => {
+      if (undone) return
       const failedThreadIds: string[] = []
       results.forEach((result, index) => {
         if (result.status !== 'fulfilled')
@@ -3328,14 +3707,20 @@ export function PureMailShell({
   const unsubscribeByLink = (candidate: UnsubscribeCandidate): void => {
     const url = candidate.targets.https
     if (!url) return
-    // The platform bridge has no external-URL method yet; window.open is the
-    // sanctioned fallback inside the shell webview (noopener enforced).
-    const opened = window.open(url, '_blank', 'noopener,noreferrer')
-    setCommandNotice(
-      opened
-        ? `Unsubscribe page opened for ${candidate.senderName}.`
-        : `Could not open the page — copy the link: ${url}`,
-    )
+    void openExternalUrl(url)
+      .then(() => {
+        setCommandNotice(
+          `Unsubscribe page opened for ${candidate.senderName}.`,
+        )
+      })
+      .catch(() => {
+        const opened = window.open(url, '_blank', 'noopener,noreferrer')
+        setCommandNotice(
+          opened
+            ? `Unsubscribe page opened for ${candidate.senderName}.`
+            : `Could not open the page — copy the link: ${url}`,
+        )
+      })
     recordTriageOperation(
       'mail.unsubscribe.request',
       `Opened unsubscribe page for ${candidate.senderEmail}.`,
@@ -3549,8 +3934,20 @@ export function PureMailShell({
     switch (action.type) {
       case 'archive':
         return providerBacked.archiveThread(action.threadId)
+      case 'unarchive':
+        return providerBacked.unarchiveThread
+          ? providerBacked.unarchiveThread(action.threadId)
+          : Promise.resolve()
       case 'trash':
         return providerBacked.deleteThread(action.threadId)
+      case 'untrash': {
+        const restore = providerBacked.untrashThread ?? providerBacked.unarchiveThread
+        return restore ? restore.call(providerBacked, action.threadId) : Promise.resolve()
+      }
+      case 'unsnooze':
+        return providerBacked.unarchiveThread
+          ? providerBacked.unarchiveThread(action.threadId)
+          : Promise.resolve()
       case 'markRead':
         return providerBacked.markThreadRead(action.threadId, true)
       case 'markUnread':
@@ -3560,6 +3957,39 @@ export function PureMailShell({
           action.threadId,
           String(action.payload?.labelId ?? ''),
         )
+      case 'unlabel':
+        return providerBacked.unlabelThread
+          ? providerBacked.unlabelThread(
+              action.threadId,
+              String(action.payload?.labelId ?? ''),
+            )
+          : Promise.resolve()
+      case 'move': {
+        const mailboxId = String(action.payload?.mailboxId ?? '')
+        if (!mailboxId) return Promise.resolve()
+        if (isImapMailboxId(mailboxId)) {
+          return providerBacked.moveThread(action.threadId, mailboxId)
+        }
+        const target = storeRef.current.mailboxes.find(
+          mailbox => mailbox.id === mailboxId,
+        )
+        if (target?.role === 'custom' || target?.role === 'archive') {
+          return providerBacked.archiveThread(action.threadId)
+        }
+        if (target?.role === 'inbox' && providerBacked.unarchiveThread) {
+          return providerBacked.unarchiveThread(action.threadId)
+        }
+        if (target?.role === 'trash') {
+          return providerBacked.deleteThread(action.threadId)
+        }
+        return Promise.resolve()
+      }
+      case 'snooze': {
+        const snoozedUntil = String(action.payload?.snoozedUntil ?? '')
+        return providerBacked.snoozeThread && snoozedUntil
+          ? providerBacked.snoozeThread(action.threadId, snoozedUntil)
+          : Promise.resolve()
+      }
       case 'star':
         return providerBacked.setThreadStarred
           ? providerBacked.setThreadStarred(action.threadId, true)
@@ -3574,29 +4004,45 @@ export function PureMailShell({
     }
   }
 
+  const replayingQueueRef = useRef(false)
   const replayQueuedActionsNow = async (): Promise<void> => {
+    if (replayingQueueRef.current) return
     const queue = storeRef.current.queuedActions ?? []
     if (!queue.length || !providerBacked) return
-    const result = await replayQueuedMailActions(
-      storeRef.current,
-      providerCallForQueued,
-    )
-    setStore(current => ({
-      ...current,
-      queuedActions: result.store.queuedActions,
-    }))
-    if (result.conflicts.length > 0) {
-      setCommandNotice(
-        `${result.conflicts.length} queued action${
-          result.conflicts.length === 1 ? '' : 's'
-        } skipped — the thread changed remotely.`,
+    replayingQueueRef.current = true
+    try {
+      const snapshottedIds = new Set(queue.map(item => item.id))
+      const result = await replayQueuedMailActions(
+        storeRef.current,
+        providerCallForQueued,
       )
-    } else if (result.replayedIds.length > 0 && !result.stalled) {
-      setCommandNotice(
-        `${result.replayedIds.length} queued action${
-          result.replayedIds.length === 1 ? '' : 's'
-        } synced.`,
+      const remainingById = new Map(
+        (result.store.queuedActions ?? []).map(item => [item.id, item]),
       )
+      setStore(current => ({
+        ...current,
+        queuedActions: [
+          ...(result.store.queuedActions ?? []),
+          ...(current.queuedActions ?? []).filter(
+            item => !snapshottedIds.has(item.id) && !remainingById.has(item.id),
+          ),
+        ],
+      }))
+      if (result.conflicts.length > 0) {
+        setCommandNotice(
+          `${result.conflicts.length} queued action${
+            result.conflicts.length === 1 ? '' : 's'
+          } skipped — the thread changed remotely.`,
+        )
+      } else if (result.replayedIds.length > 0 && !result.stalled) {
+        setCommandNotice(
+          `${result.replayedIds.length} queued action${
+            result.replayedIds.length === 1 ? '' : 's'
+          } synced.`,
+        )
+      }
+    } finally {
+      replayingQueueRef.current = false
     }
   }
 
@@ -3828,6 +4274,8 @@ export function PureMailShell({
       if (draft.sentAt) {
         return { ok: false, reason: 'That draft has already been sent.' }
       }
+      const editBlock = draftEditBlock(storeRef.current, draftId)
+      if (editBlock) return { ok: false, reason: editBlock }
       // The same field update the compose window's save makes: syncState
       // goes 'pending', so useDraftProviderSync pushes the new list to the
       // account; the open compose window picks the change up through the
@@ -3935,7 +4383,7 @@ export function PureMailShell({
     if (command === 'next-thread') selectAdjacentThread(1)
     if (command === 'previous-thread') selectAdjacentThread(-1)
     if (command === 'compose') {
-      openCompose()
+      startNewCompose()
     }
     if (command === 'focus-search') focusMailSearch()
     if (command === 'snooze-follow-up') addFollowUp()
@@ -3966,9 +4414,15 @@ export function PureMailShell({
       // message — that includes the keyboard.
       if (
         composeVisible ||
+        mailSettingsOpen ||
+        providerDrawerOpen ||
+        unsubscribeDrawerOpen ||
+        attachmentPreview !== null ||
         runScreen !== null ||
         roomScreen !== null ||
-        (readerMode === 'reply' && activeReplyDraft && !activeReplyDraft.sentAt)
+        (readerMode === 'reply' && activeReplyDraft && !activeReplyDraft.sentAt) ||
+        (event.target instanceof Element &&
+          Boolean(event.target.closest('[role="dialog"], [role="alertdialog"]')))
       ) {
         return
       }
@@ -4250,7 +4704,7 @@ export function PureMailShell({
             setRunScreen(null)
             setRoomScreen(null)
           }}
-          openCompose={openCompose}
+          openCompose={startNewCompose}
           unsubscribeCount={unsubscribeCandidates.length}
           openUnsubscribeDrawer={() => setUnsubscribeDrawerOpen(true)}
           runs={activeRuns(store).filter(
@@ -4286,7 +4740,7 @@ export function PureMailShell({
             store={store}
             accountId={selectedAccount?.id}
             onOpen={threadId => openThread(threadId)}
-            onNewMessage={openCompose}
+            onNewMessage={startNewCompose}
             search={roomSearch}
             onShowInbox={() => setRoomSearch('')}
           />
@@ -4401,7 +4855,7 @@ export function PureMailShell({
                 <strong>{thread.subject || '(No subject)'}</strong>
                 <Meta>Mailbox change · {thread.syncState}</Meta>
                 {(store.queuedActions ?? []).filter(action => action.threadId === thread.id).map(action => <Meta key={action.id}>{action.type}: {action.lastError || 'Waiting for the account to confirm this change.'}</Meta>)}
-                <Button size="sm" variant="subtle" onClick={() => setSelectedThreadId(thread.id)}>Open message</Button>{' '}
+                <Button size="sm" variant="subtle" onClick={() => openThread(thread.id)}>Open message</Button>{' '}
                 <Button size="sm" disabled={!networkOnline || !mailProvider || mailFetching} onClick={() => void refreshMail('manual')}>Check account sync</Button>
               </div>
             ))}
@@ -4419,7 +4873,7 @@ export function PureMailShell({
               <div key={task.id} style={{ padding: '12px 0' }}>
                 <strong>{task.title}</strong>
                 <Meta>Task · {task.syncState}. Open its source message to review the task and its sync status.</Meta>
-                <Button size="sm" variant="subtle" onClick={() => setSelectedThreadId(task.source.threadId)}>Open source message</Button>
+                <Button size="sm" variant="subtle" onClick={() => openThread(task.source.threadId)}>Open source message</Button>
               </div>
             ))}
             </div>
@@ -4643,6 +5097,57 @@ export function PureMailShell({
             topBar={mailTopBar}
             focusReply={focusReply}
             focusReplyAll={focusReplyAll}
+            onOpenMailto={href => {
+              const safeDecode = (value: string): string => {
+                try {
+                  return decodeURIComponent(value)
+                } catch {
+                  return value
+                }
+              }
+              const raw = href.replace(/^mailto:/i, '')
+              const qIdx = raw.indexOf('?')
+              const toPart = qIdx >= 0 ? raw.slice(0, qIdx) : raw
+              const queryPart = qIdx >= 0 ? raw.slice(qIdx + 1) : ''
+              const params = new URLSearchParams(queryPart)
+              const toList: string[] = []
+              const ccList: string[] = []
+              const bccList: string[] = []
+              let subj = ''
+              let body = ''
+              const decodedPathTo = safeDecode(toPart).trim()
+              if (decodedPathTo) toList.push(decodedPathTo)
+              for (const [key, value] of params.entries()) {
+                const lowerKey = key.toLowerCase()
+                const trimmedVal = value.trim()
+                if (!trimmedVal) continue
+                if (lowerKey === 'to') toList.push(trimmedVal)
+                else if (lowerKey === 'cc') ccList.push(trimmedVal)
+                else if (lowerKey === 'bcc') bccList.push(trimmedVal)
+                else if (lowerKey === 'subject' && !subj) subj = trimmedVal
+                else if (lowerKey === 'body' && !body) body = trimmedVal
+              }
+              if (pendingSend?.target === 'compose') {
+                undoPendingSend(pendingSend.id)
+              }
+              if (composeHoldsDraft(composeMode) && composeWindowHasContent()) {
+                stashOpenCompose()
+              }
+              const toAddr = toList.join(', ')
+              const ccAddr = ccList.join(', ')
+              const bccAddr = bccList.join(', ')
+              setComposeTo(toAddr)
+              setComposeCc(ccAddr)
+              setComposeBcc(bccAddr)
+              setComposeCcBccOpen(Boolean(ccAddr || bccAddr))
+              setComposeSubject(subj)
+              setComposeBody(body)
+              setComposeBodyHtml('')
+              setComposeAttachments([])
+              clearComposeReplyContext()
+              openCompose()
+              setComposeSession(session => session + 1)
+            }}
             askThreadAgent={askThreadAgent}
             summarizeSelectedThread={summarizeSelectedThread}
             addExtractedTask={addExtractedTask}
@@ -4674,7 +5179,11 @@ export function PureMailShell({
       </MailBodyRow>
 
       <MailStatusBar data-compact-keep={compactInRoom && activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider) ? '' : undefined}>
-        {activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider) ? 'Mail disconnected · showing saved mail' : syncStatusLine(lastMailFetchAt, store.accounts.length)}
+        {activeProvider !== 'demo' && (!networkOnline || connectionError || !mailProvider)
+          ? lastMailFetchAt
+            ? `Mail disconnected · ${syncStatusLine(lastMailFetchAt, store.accounts.length)}`
+            : 'Mail disconnected · showing saved mail'
+          : syncStatusLine(lastMailFetchAt, store.accounts.length)}
       </MailStatusBar>
 
 
@@ -4689,6 +5198,7 @@ export function PureMailShell({
         <MailSettings
           onRunTriage={(ids,options) => typedTriageRunnerRef.current!(ids ?? storeRef.current.threads.map(thread => thread.id),options)}
           onImapConnected={onGoogleConnected}
+          flushStorePersistence={flushStorePersistence}
           fireFilterMutations={mutations =>
             fireShellFilterMutationsRef.current(mutations)
           }
@@ -4723,8 +5233,9 @@ export function PureMailShell({
             <MailToastAction
               type="button"
               onClick={() => {
-                toast.onAction?.()
+                const run = toast.onAction
                 setToast(null)
+                run?.()
               }}
             >
               {toast.actionLabel}

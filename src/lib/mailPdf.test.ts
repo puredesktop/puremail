@@ -69,17 +69,27 @@ describe('saving a PDF', () => {
   }
   const input = { subject: 'Q3 & rights', messages: [message('a', '2026-07-20T09:00:00.000Z')] }
 
-  it('prints inside the scratch folder, then writes the PDF into the folder under a new name', async () => {
+  it('prints inside the scratch folder with unique working paths, then writes the PDF into the folder under a new name', async () => {
     const { value, texts, printed, binaries } = deps()
     const { path } = await saveMailAsPdf(input, { folder: '/Users/developer/Docs' }, value)
-    expect(texts).toEqual(['/data/mail/puremail-scratch/mail-print.html'])
-    // The print service's working files stay in the scratch folder.
-    expect(printed[0]).toEqual({
-      htmlPath: '/data/mail/puremail-scratch/mail-print.html',
-      outputPath: '/data/mail/puremail-scratch/mail-print.pdf',
-    })
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toMatch(/^\/data\/mail\/puremail-scratch\/mail-print-[^/]+\.html$/)
+    // The print service's working files stay in the scratch folder with a matching unique stem.
+    expect(printed[0]?.htmlPath).toBe(texts[0])
+    expect(printed[0]?.outputPath).toBe(texts[0]!.replace(/\.html$/, '.pdf'))
     expect(binaries).toEqual([{ path: '/Users/developer/Docs/Q3 & rights (1).pdf', base64: 'JVBERi0=' }])
     expect(path).toBe('/Users/developer/Docs/Q3 & rights (1).pdf')
+  })
+
+  it('uses distinct scratch files for concurrent exports so they do not overwrite each other', async () => {
+    const { value, printed } = deps()
+    await Promise.all([
+      saveMailAsPdf(input, { outputPath: '/Users/developer/a.pdf' }, value),
+      saveMailAsPdf(input, { outputPath: '/Users/developer/b.pdf' }, value),
+    ])
+    expect(printed).toHaveLength(2)
+    expect(printed[0]!.htmlPath).not.toBe(printed[1]!.htmlPath)
+    expect(printed[0]!.outputPath).not.toBe(printed[1]!.outputPath)
   })
 
   it('goes exactly where the save dialog says, adding .pdf when missing', async () => {

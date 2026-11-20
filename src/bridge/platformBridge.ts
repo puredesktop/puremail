@@ -154,7 +154,11 @@ export interface PlatformNetworkFetchResponse {
 }
 
 export function isStandaloneDevMode(): boolean {
-  return import.meta.env.DEV && window.parent === window
+  return (
+    typeof window !== 'undefined' &&
+    import.meta.env.DEV &&
+    window.parent === window
+  )
 }
 
 export async function fetchAppSettings<T extends object>(
@@ -364,11 +368,11 @@ export async function dialogSaveFile(
   options: PlatformSaveFileOptions,
 ): Promise<string | null> {
   if (isStandaloneDevMode()) return null
-  const result = await bridge.call<PlatformDialogPathResult>(
+  const result = await bridge.call<PlatformDialogPathResult | null>(
     PLATFORM_BRIDGE_METHODS.DIALOG_SAVE_FILE,
     [options],
   )
-  return result.path
+  return result?.path ?? null
 }
 
 /**
@@ -412,11 +416,11 @@ export async function fsReadText(path: string): Promise<string> {
 /** Native folder picker for multi-file saves; null when unavailable or cancelled. */
 export async function dialogSaveFolder(): Promise<string | null> {
   if (isStandaloneDevMode()) return null
-  const result = await bridge.call<PlatformDialogPathResult>(
+  const result = await bridge.call<PlatformDialogPathResult | null>(
     PLATFORM_BRIDGE_METHODS.DIALOG_SAVE_FOLDER,
     [],
   )
-  return result.path
+  return result?.path ?? null
 }
 
 export interface PlatformReadBinaryResult {

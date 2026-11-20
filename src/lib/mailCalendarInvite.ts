@@ -50,7 +50,14 @@ function contactFromProperty(
 }
 
 function isoFromTime(value: ICAL.Time | null): string {
-  return value?.toJSDate().toISOString() ?? new Date().toISOString()
+  if (!value) return new Date().toISOString()
+  if (value.isDate) {
+    const yyyy = String(value.year).padStart(4, '0')
+    const mm = String(value.month).padStart(2, '0')
+    const dd = String(value.day).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}T00:00:00.000Z`
+  }
+  return value.toJSDate().toISOString()
 }
 
 export function parseCalendarInvite(
@@ -58,6 +65,18 @@ export function parseCalendarInvite(
 ): MailCalendarInvite | null {
   try {
     const calendar = new ICAL.Component(ICAL.parse(rawSource))
+    // Register VTIMEZONE definitions bundled in the invite so DTSTART/DTEND
+    // with TZID parameters resolve to their real offset instead of floating.
+    for (const vtimezone of calendar.getAllSubcomponents('vtimezone')) {
+      try {
+        const tz = new ICAL.Timezone(vtimezone)
+        if (tz.tzid && !ICAL.TimezoneService.has(tz.tzid)) {
+          ICAL.TimezoneService.register(tz)
+        }
+      } catch {
+        // Ignore malformed VTIMEZONE blocks; keep parsing the VEVENT.
+      }
+    }
     const eventComponent = calendar.getFirstSubcomponent('vevent')
     if (!eventComponent) return null
     const event = new ICAL.Event(eventComponent)
@@ -76,6 +95,19 @@ export function parseCalendarInvite(
       }))
       .filter(attendee => attendee.email.length > 0)
 
+    const dtStartTzid = normalizeText(
+      eventComponent.getFirstProperty('dtstart')?.getParameter('tzid'),
+    )
+    const resolvedZone = event.startDate?.zone?.tzid
+    const timeZone =
+      (resolvedZone && resolvedZone !== 'floating' ? resolvedZone : '') ||
+      dtStartTzid ||
+      resolvedZone ||
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    const allDay = Boolean(event.startDate?.isDate)
+    const recurrenceIdValue = eventComponent.getFirstPropertyValue('recurrence-id')
+    const recurrenceId = recurrenceIdValue ? String(recurrenceIdValue) : undefined
+
     return {
       uid: event.uid || `invite_${Date.now()}`,
       method,
@@ -91,12 +123,12 @@ export function parseCalendarInvite(
       location: event.location || undefined,
       startsAt: isoFromTime(event.startDate),
       endsAt: isoFromTime(event.endDate),
-      timeZone:
-        event.startDate?.zone?.tzid ??
-        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...(allDay ? { allDay: true } : {}),
+      timeZone,
       organizer,
       attendees,
       recurrenceRule: eventComponent.getFirstPropertyValue('rrule')?.toString(),
+      ...(recurrenceId ? { recurrenceId } : {}),
       rawSource,
     }
   } catch {

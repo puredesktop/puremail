@@ -58,22 +58,49 @@ export function createScheduledSendDispatcher(input: {
       return
     }
     input.update(current => markScheduledSend(current, entry.id, 'sending'))
-    const finishLocal = (): void => {
+    const finishLocal = (confirmLocal = false): void => {
       input.update(current => {
         const sentStore = sendDraft(current, draft.id)
-        const sentMailboxId = sentStore.mailboxes.find(mailbox => mailbox.role === 'sent')?.id ?? ''
-        return markScheduledSend(
-          {
-            ...sentStore,
-            threads: sentStore.threads.map(thread =>
-              thread.id === entry.threadId && sentMailboxId
-                ? { ...thread, mailboxId: sentMailboxId }
-                : thread,
-            ),
-          },
-          entry.id,
-          'sent',
+        const targetThread = sentStore.threads.find(
+          thread => thread.id === entry.threadId,
         )
+        const draftsMailboxIds = new Set(
+          sentStore.mailboxes
+            .filter(mailbox => mailbox.role === 'drafts')
+            .map(mailbox => mailbox.id),
+        )
+        const sentMailboxId =
+          sentStore.mailboxes.find(
+            mailbox =>
+              mailbox.role === 'sent' &&
+              (!targetThread || mailbox.accountId === targetThread.accountId),
+          )?.id ?? ''
+        // Only move standalone draft-folder threads into Sent; keep scheduled
+        // replies in Inbox (matching sendDraft's own mailbox rule).
+        const nextStore: MailStore = {
+          ...sentStore,
+          threads: sentStore.threads.map(thread =>
+            thread.id === entry.threadId &&
+            sentMailboxId &&
+            draftsMailboxIds.has(thread.mailboxId)
+              ? { ...thread, mailboxId: sentMailboxId }
+              : thread,
+          ),
+          ...(confirmLocal
+            ? {
+                messages: sentStore.messages.map(message =>
+                  message.optimistic &&
+                  (message.sentDraftId === draft.id ||
+                    message.id.startsWith(`msg_sent_${draft.id}_`) ||
+                    (message.threadId === entry.threadId &&
+                      message.subject === draft.subject))
+                    ? { ...message, optimistic: false }
+                    : message,
+                ),
+              }
+            : {}),
+        }
+        return markScheduledSend(nextStore, entry.id, 'sent')
       })
       input.notice(`Scheduled message "${draft.subject}" sent.`)
       input.record('mail.compose.send', `Sent scheduled message "${draft.subject}".`)
@@ -112,7 +139,7 @@ export function createScheduledSendDispatcher(input: {
       input.notice('A scheduled send could not reach the account — the draft is still in Drafts.')
       return
     }
-    finishLocal()
+    finishLocal(true)
   }
 }
 

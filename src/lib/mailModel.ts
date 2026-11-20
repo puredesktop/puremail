@@ -313,12 +313,14 @@ export function latestInboundMessage(
  */
 export function replyAllRecipientsForMessage(
   message: MailMessage,
-  ownerEmail: string,
+  ownerEmail: string | readonly string[],
 ): { to: MailContact[]; cc: MailContact[] } {
-  const own = ownerEmail.trim().toLowerCase()
+  const ownList = (Array.isArray(ownerEmail) ? ownerEmail : [ownerEmail])
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean)
   const senderEmail = message.from.email.trim().toLowerCase()
   const cc: MailContact[] = []
-  const seen = new Set([senderEmail, ...(own ? [own] : [])])
+  const seen = new Set([senderEmail, ...ownList])
   for (const contact of [...message.to, ...(message.cc ?? [])]) {
     const email = contact.email.trim().toLowerCase()
     if (!email || seen.has(email)) continue
@@ -345,18 +347,20 @@ export function replyAllRecipientsForMessage(
 export function widenDraftToReplyAll(
   draft: Draft,
   message: MailMessage | null,
-  ownerEmail: string,
+  ownerEmail: string | readonly string[],
   now = new Date().toISOString(),
 ): Draft {
   if (!message) return draft
   const target = replyAllRecipientsForMessage(message, ownerEmail)
-  const own = ownerEmail.trim().toLowerCase()
+  const ownList = (Array.isArray(ownerEmail) ? ownerEmail : [ownerEmail])
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean)
   const key = (contact: MailContact): string => contact.email.trim().toLowerCase()
   const addressed = new Set<string>([
     ...draft.to.map(key),
     ...(draft.cc ?? []).map(key),
     ...(draft.bcc ?? []).map(key),
-    ...(own ? [own] : []),
+    ...ownList,
   ])
   const missingTo = target.to.filter(contact => !addressed.has(key(contact)))
   missingTo.forEach(contact => addressed.add(key(contact)))

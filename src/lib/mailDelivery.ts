@@ -120,7 +120,7 @@ export function createMailDeliveryController(input: {
       // a failed send or cause the caller to submit it a second time.
       try { await input.persist(input.read()) } catch {
         accepted.deliveryWarnings = [...(accepted.deliveryWarnings ?? []), 'The server accepted this message, but its local sent record could not be saved. Check Sent before any retry.']
-        input.update(store => ({ ...store, messages: store.messages.map(item => item.deliveryAccepted && item.threadId === draft.threadId && item.subject === draft.subject ? { ...item, deliveryWarnings: accepted.deliveryWarnings } : item) }))
+        input.update(store => ({ ...store, messages: store.messages.map(item => item.deliveryAccepted && item.sentAttemptId === attemptId ? { ...item, deliveryWarnings: accepted.deliveryWarnings } : item) }))
       }
       return accepted
     } catch (error) {

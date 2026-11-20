@@ -39,11 +39,24 @@ export function NotesIndex({
   const [query, setQuery] = useState('')
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
   const records = Object.values(file.byMessageId)
-    .filter(record => record.notes.length)
-    .filter(record => show === 'all' || record.notes.some(note => note.kind === show))
+    .filter(record => record.notes.length > 0 || Boolean(record.replyIntent?.trim()))
+    .filter(
+      record =>
+        show === 'all' ||
+        record.notes.some(note => note.kind === show) ||
+        (show === 'reply' && Boolean(record.replyIntent?.trim())),
+    )
     .filter(record => {
       if (!words.length) return true
-      const haystack = [record.subject, record.from.name, record.from.email, ...record.notes.map(note => `${note.quote} ${note.text}`)].join(' ').toLowerCase()
+      const haystack = [
+        record.subject,
+        record.from.name,
+        record.from.email,
+        record.replyIntent ?? '',
+        ...record.notes.map(note => `${note.quote} ${note.text}`),
+      ]
+        .join(' ')
+        .toLowerCase()
       return words.every(word => haystack.includes(word))
     })
     .sort(byRecent)
@@ -110,7 +123,11 @@ export function NotesIndex({
                   <BarButton type="button" onClick={() => onOpen(record.messageId)}>
                     Open in the reading room
                   </BarButton>
-                  <BarButton type="button" disabled={!counts.reply} onClick={() => onDraftReply(record)}>
+                  <BarButton
+                    type="button"
+                    disabled={!counts.reply && !record.replyIntent?.trim()}
+                    onClick={() => onDraftReply(record)}
+                  >
                     Draft a reply
                   </BarButton>
                   <span style={{ flex: 1 }} />

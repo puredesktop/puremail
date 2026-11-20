@@ -139,19 +139,35 @@ export interface ZoneGuess {
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** Common English words that collide with 3-4 letter timezone abbreviations. */
+const ENGLISH_WORD_ZONES = new Set(['eat', 'art', 'wet', 'west', 'cat', 'act', 'cot', 'pet', 'wat', 'get', 'bot', 'amt', 'ast', 'ist', 'est'])
 const WORD_PATTERNS: Array<{ re: RegExp; word: string; zone: string }> = ALIASES.flatMap(([words, zone]) =>
-  words.filter(w => w.length > 1 || w === 'z').map(word => ({ word, zone, re: new RegExp(`(?<![a-z])${esc(word)}(?![a-z])`, 'i') })))
+  words.filter(w => w.length > 1 || w === 'z').map(word => ({ word, zone, re: new RegExp(`(?<![a-z])${esc(word)}(?![a-z])`, 'gi') })))
 
 /** The zone a run of text names, if it names one: the longest matching word wins, so "new york" beats "york" and "south africa" beats "africa". */
 export function zoneNamedIn(text: string): ZoneGuess | null {
-  const lower = text.toLowerCase()
   let best: { word: string; zone: string; at: number } | null = null
   for (const p of WORD_PATTERNS) {
-    const m = p.re.exec(lower)
-    if (!m) continue
-    // A one- or two-letter word (z, la, et) only counts beside a time, where it is a zone and not a word.
-    if (p.word.length <= 2 && !/\d\s*(am|pm)?\s*$/.test(lower.slice(0, m.index).trimEnd()) && !/^\s*(time|zone)/.test(lower.slice(m.index + p.word.length))) continue
-    if (!best || p.word.length > best.word.length || (p.word.length === best.word.length && m.index < best.at)) best = { word: m[0], zone: p.zone, at: m.index }
+    p.re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = p.re.exec(text)) !== null) {
+      const matched = m[0]
+      const besideTime =
+        /\d\s*(am|pm)?\s*$/i.test(text.slice(0, m.index).trimEnd()) ||
+        /^\s*(time|zone)/i.test(text.slice(m.index + matched.length))
+      // A one- or two-letter word (z, la, et) only counts beside a time, where it is a zone and not a word.
+      if (p.word.length <= 2 && !besideTime) continue
+      // Ordinary English words that double as timezone abbreviations (eat, art, wet, west...)
+      // must appear in ALL CAPS in the original text or directly beside a time.
+      if (ENGLISH_WORD_ZONES.has(p.word)) {
+        const isAllCaps = matched === matched.toUpperCase() && matched !== matched.toLowerCase()
+        if (!isAllCaps && !besideTime) continue
+      }
+      if (!best || p.word.length > best.word.length || (p.word.length === best.word.length && m.index < best.at)) {
+        best = { word: matched.toLowerCase(), zone: p.zone, at: m.index }
+      }
+      break
+    }
   }
   return best ? { zone: best.zone, from: best.word, ambiguous: AMBIGUOUS.has(best.word.toLowerCase()) } : null
 }

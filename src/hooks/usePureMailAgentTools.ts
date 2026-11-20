@@ -146,22 +146,22 @@ export function usePureMailAgentTools(
       keepAsContext: async invoke => keepAsContextHandler(contextRef.current, invoke.arguments ?? {}),
       removeKeptContext: async invoke => removeKeptContextHandler(contextRef.current, invoke.arguments ?? {}),
       listThreads: async invoke =>
-        listThreadsHandler(contextRef.current, invoke.arguments),
+        listThreadsHandler(contextRef.current, invoke.arguments ?? {}),
       searchAllMail: async invoke =>
-        searchAllMailHandler(contextRef.current, invoke.arguments),
+        searchAllMailHandler(contextRef.current, invoke.arguments ?? {}),
       getThread: async invoke =>
-        getThreadHandler(contextRef.current, invoke.arguments),
+        getThreadHandler(contextRef.current, invoke.arguments ?? {}),
       showQuery: async invoke =>
-        showQueryHandler(contextRef.current, invoke.arguments),
+        showQueryHandler(contextRef.current, invoke.arguments ?? {}),
       listViews: async () => listViewsHandler(contextRef.current),
       saveView: async invoke =>
-        saveViewHandler(contextRef.current, invoke.arguments),
+        saveViewHandler(contextRef.current, invoke.arguments ?? {}),
       deleteView: async invoke =>
-        deleteViewHandler(contextRef.current, invoke.arguments),
+        deleteViewHandler(contextRef.current, invoke.arguments ?? {}),
       applyMailAction: async invoke =>
-        applyMailActionHandler(contextRef.current, invoke.arguments),
+        applyMailActionHandler(contextRef.current, invoke.arguments ?? {}),
       markThreadsRead: async invoke =>
-        markThreadsReadHandler(contextRef.current, invoke.arguments),
+        markThreadsReadHandler(contextRef.current, invoke.arguments ?? {}),
       startArchiveSweep: async invoke =>
         startArchiveSweepHandler(contextRef.current, invoke.arguments ?? {}),
       nextArchiveBatch: async invoke =>
@@ -183,82 +183,87 @@ export function usePureMailAgentTools(
         getTriageReportHandler(contextRef.current, invoke.arguments ?? {}),
       listMailChanges: async invoke =>
         listMailChangesHandler(contextRef.current, invoke.arguments ?? {}),
-      commitReplyDraft: async invoke => commitReplyDraftHandler(contextRef.current, invoke.arguments),
+      commitReplyDraft: async invoke =>
+        commitReplyDraftHandler(contextRef.current, invoke.arguments ?? {}),
       draftReply: async invoke =>
-        draftReplyHandler(contextRef.current, invoke.arguments),
+        draftReplyHandler(contextRef.current, invoke.arguments ?? {}),
       listDrafts: async invoke =>
-        listDraftsHandler(contextRef.current, invoke.arguments),
+        listDraftsHandler(contextRef.current, invoke.arguments ?? {}),
       getDraft: async invoke =>
-        getDraftHandler(contextRef.current, invoke.arguments),
+        getDraftHandler(contextRef.current, invoke.arguments ?? {}),
       updateDraft: async invoke =>
-        updateDraftHandler(contextRef.current, invoke.arguments),
+        updateDraftHandler(contextRef.current, invoke.arguments ?? {}),
       discardDraft: async invoke =>
-        discardDraftHandler(contextRef.current, invoke.arguments),
+        discardDraftHandler(contextRef.current, invoke.arguments ?? {}),
       sendDraft: async invoke =>
-        sendDraftHandler(contextRef.current, invoke.arguments),
+        sendDraftHandler(contextRef.current, invoke.arguments ?? {}),
       composeMessage: async invoke =>
-        composeMessageHandler(contextRef.current, invoke.arguments),
+        composeMessageHandler(contextRef.current, invoke.arguments ?? {}),
       addDraftAttachments: async invoke =>
-        addDraftAttachmentsHandler(contextRef.current, invoke.arguments),
+        addDraftAttachmentsHandler(contextRef.current, invoke.arguments ?? {}),
       removeDraftAttachment: async invoke =>
-        removeDraftAttachmentHandler(contextRef.current, invoke.arguments),
+        removeDraftAttachmentHandler(contextRef.current, invoke.arguments ?? {}),
       saveAttachments: async invoke =>
-        saveAttachmentsHandler(contextRef.current, invoke.arguments),
+        saveAttachmentsHandler(contextRef.current, invoke.arguments ?? {}),
       saveMessageAsPdf: async invoke =>
-        saveMessageAsPdfHandler(contextRef.current, invoke.arguments),
+        saveMessageAsPdfHandler(contextRef.current, invoke.arguments ?? {}),
       createMailTask: async invoke =>
-        createMailTaskHandler(contextRef.current, invoke.arguments),
+        createMailTaskHandler(contextRef.current, invoke.arguments ?? {}),
       listFilters: async () => listFiltersHandler(contextRef.current),
       createFilter: async invoke =>
-        createFilterHandler(contextRef.current, invoke.arguments),
+        createFilterHandler(contextRef.current, invoke.arguments ?? {}),
       applyFilterRetroactively: async invoke =>
-        applyFilterRetroactivelyHandler(contextRef.current, invoke.arguments),
+        applyFilterRetroactivelyHandler(
+          contextRef.current,
+          invoke.arguments ?? {},
+        ),
       createBox: async invoke =>
-        createBoxHandler(contextRef.current, invoke.arguments),
+        createBoxHandler(contextRef.current, invoke.arguments ?? {}),
       deleteFilter: async invoke =>
-        deleteFilterHandler(contextRef.current, invoke.arguments),
+        deleteFilterHandler(contextRef.current, invoke.arguments ?? {}),
       setFilterEnabled: async invoke =>
-        setFilterEnabledHandler(contextRef.current, invoke.arguments),
+        setFilterEnabledHandler(contextRef.current, invoke.arguments ?? {}),
       listBoxes: async () => listBoxesHandler(contextRef.current),
       fileThread: async invoke =>
-        fileThreadHandler(contextRef.current, invoke.arguments),
+        fileThreadHandler(contextRef.current, invoke.arguments ?? {}),
       openThread: async invoke =>
-        openThreadHandler(contextRef.current, invoke.arguments),
+        openThreadHandler(contextRef.current, invoke.arguments ?? {}),
       listRuns: async invoke =>
         listRunsHandler(contextRef.current, invoke.arguments ?? {}),
-      getRun: async invoke => getRunHandler(contextRef.current, invoke.arguments),
+      getRun: async invoke =>
+        getRunHandler(contextRef.current, invoke.arguments ?? {}),
       getRunReplies: async invoke =>
         getRunRepliesHandler(contextRef.current, invoke.arguments ?? {}),
       createRun: async invoke =>
-        createRunHandler(contextRef.current, invoke.arguments),
+        createRunHandler(contextRef.current, invoke.arguments ?? {}),
       createRunFromDrafts: async invoke =>
-        createRunFromDraftsHandler(contextRef.current, invoke.arguments),
+        createRunFromDraftsHandler(contextRef.current, invoke.arguments ?? {}),
       renderRun: async invoke =>
-        renderRunHandler(contextRef.current, invoke.arguments),
+        renderRunHandler(contextRef.current, invoke.arguments ?? {}),
       setRunNote: async invoke =>
-        setRunNoteHandler(contextRef.current, invoke.arguments),
+        setRunNoteHandler(contextRef.current, invoke.arguments ?? {}),
       sendRunItem: async invoke =>
-        sendRunItemHandler(contextRef.current, invoke.arguments),
+        sendRunItemHandler(contextRef.current, invoke.arguments ?? {}),
       skipRunItem: async invoke =>
-        skipRunItemHandler(contextRef.current, invoke.arguments),
+        skipRunItemHandler(contextRef.current, invoke.arguments ?? {}),
       pauseRun: async invoke =>
-        pauseRunHandler(contextRef.current, invoke.arguments),
+        pauseRunHandler(contextRef.current, invoke.arguments ?? {}),
       resumeRun: async invoke =>
-        resumeRunHandler(contextRef.current, invoke.arguments),
+        resumeRunHandler(contextRef.current, invoke.arguments ?? {}),
       setRunRecipients: async invoke =>
-        setRunRecipientsHandler(contextRef.current, invoke.arguments),
+        setRunRecipientsHandler(contextRef.current, invoke.arguments ?? {}),
       setRunFieldMap: async invoke =>
-        setRunFieldMapHandler(contextRef.current, invoke.arguments),
+        setRunFieldMapHandler(contextRef.current, invoke.arguments ?? {}),
       setRunTemplate: async invoke =>
-        setRunTemplateHandler(contextRef.current, invoke.arguments),
+        setRunTemplateHandler(contextRef.current, invoke.arguments ?? {}),
       insertRunNoteSlot: async invoke =>
-        insertRunNoteSlotHandler(contextRef.current, invoke.arguments),
+        insertRunNoteSlotHandler(contextRef.current, invoke.arguments ?? {}),
       previewRunItem: async invoke =>
-        previewRunItemHandler(contextRef.current, invoke.arguments),
+        previewRunItemHandler(contextRef.current, invoke.arguments ?? {}),
       addDraftsToRun: async invoke =>
-        addDraftsToRunHandler(contextRef.current, invoke.arguments),
+        addDraftsToRunHandler(contextRef.current, invoke.arguments ?? {}),
       archiveRun: async invoke =>
-        archiveRunHandler(contextRef.current, invoke.arguments),
+        archiveRunHandler(contextRef.current, invoke.arguments ?? {}),
     })),
   })
   return contextRef

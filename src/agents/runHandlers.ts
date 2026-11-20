@@ -10,6 +10,7 @@ import {
   createRunId,
   createRunTemplateDraft,
   draftHasNote,
+  finalizeRunBodyHtml,
   findRun,
   guessRunFieldMap,
   markRunItemCommitted,
@@ -42,6 +43,7 @@ import {
   normalizeRunKey,
 } from '../lib/mailRuns'
 import { plainTextToComposeHtml } from '../lib/mailCompose'
+import { stripHtmlToText } from '../lib/mailTextUtils'
 import { deliveryNote, draftEditBlock, draftReleaseBlock, type DraftDelivery } from '../lib/mailDeliveryStatus'
 import { ownAddresses, replyStateInStore } from '../lib/mailReplyState'
 import { normalizeMessageId } from '../lib/mailThreading'
@@ -898,6 +900,9 @@ export function setRunNoteHandler(
     )
   }
   const now = (context.now ?? new Date()).toISOString()
+  const plainBodyWithNote = stripHtmlToText(finalizeRunBodyHtml(bodyHtml).html)
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
   context.setStore(current => {
     const next: MailStore = {
       ...current,
@@ -907,7 +912,7 @@ export function setRunNoteHandler(
               ...entry,
               bodyHtml,
               // The plain body carries the note too, for search and text-only clients.
-              body: entry.body.replace(/\n{3,}/g, '\n\n'),
+              body: plainBodyWithNote || entry.body.replace(/\n{3,}/g, '\n\n'),
               updatedAt: now,
               syncState: 'pending' as const,
             }

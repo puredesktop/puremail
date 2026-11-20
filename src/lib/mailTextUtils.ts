@@ -49,7 +49,7 @@ function decodeEntity(whole: string, body: string): string {
   return body in NAMED_ENTITIES ? NAMED_ENTITIES[body]! : whole
 }
 
-function stripQuotedHtmlHistory(html?: string): {
+export function stripQuotedHtmlHistory(html?: string): {
   html: string
   stripped: string[]
   quotedHtml?: string

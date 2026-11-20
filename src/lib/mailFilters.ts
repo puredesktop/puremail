@@ -333,15 +333,16 @@ export function runMailFilters(
       names.push(rule.name)
       hitNamesByThread.set(threadId, names)
       const actions = rule.actions
-      if (actions.labelName) {
+      const realFolder =
+        actions.skipInbox && actions.labelName
+          ? accountFolderForBoxName(working, accountId, actions.labelName)
+          : undefined
+      if (actions.labelName && !realFolder) {
         const ensured = ensureMailLabel(working, actions.labelName)
         working = labelThread(ensured.store, threadId, ensured.label.id)
       }
       if (actions.skipInbox) {
         const before = working.threads.find(t => t.id === threadId)
-        const realFolder = actions.labelName
-          ? accountFolderForBoxName(working, accountId, actions.labelName)
-          : undefined
         if (realFolder) {
           // The box IS a real folder on the mail server (IMAP): move the
           // thread there for real instead of archiving a labelled copy.
@@ -399,13 +400,16 @@ export function runMailFilters(
     }
   }
 
-  // Stamp every candidate — matched or not — so this run never repeats,
-  // and record which rules acted for the per-thread audit line.
+  // Stamp candidates so full runs never repeat. When running a subset of
+  // rules (`options.ruleIds`), only stamp matched threads so other enabled
+  // rules are not locked out of unprocessed threads.
+  const isRuleSubset = Boolean(options.ruleIds && options.ruleIds.length > 0)
   working = {
     ...working,
     threads: working.threads.map(thread => {
       if (!candidateIds.has(thread.id)) return thread
       const names = hitNamesByThread.get(thread.id)
+      if (isRuleSubset && !names) return thread
       return {
         ...thread,
         filterRunAt: nowIso,

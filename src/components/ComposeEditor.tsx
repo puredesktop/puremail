@@ -52,6 +52,7 @@ import {
 import {
   bodyMentionsAttachment,
   defaultSignatureForAccount,
+  duplicateRecipientsAcrossFields,
   invalidRecipientsInInput,
   plainTextToComposeHtml,
   signaturesForAccount,
@@ -371,6 +372,19 @@ export function ComposeEditor({
       ),
     [composeBcc, composeCc, composeTo],
   )
+  const duplicateComposeRecipients = useMemo(
+    () =>
+      duplicateRecipientsAcrossFields({
+        to: composeRecipients,
+        cc: composeCcRecipients,
+        bcc: composeBccRecipients,
+      }),
+    [composeRecipients, composeCcRecipients, composeBccRecipients],
+  )
+  const totalComposeRecipients =
+    composeRecipients.length +
+    composeCcRecipients.length +
+    composeBccRecipients.length
   const composeSendPending = runChrome
     ? Boolean(runChrome.sendPending)
     : pendingSend?.target === 'compose'
@@ -382,12 +396,47 @@ export function ComposeEditor({
   // composer offers a real send (M0 capability gate, real for Gmail in M2).
   const composeCapable =
     !providerBacked || mailProviderSupports(providerBacked, 'compose')
+  const latestToRef = useRef(composeTo)
+  latestToRef.current = composeTo
+  const latestCcRef = useRef(composeCc)
+  latestCcRef.current = composeCc
+  const latestBccRef = useRef(composeBcc)
+  latestBccRef.current = composeBcc
+  const handleComposeToChange = (next: string): void => {
+    latestToRef.current = next
+    setComposeTo(next)
+  }
+  const handleComposeCcChange = (next: string): void => {
+    latestCcRef.current = next
+    setComposeCc(next)
+  }
+  const handleComposeBccChange = (next: string): void => {
+    latestBccRef.current = next
+    setComposeBcc(next)
+  }
+
   const canSendCompose =
     composeCapable &&
-    composeRecipients.length > 0 &&
-    Boolean(composeSubject.trim() || composeBody.trim()) &&
+    totalComposeRecipients > 0 &&
+    Boolean(
+      composeSubject.trim() ||
+        composeBody.trim() ||
+        composeAttachments.length > 0,
+    ) &&
     !composeSizeStatus.overLimit &&
     invalidComposeRecipients.length === 0
+  const activeDraftRecord = composeContext?.draftId
+    ? store.drafts.find(draft => draft.id === composeContext.draftId) ?? null
+    : null
+  const draftSaveStatusLabel = ((): string | null => {
+    if (runChrome) return null
+    if (composeSendPending) return 'Sending…'
+    if (activeDraftRecord?.providerSaveWarning) return 'Save failed'
+    if (activeDraftRecord) {
+      return activeDraftRecord.syncState === 'synced' ? 'Saved' : 'Saving…'
+    }
+    return canSaveCompose ? 'Local draft' : null
+  })()
   const composeSignatures = signaturesForAccount(
     store.settings,
     selectedAccount?.id,
@@ -461,13 +510,20 @@ export function ComposeEditor({
 
   // ── Rich text body (Phase M2) ────────────────────────────────────────
   const editorRef = useRef<HTMLDivElement>(null)
+  const savedLinkRangeRef = useRef<Range | null>(null)
   const [signatureMenuOpen, setSignatureMenuOpen] = useState(false)
+  const signatureMenuWrapRef = useRef<HTMLDivElement>(null)
+  useOutsideClose(signatureMenuWrapRef, signatureMenuOpen, () =>
+    setSignatureMenuOpen(false),
+  )
   const [linkUrlDraft, setLinkUrlDraft] = useState<string | null>(null)
   const [attachmentReminderOpen, setAttachmentReminderOpen] = useState(false)
   const [subjectReminderOpen, setSubjectReminderOpen] = useState(false)
   const subjectInputRef = useRef<HTMLInputElement>(null)
-  // The action Send-anyway resumes: plain send or a specific scheduled send.
-  const pendingSubjectActionRef = useRef<((event?: PersonGestureEvent) => void) | null>(null)
+  // The action Send-anyway resumes: stored as plain data (never a stale closure).
+  const pendingSubjectActionRef = useRef<
+    { kind: 'send' } | { kind: 'schedule'; sendAt: string } | null
+  >(null)
   const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false)
   const scheduleMenuWrapRef = useRef<HTMLDivElement>(null)
   useOutsideClose(scheduleMenuWrapRef, scheduleMenuOpen, () =>
@@ -744,13 +800,79 @@ export function ComposeEditor({
     syncBodyFromEditor()
   }
 
+  const openLinkInput = (): void => {
+    setLinkUrlDraft(current => {
+      if (current !== null) {
+        savedLinkRangeRef.current = null
+        return null
+      }
+      const selection = window.getSelection()
+      const editor = editorRef.current
+      if (
+        selection &&
+        selection.rangeCount > 0 &&
+        editor &&
+        editor.contains(selection.anchorNode)
+      ) {
+        savedLinkRangeRef.current = selection.getRangeAt(0).cloneRange()
+      } else {
+        savedLinkRangeRef.current = null
+      }
+      return ''
+    })
+  }
+
+  const applyLinkDraft = (): void => {
+    const raw = (linkUrlDraft ?? '').trim()
+    setLinkUrlDraft(null)
+    if (!raw) {
+      savedLinkRangeRef.current = null
+      return
+    }
+    const normalized =
+      /^[a-z][a-z0-9+.-]*:/i.test(raw)
+        ? raw
+        : `https://${raw}`
+    if (!/^https?:\/\//i.test(normalized)) {
+      savedLinkRangeRef.current = null
+      setCommandNotice('Links must use http:// or https://.')
+      return
+    }
+    const editor = editorRef.current
+    const saved = savedLinkRangeRef.current
+    savedLinkRangeRef.current = null
+    if (editor) {
+      editor.focus()
+      if (saved) {
+        const selection = window.getSelection()
+        selection?.removeAllRanges()
+        selection?.addRange(saved)
+      }
+      if (saved && !saved.collapsed) {
+        execEditorCommand('createLink', normalized)
+      } else {
+        const safeUrl = normalized
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;')
+        insertHtmlAtCaret(`<a href="${safeUrl}">${safeUrl}</a>`)
+      }
+    }
+  }
+
   // Seed the uncontrolled editor exactly once per mount: restore a
   // half-written body, or start a fresh compose with the default signature.
   useEffect(() => {
     const editor = editorRef.current
     if (!editor) return
     if (composeBodyHtml) {
-      editor.innerHTML = composeBodyHtml
+      // Always sanitize synced/loaded draft HTML before injecting into contentEditable,
+      // while preserving Send Run note markers (`data-run-note`) and respecting the
+      // user's remote-image policy.
+      editor.innerHTML = sanitizeMailHtml(composeBodyHtml, {
+        allowRemoteImages: store.settings.remoteImages?.policy === 'always',
+        preserveRunNoteAttr: true,
+      })
       stripEmptyInlineFormatting()
       return
     }
@@ -1164,9 +1286,15 @@ export function ComposeEditor({
     return Boolean(blocked)
   }
 
-  const scheduleComposeSend = (sendAt: string): void => {
-    if (!subjectReminderOpen && !composeSubject.trim()) {
-      pendingSubjectActionRef.current = () => scheduleComposeSend(sendAt)
+  const scheduleComposeSend = (
+    sendAt: string,
+    bypassSubjectReminder = false,
+  ): void => {
+    if (composeSendPending && pendingSend?.target === 'compose') {
+      undoPendingSend(pendingSend.id)
+    }
+    if (!bypassSubjectReminder && !subjectReminderOpen && !composeSubject.trim()) {
+      pendingSubjectActionRef.current = { kind: 'schedule', sendAt }
       setSubjectReminderOpen(true)
       setScheduleMenuOpen(false)
       return
@@ -1233,19 +1361,44 @@ export function ComposeEditor({
     ]
   }
 
-  const sendComposeMessage = (event?: PersonGestureEvent): void => {
+  const sendComposeMessage = (
+    event?: PersonGestureEvent,
+    bypassSubjectReminder = false,
+  ): void => {
     if (pendingSend?.target === 'compose') {
       undoPendingSend(pendingSend.id)
       return
     }
-    if (!canSendCompose) return
+    const effectiveTo = latestToRef.current
+    const effectiveCc = latestCcRef.current
+    const effectiveBcc = latestBccRef.current
+    const effectiveTotalRecipients =
+      parseComposeRecipients(effectiveTo).length +
+      parseComposeRecipients(effectiveCc).length +
+      parseComposeRecipients(effectiveBcc).length
+    const effectiveInvalidRecipients = [
+      ...invalidRecipientsInInput(effectiveTo),
+      ...invalidRecipientsInInput(effectiveCc),
+      ...invalidRecipientsInInput(effectiveBcc),
+    ]
+    const effectiveCanSend =
+      composeCapable &&
+      effectiveTotalRecipients > 0 &&
+      Boolean(
+        composeSubject.trim() ||
+          composeBody.trim() ||
+          composeAttachments.length > 0,
+      ) &&
+      !composeSizeStatus.overLimit &&
+      effectiveInvalidRecipients.length === 0
+    if (!effectiveCanSend) return
     // Only a person's own press sends (#1017): a scripted click is ignored.
     if (!isPersonGesture(event)) return
     if (contextSendBlocked()) return
     // Subject reminder: "(no subject)" in someone's inbox is almost always
     // an accident — ask once, inline, before the message leaves.
-    if (!subjectReminderOpen && !composeSubject.trim()) {
-      pendingSubjectActionRef.current = sendComposeMessage
+    if (!bypassSubjectReminder && !subjectReminderOpen && !composeSubject.trim()) {
+      pendingSubjectActionRef.current = { kind: 'send' }
       setSubjectReminderOpen(true)
       return
     }
@@ -1263,9 +1416,9 @@ export function ComposeEditor({
     }
     setAttachmentReminderOpen(false)
     const snapshot: ComposeSendSnapshot = {
-      to: composeTo,
-      cc: composeCc,
-      bcc: composeBcc,
+      to: effectiveTo,
+      cc: effectiveCc,
+      bcc: effectiveBcc,
       subject: composeSubject,
       body: composeBody,
       bodyHtml: composeBodyHtml,
@@ -1483,16 +1636,25 @@ export function ComposeEditor({
    * and closing keeps it current.
    */
   const contextComposeUntouched = ((): boolean => {
-    if (!composeContext) return false
-    if (composeContext.draftId) return false
     if (composeAttachments.length > 0) return false
     const body = composeBody.trim()
-    if (!body) return true
     const signature = defaultSignatureForAccount(
       store.settings,
       selectedAccount?.id,
     )
-    return Boolean(signature) && body === signature!.body.trim()
+    const bodyIsUntouched =
+      !body || (Boolean(signature) && body === signature!.body.trim())
+    if (!bodyIsUntouched) return false
+    if (!composeContext) {
+      // A brand-new compose window with no recipients, no subject, and only
+      // the auto-inserted default signature should close without littering Drafts.
+      return totalComposeRecipients === 0 && !composeSubject.trim()
+    }
+    if (composeContext.draftId) return false
+    if (composeContext.kind === 'forward' && totalComposeRecipients > 0) {
+      return false
+    }
+    return true
   })()
 
   /**
@@ -1501,6 +1663,9 @@ export function ComposeEditor({
    * untouched reply) just closes.
    */
   const closeKeepingDraft = (): void => {
+    if (pendingSend?.target === 'compose') {
+      undoPendingSend(pendingSend.id)
+    }
     if (contextComposeUntouched) {
       resetCompose()
       setComposeOpen(false)
@@ -1518,6 +1683,9 @@ export function ComposeEditor({
     if (canSaveCompose && !contextComposeUntouched && !discardArmed) {
       setDiscardArmed(true)
       return
+    }
+    if (pendingSend?.target === 'compose') {
+      undoPendingSend(pendingSend.id)
     }
     const contextDraftId = composeContext?.draftId ?? null
     resetCompose()
@@ -1544,14 +1712,17 @@ export function ComposeEditor({
       return
     }
     if (event.key !== 'Escape') return
-    event.stopPropagation()
     const hasOpenLayer =
       scheduleMenuOpen || signatureMenuOpen || linkUrlDraft !== null || fieldMenuOpen
-    const action = composeEscapeAction('docked', hasOpenLayer)
+    const modeForEscape = variant === 'full' ? 'full' : 'docked'
+    const action = composeEscapeAction(modeForEscape, hasOpenLayer)
     if (action === 'close-menus') {
+      event.preventDefault()
+      event.stopPropagation()
       setScheduleMenuOpen(false)
       setSignatureMenuOpen(false)
       setLinkUrlDraft(null)
+      savedLinkRangeRef.current = null
       setFieldMenuOpen(false)
       return
     }
@@ -1559,9 +1730,21 @@ export function ComposeEditor({
     if (variant === 'run') return
     // The recipient-suggestion listbox closes itself on this same press;
     // it is still in the DOM at bubble time, so its presence means this
-    // Escape belonged to it — the next one minimizes.
-    if (event.currentTarget.querySelector('[role="listbox"]')) return
-    if (action === 'minimize') onMinimize?.()
+    // Escape belonged to it — the next one minimizes/docks.
+    if (event.currentTarget.querySelector('[role="listbox"]')) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+    if (action === 'minimize') {
+      event.preventDefault()
+      event.stopPropagation()
+      onMinimize?.()
+    } else if (action === 'dock') {
+      event.preventDefault()
+      event.stopPropagation()
+      onDock?.()
+    }
   }
 
   const dockTitle =
@@ -1645,28 +1828,47 @@ export function ComposeEditor({
           {preset.label}
         </BulkMenuItem>
       ))}
-      <BulkMenuItem as="div" role="none" style={{ cursor: 'default' }}>
-        <input
-          type="datetime-local"
-          value={scheduleAtDraft}
-          aria-label="Custom send time"
-          style={{
-            border: 0,
-            outline: 'none',
-            background: 'transparent',
-            color: 'inherit',
-            font: 'inherit',
-          }}
-          onClick={event => event.stopPropagation()}
-          onChange={event => setScheduleAtDraft(event.currentTarget.value)}
-        />
-        <Button
-          size="sm"
-          disabled={!scheduleAtDraft}
-          onClick={() => scheduleComposeSend(scheduleAtDraft)}
-        >
-          Schedule
-        </Button>
+      <BulkMenuItem as="div" role="none" style={{ cursor: 'default', flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="datetime-local"
+            value={scheduleAtDraft}
+            aria-label="Custom send time"
+            style={{
+              border: 0,
+              outline: 'none',
+              background: 'transparent',
+              color: 'inherit',
+              font: 'inherit',
+              flex: 1,
+            }}
+            onClick={event => event.stopPropagation()}
+            onChange={event => setScheduleAtDraft(event.currentTarget.value)}
+          />
+          <Button
+            size="sm"
+            disabled={!scheduleAtDraft}
+            onClick={() => scheduleComposeSend(scheduleAtDraft)}
+          >
+            Schedule
+          </Button>
+        </div>
+        <span style={{ fontSize: 11, opacity: 0.72 }}>
+          {(() => {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+            if (!scheduleAtDraft) return `Local time (${tz})`
+            const parsed = new Date(scheduleAtDraft)
+            if (Number.isNaN(parsed.getTime())) return `Local time (${tz})`
+            return `${parsed.toLocaleString(undefined, {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZoneName: 'short',
+            })} (${tz})`
+          })()}
+        </span>
       </BulkMenuItem>
     </>
   )
@@ -1680,10 +1882,15 @@ export function ComposeEditor({
           <ComposeMinimizedStrip aria-label="Minimized compose window">
             <ComposeMinimizedTitle
               type="button"
-              title={dockTitle}
+              title={
+                selectedAccount?.email
+                  ? `${dockTitle} · From ${selectedAccount.email}`
+                  : dockTitle
+              }
               onClick={() => onRestore?.()}
             >
               {dockTitle}
+              {selectedAccount?.email ? ` · ${selectedAccount.email}` : ''}
             </ComposeMinimizedTitle>
             <ComposeMinimizedButton
               type="button"
@@ -1758,6 +1965,13 @@ export function ComposeEditor({
           ) : (
             <ComposeDockTitleBar>
               <ComposeDockTitle title={dockTitle}>{dockTitle}</ComposeDockTitle>
+              {selectedAccount?.email && (
+                <ComposeDockTitleMeta
+                  title={`Sending from ${selectedAccount.email}`}
+                >
+                  {selectedAccount.email}
+                </ComposeDockTitleMeta>
+              )}
               <ComposeDockWinButton
                 type="button"
                 aria-label="Minimize"
@@ -1806,7 +2020,7 @@ export function ComposeEditor({
                 <RecipientChipsInput
                   inputRef={composeToRef}
                   value={composeTo}
-                  onChange={setComposeTo}
+                  onChange={handleComposeToChange}
                   store={store}
                   accountId={selectedAccount?.id}
                   ariaLabel="To recipients"
@@ -1832,7 +2046,7 @@ export function ComposeEditor({
                 <ComposeDockRecipients>
                   <RecipientChipsInput
                     value={composeCc}
-                    onChange={setComposeCc}
+                    onChange={handleComposeCcChange}
                     store={store}
                     accountId={selectedAccount?.id}
                     ariaLabel="Cc recipients"
@@ -1845,7 +2059,7 @@ export function ComposeEditor({
                 <ComposeDockRecipients>
                   <RecipientChipsInput
                     value={composeBcc}
-                    onChange={setComposeBcc}
+                    onChange={handleComposeBccChange}
                     store={store}
                     accountId={selectedAccount?.id}
                     ariaLabel="Bcc recipients"
@@ -1935,6 +2149,7 @@ export function ComposeEditor({
           )}
 
           {(invalidComposeRecipients.length > 0 ||
+            duplicateComposeRecipients.length > 0 ||
             subjectReminderOpen ||
             attachmentReminderOpen ||
             linkUrlDraft !== null) && (
@@ -1951,26 +2166,19 @@ export function ComposeEditor({
                     onKeyDown={event => {
                       if (event.key !== 'Enter') return
                       event.preventDefault()
-                      const url = linkUrlDraft.trim()
-                      if (/^https?:\/\//i.test(url)) {
-                        execEditorCommand('createLink', url)
-                      }
-                      setLinkUrlDraft(null)
+                      applyLinkDraft()
                     }}
                   />
+                  <Button size="sm" onClick={applyLinkDraft}>
+                    Link
+                  </Button>
                   <Button
                     size="sm"
                     onClick={() => {
-                      const url = linkUrlDraft.trim()
-                      if (/^https?:\/\//i.test(url)) {
-                        execEditorCommand('createLink', url)
-                      }
+                      savedLinkRangeRef.current = null
                       setLinkUrlDraft(null)
                     }}
                   >
-                    Link
-                  </Button>
-                  <Button size="sm" onClick={() => setLinkUrlDraft(null)}>
                     Cancel
                   </Button>
                 </ComposeInlineRow>
@@ -1980,6 +2188,16 @@ export function ComposeEditor({
                   {invalidComposeRecipients.length === 1
                     ? `"${invalidComposeRecipients[0]?.email}" is not a valid email address — fix it to send.`
                     : `${invalidComposeRecipients.length} recipients are not valid email addresses — fix them to send.`}
+                </ComposeInlineNotice>
+              )}
+              {duplicateComposeRecipients.length > 0 && (
+                <ComposeInlineNotice $tone="warning" role="status">
+                  {duplicateComposeRecipients
+                    .map(
+                      entry =>
+                        `${entry.email} appears in ${entry.fields.join(' and ')}`,
+                    )
+                    .join(' · ')}
                 </ComposeInlineNotice>
               )}
               {subjectReminderOpen && (
@@ -2002,10 +2220,13 @@ export function ComposeEditor({
                   <Button
                     size="sm"
                     onClick={event => {
-                      const action =
-                        pendingSubjectActionRef.current ?? sendComposeMessage
+                      const pending = pendingSubjectActionRef.current
                       pendingSubjectActionRef.current = null
-                      action(event)
+                      if (pending?.kind === 'schedule') {
+                        scheduleComposeSend(pending.sendAt, true)
+                      } else {
+                        sendComposeMessage(event, true)
+                      }
                     }}
                   >
                     Send anyway
@@ -2019,7 +2240,11 @@ export function ComposeEditor({
                   aria-label="Attachment reminder"
                 >
                   The message mentions an attachment, but nothing is attached.
-                  <Button size="sm" data-release="send" onClick={sendComposeMessage}>
+                  <Button
+                    size="sm"
+                    data-release="send"
+                    onClick={event => sendComposeMessage(event, true)}
+                  >
                     Send anyway
                   </Button>
                   <Button
@@ -2086,9 +2311,7 @@ export function ComposeEditor({
               aria-label="Insert link"
               aria-expanded={linkUrlDraft !== null}
               onMouseDown={event => event.preventDefault()}
-              onClick={() =>
-                setLinkUrlDraft(current => (current === null ? '' : null))
-              }
+              onClick={openLinkInput}
             >
               <Link2 aria-hidden="true" />
             </ComposeDockToolbarButton>
@@ -2268,7 +2491,7 @@ export function ComposeEditor({
                   aria-label="Send later"
                   aria-haspopup="menu"
                   aria-expanded={scheduleMenuOpen}
-                  disabled={!canSendCompose}
+                  disabled={!canSendCompose || composeSendPending}
                   onClick={() => setScheduleMenuOpen(open => !open)}
                 >
                   <ChevronDown aria-hidden="true" />
@@ -2294,7 +2517,7 @@ export function ComposeEditor({
               <Paperclip aria-hidden="true" />
             </ComposeDockIconButton>
             {composeSignatures.length > 0 && (
-              <BulkMenuWrap>
+              <BulkMenuWrap ref={signatureMenuWrapRef}>
                 <ComposeDockIconButton
                   type="button"
                   aria-label="Insert signature"
@@ -2326,6 +2549,11 @@ export function ComposeEditor({
               </BulkMenuWrap>
             )}
             <KbdChip>⌘⏎</KbdChip>
+            {draftSaveStatusLabel && (
+              <ComposeDockFooterNote role="status" aria-live="polite">
+                {draftSaveStatusLabel}
+              </ComposeDockFooterNote>
+            )}
             <ComposeDockFooterSpacer />
             <ComposeDockIconButton
               type="button"
@@ -2354,7 +2582,11 @@ export function ComposeEditor({
   }
 
   return (
-    <ComposeScreen aria-label="Compose mail" {...composeAgentRefs}>
+    <ComposeScreen
+      aria-label="Compose mail"
+      onKeyDown={handleDockKeyDown}
+      {...composeAgentRefs}
+    >
       <ComposeHeader>
         <div>
           <Kicker>
@@ -2363,6 +2595,7 @@ export function ComposeEditor({
                 ? 'Forward'
                 : 'Reply'
               : 'New mail'}
+            {selectedAccount?.email ? ` · From ${selectedAccount.email}` : ''}
           </Kicker>
           <Subject>{composeContext ? dockTitle : 'Compose'}</Subject>
           <Meta>
@@ -2377,7 +2610,7 @@ export function ComposeEditor({
               Back to window
             </Button>
           )}
-          <Button size="sm" onClick={() => setComposeOpen(false)}>
+          <Button size="sm" onClick={closeKeepingDraft}>
             Close
           </Button>
         </div>
@@ -2406,7 +2639,7 @@ export function ComposeEditor({
           <RecipientChipsInput
             inputRef={composeToRef}
             value={composeTo}
-            onChange={setComposeTo}
+            onChange={handleComposeToChange}
             store={store}
             accountId={selectedAccount?.id}
             ariaLabel="To recipients"
@@ -2427,7 +2660,7 @@ export function ComposeEditor({
               <ComposeLabel>Cc</ComposeLabel>
               <RecipientChipsInput
                 value={composeCc}
-                onChange={setComposeCc}
+                onChange={handleComposeCcChange}
                 store={store}
                 accountId={selectedAccount?.id}
                 ariaLabel="Cc recipients"
@@ -2438,7 +2671,7 @@ export function ComposeEditor({
               <ComposeLabel>Bcc</ComposeLabel>
               <RecipientChipsInput
                 value={composeBcc}
-                onChange={setComposeBcc}
+                onChange={handleComposeBccChange}
                 store={store}
                 accountId={selectedAccount?.id}
                 ariaLabel="Bcc recipients"
@@ -2521,9 +2754,7 @@ export function ComposeEditor({
               title="Insert link"
               aria-expanded={linkUrlDraft !== null}
               onMouseDown={event => event.preventDefault()}
-              onClick={() =>
-                setLinkUrlDraft(current => (current === null ? '' : null))
-              }
+              onClick={openLinkInput}
             >
               <Link2 aria-hidden="true" />
             </ComposeToolbarButton>
@@ -2538,26 +2769,19 @@ export function ComposeEditor({
                 onKeyDown={event => {
                   if (event.key !== 'Enter') return
                   event.preventDefault()
-                  const url = linkUrlDraft.trim()
-                  if (/^https?:\/\//i.test(url)) {
-                    execEditorCommand('createLink', url)
-                  }
-                  setLinkUrlDraft(null)
+                  applyLinkDraft()
                 }}
               />
+              <Button size="sm" onClick={applyLinkDraft}>
+                Link
+              </Button>
               <Button
                 size="sm"
                 onClick={() => {
-                  const url = linkUrlDraft.trim()
-                  if (/^https?:\/\//i.test(url)) {
-                    execEditorCommand('createLink', url)
-                  }
+                  savedLinkRangeRef.current = null
                   setLinkUrlDraft(null)
                 }}
               >
-                Link
-              </Button>
-              <Button size="sm" onClick={() => setLinkUrlDraft(null)}>
                 Cancel
               </Button>
             </ComposeInlineRow>
@@ -2647,6 +2871,16 @@ export function ComposeEditor({
               : `${invalidComposeRecipients.length} recipients are not valid email addresses — fix them to send.`}
           </ComposeInlineNotice>
         )}
+        {duplicateComposeRecipients.length > 0 && (
+          <ComposeInlineNotice $tone="warning" role="status">
+            {duplicateComposeRecipients
+              .map(
+                entry =>
+                  `${entry.email} appears in ${entry.fields.join(' and ')}`,
+              )
+              .join(' · ')}
+          </ComposeInlineNotice>
+        )}
         {subjectReminderOpen && (
           <ComposeInlineNotice
             $tone="warning"
@@ -2667,10 +2901,13 @@ export function ComposeEditor({
             <Button
               size="sm"
               onClick={event => {
-                const action =
-                  pendingSubjectActionRef.current ?? sendComposeMessage
+                const pending = pendingSubjectActionRef.current
                 pendingSubjectActionRef.current = null
-                action(event)
+                if (pending?.kind === 'schedule') {
+                  scheduleComposeSend(pending.sendAt, true)
+                } else {
+                  sendComposeMessage(event, true)
+                }
               }}
             >
               Send anyway
@@ -2684,7 +2921,11 @@ export function ComposeEditor({
             aria-label="Attachment reminder"
           >
             The message mentions an attachment, but nothing is attached.
-            <Button size="sm" data-release="send" onClick={sendComposeMessage}>
+            <Button
+              size="sm"
+              data-release="send"
+              onClick={event => sendComposeMessage(event, true)}
+            >
               Send anyway
             </Button>
             <Button
@@ -2697,8 +2938,13 @@ export function ComposeEditor({
         )}
       </ComposeBody>
       <ComposeFooter>
+        {draftSaveStatusLabel && (
+          <ComposeDockFooterNote role="status" aria-live="polite">
+            {draftSaveStatusLabel}
+          </ComposeDockFooterNote>
+        )}
         {composeSignatures.length > 0 && (
-          <BulkMenuWrap>
+          <BulkMenuWrap ref={signatureMenuWrapRef}>
             <Button
               size="sm"
               aria-haspopup="menu"
@@ -2737,7 +2983,7 @@ export function ComposeEditor({
         <BulkMenuWrap ref={scheduleMenuWrapRef}>
           <Button
             size="sm"
-            disabled={!canSendCompose}
+            disabled={!canSendCompose || composeSendPending}
             aria-haspopup="menu"
             aria-expanded={scheduleMenuOpen}
             title="Send later"

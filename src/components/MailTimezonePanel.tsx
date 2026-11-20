@@ -41,7 +41,45 @@ function Mention({ mention: m, target, choices, guess }: { mention: TimeMention;
     const [hour, minute] = time.split(':').map(Number)
     if (!time) throw new Error('Choose a source time.')
     result = convertTime(date, hour!, minute!, zone, m.offset, target)
-    if (m.end) result += ` → ${convertTime(date === m.date ? m.end.date : date, m.end.hour, m.end.minute, zone, m.end.offset ?? m.offset, target)}`
+    if (m.end) {
+      // Preserve the original range duration when the user edits start date or start time.
+      const origStartMs = Date.UTC(
+        ...((m.date.split('-').map(Number) as [number, number, number]).map(
+          (v, idx) => (idx === 1 ? v - 1 : v),
+        ) as [number, number, number]),
+        m.hour,
+        m.minute,
+      )
+      const origEndMs = Date.UTC(
+        ...((m.end.date.split('-').map(Number) as [number, number, number]).map(
+          (v, idx) => (idx === 1 ? v - 1 : v),
+        ) as [number, number, number]),
+        m.end.hour,
+        m.end.minute,
+      )
+      const durationMs = origEndMs - origStartMs
+      const editedParts = date.split('-').map(Number)
+      if (
+        Number.isFinite(durationMs) &&
+        durationMs > 0 &&
+        editedParts.length === 3 &&
+        editedParts.every(Number.isFinite)
+      ) {
+        const shiftedEnd = new Date(
+          Date.UTC(
+            editedParts[0]!,
+            editedParts[1]! - 1,
+            editedParts[2]!,
+            hour!,
+            minute!,
+          ) + durationMs,
+        )
+        const endDate = `${String(shiftedEnd.getUTCFullYear()).padStart(4, '0')}-${String(shiftedEnd.getUTCMonth() + 1).padStart(2, '0')}-${String(shiftedEnd.getUTCDate()).padStart(2, '0')}`
+        result += ` → ${convertTime(endDate, shiftedEnd.getUTCHours(), shiftedEnd.getUTCMinutes(), zone, m.end.offset ?? m.offset, target)}`
+      } else {
+        result += ` → ${convertTime(date === m.date ? m.end.date : date, m.end.hour, m.end.minute, zone, m.end.offset ?? m.offset, target)}`
+      }
+    }
   } catch (error) { result = error instanceof RangeError ? 'Enter a valid IANA timezone, such as America/New_York.' : (error as Error).message }
   return <article>
     <blockquote>{m.text}</blockquote>
@@ -88,7 +126,12 @@ function ZonePicker({ choices, value, onChange, label, placeholder }: { choices:
         else if (e.key === 'Enter' && matches[active]) { e.preventDefault(); pick(matches[active]!) }
         else if (e.key === 'Escape') { setOpen(false); setTyped(null) }
       }}
-      onBlur={() => { if (typed !== null && !open) setTyped(null) }}/>
+      onBlur={() => {
+        // Close the list and clear unpicked text on blur/Tab so the field
+        // never displays an unapplied city while calculating in the old zone.
+        setOpen(false)
+        setTyped(null)
+      }}/>
     {open && matches.length > 0 ? <ul role="listbox" id={id}>
       {matches.map((c, i) => <li key={c.zone} role="option" aria-selected={i === active} onMouseDown={e => { e.preventDefault(); pick(c) }} onMouseEnter={() => setActive(i)}>{c.label}<small>{c.zone}</small></li>)}
     </ul> : null}

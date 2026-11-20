@@ -5,6 +5,10 @@ import {
   threadNeedsReply,
 } from '../lib/mailModel'
 import {
+  formatRecipientToken,
+  parseRecipientInput,
+} from '../lib/mailCompose'
+import {
   attachmentFromBytes,
   resolveAttachmentMimeType,
 } from '../lib/mailAttachments'
@@ -162,26 +166,12 @@ export function createComposeId(prefix: string): string {
 }
 
 export function parseComposeRecipients(raw: string): MailContact[] {
-  return raw
-    .split(/[,\n;]/)
-    .map(value => value.trim())
-    .filter(Boolean)
-    .map(value => {
-      const match = value.match(/^(.*?)<([^>]+)>$/)
-      if (!match) return { name: value, email: value }
-      const email = match[2].trim()
-      const name = match[1]?.trim().replace(/^"|"$/g, '') || email
-      return { name, email }
-    })
+  return parseRecipientInput(raw)
 }
 
 export function formatContactsInput(contacts: MailContact[]): string {
   return contacts
-    .map(contact =>
-      contact.name && contact.name !== contact.email
-        ? `${contact.name} <${contact.email}>`
-        : contact.email,
-    )
+    .map(contact => formatRecipientToken(contact.name, contact.email))
     .join(', ')
 }
 

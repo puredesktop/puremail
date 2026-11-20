@@ -20,9 +20,35 @@ export function scheduleSend(
     createdAt: now,
     status: 'scheduled',
   }
+  // Cancel any prior active schedule for the same draft so rescheduling never
+  // leaves an earlier send armed at the old time.
+  const previous = (store.scheduledSends ?? []).map(existing =>
+    existing.draftId === input.draftId && existing.status === 'scheduled'
+      ? { ...existing, status: 'cancelled' as const }
+      : existing,
+  )
   return {
     ...store,
-    scheduledSends: [...(store.scheduledSends ?? []), entry],
+    scheduledSends: [...previous, entry],
+  }
+}
+
+/** Cancel every active schedule targeting `draftId` (e.g. when the draft is discarded). */
+export function cancelScheduledSendsForDraft(
+  store: MailStore,
+  draftId: string,
+): MailStore {
+  const existing = store.scheduledSends ?? []
+  if (!existing.some(entry => entry.draftId === draftId && entry.status === 'scheduled')) {
+    return store
+  }
+  return {
+    ...store,
+    scheduledSends: existing.map(entry =>
+      entry.draftId === draftId && entry.status === 'scheduled'
+        ? { ...entry, status: 'cancelled' as const }
+        : entry,
+    ),
   }
 }
 

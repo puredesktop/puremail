@@ -71,6 +71,9 @@ export function compactPersistedMessage(message: MailMessage): MailMessage {
  * sync metadata.
  */
 export function compactPersistedDraft(draft: Draft): Draft {
+  if (!Array.isArray(draft.attachments)) {
+    return { ...draft, attachments: [] }
+  }
   return draft.attachments.some(attachment => attachment.content && attachment.remote)
     ? { ...draft, attachments: draft.attachments.map(strippedPersistedAttachment) }
     : draft
@@ -167,9 +170,28 @@ function entryIsRecordWithId(entry: unknown): boolean {
 }
 
 const REMOTE_IMAGE_SRC_ATTR =
-  /\s(src|srcset)\s*=\s*("(?:https?:)?\/\/[^"]*"|'(?:https?:)?\/\/[^']*')/gi
+  /\s(src|srcset)\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+)/gi
 const REMOTE_BACKGROUND_ATTR =
-  /\sbackground\s*=\s*("(?:https?:)?\/\/[^"]*"|'(?:https?:)?\/\/[^']*')/gi
+  /\sbackground\s*=\s*("[\u0000-\u0020]*(?:https?:)?\/\/[^"]*"|'[\u0000-\u0020]*(?:https?:)?\/\/[^']*'|[\u0000-\u0020]*(?:https?:)?\/\/[^\s"'=<>`]+)/gi
+
+function attrValueHasRemoteUrl(attrName: string, rawAttrValue: string): boolean {
+  const unquoted =
+    (rawAttrValue.startsWith('"') && rawAttrValue.endsWith('"')) ||
+    (rawAttrValue.startsWith("'") && rawAttrValue.endsWith("'"))
+      ? rawAttrValue.slice(1, -1)
+      : rawAttrValue
+  // Strip embedded ASCII tab/CR/LF and leading C0 control chars the way browsers do.
+  // eslint-disable-next-line no-control-regex
+  const cleaned = unquoted.replace(/[\t\r\n]/g, '')
+  if (attrName.toLowerCase() === 'srcset') {
+    return cleaned.split(',').some(candidate =>
+      // eslint-disable-next-line no-control-regex
+      /^[\u0000-\u0020]*(?:https?:)?\/\//i.test(candidate),
+    )
+  }
+  // eslint-disable-next-line no-control-regex
+  return /^[\u0000-\u0020]*(?:https?:)?\/\//i.test(cleaned)
+}
 
 /**
  * Rewrite remote image references in already-sanitized mail HTML so nothing
@@ -183,8 +205,10 @@ export function blockRemoteImagesInMailHtml(html: string): {
 } {
   let blockedCount = 0
   const blocked = html
-    .replace(/<(?:img|source)\b[^>]*>/gi, tag =>
-      tag.replace(REMOTE_IMAGE_SRC_ATTR, (_match, attr: string, value) => {
+    // Attribute-aware match so quoted `>` inside alt/title never truncates the tag.
+    .replace(/<(?:img|source)\b(?:"[^"]*"|'[^']*'|[^'">])*>/gi, tag =>
+      tag.replace(REMOTE_IMAGE_SRC_ATTR, (match, attr: string, value: string) => {
+        if (!attrValueHasRemoteUrl(attr, value)) return match
         blockedCount += 1
         return ` data-puremail-blocked-${attr.toLowerCase()}=${value}`
       }),

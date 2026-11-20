@@ -271,8 +271,8 @@ export function mergeReceipts(input: {
   return { merged: [...input.memory, ...arrived], arrived }
 }
 
-/** A schedule only moves forward: the later status holds, so a stale copy cannot revive one that was stopped. */
-const SCHEDULE_STAGE: Record<ScheduledSendStatus, number> = { scheduled: 0, sending: 1, sent: 2, cancelled: 2, failed: 2, unconfirmed: 2 }
+/** A schedule only moves forward: confirmed sent outranks cancelled/failed, and a settled retry (failed/cancelled) outranks unconfirmed. */
+const SCHEDULE_STAGE: Record<ScheduledSendStatus, number> = { scheduled: 0, sending: 1, unconfirmed: 2, cancelled: 3, failed: 3, sent: 4 }
 
 /** A union by id, less what this copy dropped itself, each at its furthest status. */
 export function mergeScheduledSends(input: {
