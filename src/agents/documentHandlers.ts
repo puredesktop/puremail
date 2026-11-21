@@ -1,5 +1,6 @@
 import type { AgentToolHandlerResult } from '@purescience/platform-ui/bridge/react/usePlatformAgentTools'
 import {
+  attachmentByteSize,
   attachmentDisplaySize,
   attachmentKindLabel,
   formatAttachmentBytes,
@@ -122,7 +123,9 @@ function attachmentCandidates(messages: MailMessage[]): Candidate[] {
   const candidates: Candidate[] = []
   for (const message of [...messages].reverse()) {
     for (const attachment of message.attachments ?? []) {
-      const key = `${attachment.name.toLowerCase()}|${attachmentDisplaySize(attachment)}`
+      const sizeKey =
+        attachmentByteSize(attachment) ?? attachmentDisplaySize(attachment)
+      const key = `${attachment.name.toLowerCase()}|${sizeKey}`
       if (seen.has(key)) continue
       seen.add(key)
       candidates.push({ message, attachment })

@@ -327,6 +327,30 @@ export function MailTopBar({
   // Armed naming instead of window.prompt: prompt() silently no-ops inside
   // the sandboxed shell iframe, so "Save as view" would look dead there.
   const [viewNameDraft, setViewNameDraft] = useState<string | null>(null)
+  const [viewNameError, setViewNameError] = useState<string | null>(null)
+  const submitViewName = (): void => {
+    if (!viewNameDraft) return
+    const trimmed = viewNameDraft.trim()
+    if (!trimmed) return
+    if (
+      savedViewForQuery &&
+      (store.savedViews ?? []).some(
+        view =>
+          view.id !== savedViewForQuery.id &&
+          view.name.trim().toLowerCase() === trimmed.toLowerCase(),
+      )
+    ) {
+      setViewNameError('A saved view with that name already exists.')
+      return
+    }
+    setStore(current =>
+      savedViewForQuery
+        ? renameMailView(current, savedViewForQuery.id, trimmed, currentQuery)
+        : saveMailView(current, trimmed, currentQuery),
+    )
+    setViewNameError(null)
+    setViewNameDraft(null)
+  }
   const commandResults = mailCommandsForQuery(queryFreeText)
 
   return (
@@ -348,6 +372,8 @@ export function MailTopBar({
             onChange={event => setDraftQuery(event.currentTarget.value)}
             onKeyDown={event => {
               if (event.key !== 'Escape') return
+              event.preventDefault()
+              event.stopPropagation()
               setSearchPanelOpen(false)
               event.currentTarget.blur()
             }}
@@ -397,9 +423,10 @@ export function MailTopBar({
                 <Button
                   size="sm"
                   disabled={!currentQuery.trim()}
-                  onClick={() =>
+                  onClick={() => {
+                    setViewNameError(null)
                     setViewNameDraft(savedViewForQuery?.name ?? '')
-                  }
+                  }}
                 >
                   {savedViewForQuery ? 'Rename view' : 'Save as view'}
                 </Button>
@@ -419,45 +446,42 @@ export function MailTopBar({
                       fontSize: 12,
                       padding: '2px 6px',
                     }}
-                    onChange={event =>
+                    onChange={event => {
+                      setViewNameError(null)
                       setViewNameDraft(event.currentTarget.value)
-                    }
+                    }}
                     onKeyDown={event => {
-                      if (event.key === 'Escape') setViewNameDraft(null)
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        setViewNameError(null)
+                        setViewNameDraft(null)
+                        return
+                      }
                       if (event.key !== 'Enter' || !viewNameDraft.trim())
                         return
-                      setStore(current =>
-                        savedViewForQuery
-                          ? renameMailView(
-                              current,
-                              savedViewForQuery.id,
-                              viewNameDraft,
-                              currentQuery,
-                            )
-                          : saveMailView(current, viewNameDraft, currentQuery),
-                      )
-                      setViewNameDraft(null)
+                      event.preventDefault()
+                      submitViewName()
                     }}
                   />
                   <Button
                     size="sm"
                     disabled={!viewNameDraft.trim()}
-                    onClick={() => {
-                      setStore(current =>
-                        savedViewForQuery
-                          ? renameMailView(
-                              current,
-                              savedViewForQuery.id,
-                              viewNameDraft,
-                              currentQuery,
-                            )
-                          : saveMailView(current, viewNameDraft, currentQuery),
-                      )
-                      setViewNameDraft(null)
-                    }}
+                    onClick={submitViewName}
                   >
                     Save
                   </Button>
+                  {viewNameError && (
+                    <span
+                      role="alert"
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--platform-colors-danger, #c43d3d)',
+                      }}
+                    >
+                      {viewNameError}
+                    </span>
+                  )}
                 </>
               )}
               {savedViewForQuery && (

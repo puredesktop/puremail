@@ -547,8 +547,14 @@ export async function syncStoreFile(store: MailStore): Promise<StoreFileChanges>
  */
 async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<DraftsFileChanges> {
   const now = new Date().toISOString()
-  const clearConsumedDiscards = (consumed: Array<[string, string]>): void => {
+  const clearConsumedDiscards = (
+    consumed: Array<[string, string]>,
+    keptDraftIds: ReadonlySet<string>,
+  ): void => {
     for (const [id, deletedAt] of consumed) {
+      // Never clear a discard recorded during readDraftsFile() if this save
+      // still carried the pre-discard draft alive in `store` / `value`.
+      if (keptDraftIds.has(id)) continue
       if (thisCopy.discards.get(id) === deletedAt) {
         thisCopy.discards.delete(id)
       }
@@ -560,9 +566,13 @@ async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<Dr
     // while IPC is in flight is preserved for the next save.
     const consumedDiscards = [...thisCopy.discards.entries()]
     const { value, changes } = mergedDraftsFile(store, file, now)
+    const keptDraftIds = new Set([
+      ...store.drafts.map(draft => draft.id),
+      ...value.drafts.map(draft => draft.id),
+    ])
     if (sameContent(value, raw, ignoreHomes)) {
       agreeWithFile(file, version)
-      clearConsumedDiscards(consumedDiscards)
+      clearConsumedDiscards(consumedDiscards, keptDraftIds)
       return holdArrivals(changes, store)
     }
     const written = await writePlatformStorageJson({
@@ -573,7 +583,7 @@ async function saveDraftsFile(store: MailStore, ignoreHomes = false): Promise<Dr
     })
     if (written.conflict) continue
     agreeWithFile(parseDraftsFile(JSON.parse(JSON.stringify(value))), written.version)
-    clearConsumedDiscards(consumedDiscards)
+    clearConsumedDiscards(consumedDiscards, keptDraftIds)
     return holdArrivals(changes, store)
   }
   throw new Error('Other copies of Mail kept saving at the same moment. Your drafts are safe here and will be saved on the next try.')

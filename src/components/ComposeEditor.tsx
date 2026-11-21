@@ -713,10 +713,34 @@ export function ComposeEditor({
       document.removeEventListener('selectionchange', onSelectionChange)
   })
 
+  const restoreBlockedRemoteImages = (html: string): string => {
+    if (!html.includes('data-puremail-blocked-') || typeof DOMParser === 'undefined') {
+      return html
+    }
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    for (const el of [...doc.body.querySelectorAll('img, source')]) {
+      const blockedSrc = el.getAttribute('data-puremail-blocked-src')
+      if (blockedSrc !== null) {
+        if (!el.hasAttribute('src') && /^https?:\/\//i.test(blockedSrc.trim())) {
+          el.setAttribute('src', blockedSrc.trim())
+        }
+        el.removeAttribute('data-puremail-blocked-src')
+      }
+      const blockedSrcset = el.getAttribute('data-puremail-blocked-srcset')
+      if (blockedSrcset !== null) {
+        if (!el.hasAttribute('srcset') && blockedSrcset.trim()) {
+          el.setAttribute('srcset', blockedSrcset)
+        }
+        el.removeAttribute('data-puremail-blocked-srcset')
+      }
+    }
+    return doc.body.innerHTML
+  }
+
   const syncBodyFromEditor = (): void => {
     const editor = editorRef.current
     if (!editor) return
-    setComposeBodyHtml(editor.innerHTML)
+    setComposeBodyHtml(restoreBlockedRemoteImages(editor.innerHTML))
     setComposeBody(editor.innerText.replace(/ /g, ' '))
     refreshInlineFormats()
   }

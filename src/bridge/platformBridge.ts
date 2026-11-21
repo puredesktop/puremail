@@ -626,7 +626,7 @@ export type {
 }
 
 function operationsBridgeAvailable(): boolean {
-  return !(import.meta.env.DEV && window.parent === window)
+  return typeof window !== 'undefined' && !isStandaloneDevMode()
 }
 
 /** Record one interaction into the ledger (the shell pins appSlug to this app). */
@@ -676,7 +676,9 @@ export async function sendPromptToDrawerAgent(input: {
       const session = await assistantSessions.create({ appId: MAIL_APP_SLUG, title: 'Mail' })
       await updateCurrentWorkspaceTab({ sessionId: session.id })
       return session.id
-    })().catch(error => { pendingDrawerSession = null; throw error })
+    })().finally(() => {
+      pendingDrawerSession = null
+    })
     sessionId = await pendingDrawerSession
   }
   if (input.sessionId) pendingDrawerSession = null

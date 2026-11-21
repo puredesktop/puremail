@@ -788,4 +788,173 @@ describe('compose, attachments, calendar, timezones, runs, persistence & tool fi
     expect(migrated.threads.some(t => t.id === 'thread_draft_sent1')).toBe(true)
     expect(migrated.messages.some(m => m.id === 'msg_sent_receipt')).toBe(true)
   })
+
+  it('round-2 review fixes: WHATWG remote-image bypasses, SVG data URI ban, body text preservation, video preservation, calendar TZID/RECURRENCE-ID, strict dates, snooze safety, timezone picking, real 0-byte drops, and run CSV/locked preservation', async () => {
+    // 1. WHATWG special-scheme remote-image bypasses & data:image/svg+xml rejection.
+    expect(mailHtmlHasRemoteImages('<img src="https:\\\\tracker.example/px.gif">')).toBe(true)
+    expect(mailHtmlHasRemoteImages('<img src="http:tracker.example/px.gif">')).toBe(true)
+    expect(sanitizeMailHtml('<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=">', { allowRemoteImages: true })).not.toContain('data:image/svg+xml')
+    // 2. Visible body text & alt attributes are never corrupted, data: srcset isn't false-positive blocked, and <video> survives collapseSpacerBlocks.
+    const bodyTextHtml = '<p>Set style="background: url(https://example.com/bg.png)"</p>'
+    expect(blockRemoteImagesInMailHtml(bodyTextHtml).blockedCount).toBe(0)
+    expect(blockRemoteImagesInMailHtml(bodyTextHtml).html).toContain('background: url(https://example.com/bg.png)')
+    expect(blockRemoteImagesInMailHtml('<img srcset="data:image/png;base64,//8AAQ== 1x">').blockedCount).toBe(0)
+    expect(sanitizeMailHtml('<div><video src="cid:clip@example.com"></video></div>')).toContain('<video')
+
+    // 3. Calendar: IANA TZID without VTIMEZONE, Windows TZID normalization, and RECURRENCE-ID in RSVP.
+    const noVtzIcs = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'METHOD:REQUEST',
+      'BEGIN:VEVENT',
+      'UID:no-vtz-1',
+      'RECURRENCE-ID:20261127T140000Z',
+      'DTSTART;TZID=America/New_York:20261120T140000',
+      'DTEND;TZID=America/New_York:20261120T150000',
+      'SUMMARY:No VTIMEZONE',
+      'ORGANIZER:mailto:org@example.com',
+      'ATTENDEE:mailto:alex@example.com',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n')
+    const parsedNoVtz = parseCalendarInvite(noVtzIcs)!
+    expect(parsedNoVtz.startsAt).toBe('2026-11-20T19:00:00.000Z')
+    expect(parsedNoVtz.timeZone).toBe('America/New_York')
+    const rsvpRec = buildInviteRsvpDraft({
+      invite: parsedNoVtz,
+      response: 'accepted',
+      account: { email: 'alex@example.com' },
+      threadId: 't_1',
+      timestamp: '2026-11-20T12:00:00.000Z',
+    })!
+    expect(rsvpRec.attachments[0]?.content).toContain('RECURRENCE-ID:')
+
+    const winTzIcs = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'METHOD:REQUEST',
+      'BEGIN:VEVENT',
+      'UID:win-tz-1',
+      'DTSTART;TZID=Eastern Standard Time:20261120T140000',
+      'DTEND;TZID=Eastern Standard Time:20261120T150000',
+      'SUMMARY:Outlook Invite',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n')
+    const parsedWin = parseCalendarInvite(winTzIcs)!
+    expect(parsedWin.timeZone).toBe('America/New_York')
+    expect(parsedWin.startsAt).toBe('2026-11-20T19:00:00.000Z')
+
+    // 4. Strict calendar dates in mailQuery: reject Feb 30 rollover and bare "1".
+    expect(parseMailQuery('before:2026-02-30').terms).toEqual([])
+    expect(parseMailQuery('before:1').terms).toEqual([])
+    expect(parseMailQuery('before:2026-11-20').terms).toHaveLength(1)
+
+    // 5. Snooze safety: invalid date does not wake; unsnooze does not resurrect trashed thread; deleted returnMailboxId falls back to inbox.
+    const s = baseStore()
+    const badSnoozeStore: MailStore = {
+      ...s,
+      threads: s.threads.map(t => ({ ...t, status: 'snoozed' as const, snoozedUntil: '' })),
+      snoozes: [{ threadId: 't_1', snoozedUntil: '', snoozedAt: '2026-11-19T00:00:00Z', returnMailboxId: 'deleted_box' }],
+    }
+    expect(wakeDueSnoozes(badSnoozeStore, '2026-11-20T00:00:00Z').wokenThreadIds).toEqual([])
+    const wokenFallback = unsnoozeThread(badSnoozeStore, 't_1', '2026-11-20T00:00:00Z')
+    expect(wokenFallback.threads[0]!.mailboxId).toBe('mbx_inbox')
+
+    const trashedWithStaleSnooze: MailStore = {
+      ...s,
+      mailboxes: [...s.mailboxes, { id: 'mbx_trash', accountId: 'acc_1', name: 'Trash', role: 'trash', unreadCount: 0 }],
+      threads: s.threads.map(t => ({ ...t, mailboxId: 'mbx_trash', status: 'archived' as const })),
+      snoozes: [{ threadId: 't_1', snoozedUntil: '2026-11-25T00:00:00Z', snoozedAt: '2026-11-19T00:00:00Z', returnMailboxId: 'mbx_inbox' }],
+    }
+    const pruned = unsnoozeThread(trashedWithStaleSnooze, 't_1')
+    expect(pruned.threads[0]!.mailboxId).toBe('mbx_trash')
+    expect(pruned.snoozes).toEqual([])
+
+    // 6. Timezone picking: parenthesized/dotted times match; bare numbers before words do not.
+    expect(zoneNamedIn('Meet at 3pm (ET)')?.zone).toBe('America/New_York')
+    expect(zoneNamedIn('Meet at 3:30 p.m. ET')?.zone).toBe('America/New_York')
+    expect(zoneNamedIn('I bought 3 art prints')).toBeNull()
+    expect(zoneNamedIn('123 West Main St')).toBeNull()
+    expect(zoneNamedIn('Use 12 pt font')).toBeNull()
+
+    // 7. Real 0-byte drop (no space after base64,) and parameterized data URL.
+    const realZero = await prepareMailDrop(
+      JSON.stringify({
+        version: 1,
+        kind: 'file',
+        name: 'empty.txt',
+        mimeType: 'text/plain',
+        dataUrl: 'data:text/plain;base64,',
+      }),
+      async b => b,
+    )
+    expect(realZero.attachments[0]?.size).toBe(0)
+    const paramDrop = await prepareMailDrop(
+      JSON.stringify({
+        version: 1,
+        kind: 'file',
+        name: 'hello.txt',
+        mimeType: 'text/plain',
+        dataUrl: 'data:text/plain;charset=utf-8;base64,SGVsbG8=',
+      }),
+      async b => b,
+    )
+    expect(paramDrop.attachments[0]?.size).toBe(5)
+
+    // 8. Safe attachment names: Windows reserved names & trailing dots.
+    expect(safeAttachmentFileName('CON.txt')).toBe('_CON.txt')
+    expect(safeAttachmentFileName('report.')).toBe('report')
+
+    // 9. CSV delimiter with leading blank line & spaced quoted fields.
+    expect(detectCsvDelimiter('\nname;email\nAda;ada@ex.com')).toBe(';')
+    expect(parseCsv('Name, Email\n"Doe, Jane", "jane@ex.com"')[1]).toEqual(['Doe, Jane', 'jane@ex.com'])
+
+    // 10. IMAP move resolves destination UID via Message-ID instead of reusing source UID.
+    let nextArchiveUid = 500
+    const inboxMsgs = [
+      { uid: 42, messageId: '<m-42@ex>', subject: 'Target', from: { name: 'A', email: 'a@ex.com' }, to: [{ name: 'Me', email: 'me@ex.com' }], date: '2026-11-19T10:00:00Z', body: 'hi', flags: ['\\Seen'] },
+    ]
+    const archiveMsgs = [
+      { uid: 42, messageId: '<innocent-42@ex>', subject: 'Innocent', from: { name: 'B', email: 'b@ex.com' }, to: [{ name: 'Me', email: 'me@ex.com' }], date: '2026-11-18T10:00:00Z', body: 'old', flags: ['\\Seen'] },
+    ]
+    const imap = new ImapMailProvider({
+      email: 'me@ex.com',
+      imap: {
+        connect: async () => {},
+        listFolders: async () => [
+          { path: 'INBOX', role: 'inbox' },
+          { path: 'Archive', role: 'archive' },
+        ],
+        fetchMessages: async (folder, _limit, _since, _before, headerFilter) => {
+          const list = folder === 'INBOX' ? inboxMsgs : archiveMsgs
+          if (headerFilter) {
+            const targetVal = Array.isArray(headerFilter)
+              ? headerFilter[0]?.value
+              : headerFilter.value
+            return list.filter(m => m.messageId === targetVal)
+          }
+          return [...list]
+        },
+        setFlag: async () => {},
+        move: async (from, uid, to) => {
+          const src = from === 'INBOX' ? inboxMsgs : archiveMsgs
+          const dst = to === 'INBOX' ? inboxMsgs : archiveMsgs
+          const idx = src.findIndex(m => m.uid === uid)
+          const [moved] = src.splice(idx, 1)
+          dst.push({ ...moved!, uid: to === 'Archive' ? ++nextArchiveUid : 900 })
+        },
+        append: async () => 1,
+        deleteMessage: async () => {},
+      },
+      smtp: { send: async () => {} },
+    })
+    const imapStore = await imap.fetchStore()
+    const targetThread = imapStore.threads.find(t => t.subject === 'Target')!
+    await imap.archiveThread(targetThread.id)
+    await imap.unarchiveThread(targetThread.id)
+    // Innocent Archive UID 42 must NEVER be moved to INBOX!
+    expect(archiveMsgs.some(m => m.messageId === '<innocent-42@ex>')).toBe(true)
+    expect(inboxMsgs.some(m => m.messageId === '<m-42@ex>')).toBe(true)
+  })
 })

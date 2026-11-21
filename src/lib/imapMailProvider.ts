@@ -496,6 +496,7 @@ const FOLDER_FETCH_MAX_PAGES = 12
 interface ThreadLocation {
   folder: string
   uid: number
+  messageId?: string
 }
 
 export interface ImapMailProviderOptions {
@@ -752,7 +753,7 @@ export class ImapMailProvider implements MailProvider {
             status:
               role === 'inbox'
                 ? 'inbox'
-                : role === 'archive'
+                : role === 'archive' || role === 'trash'
                   ? 'archived'
                   : 'waiting',
             priority: 'none',
@@ -850,8 +851,15 @@ export class ImapMailProvider implements MailProvider {
         }
         this.locations.set(threadId, [
           ...(this.locations.get(threadId) ?? []),
-          { folder: folder.path, uid: envelope.uid },
-          ...(extraLocations.get(handle) ?? []),
+          {
+            folder: folder.path,
+            uid: envelope.uid,
+            ...(envelope.messageId ? { messageId: envelope.messageId } : {}),
+          },
+          ...(extraLocations.get(handle) ?? []).map(loc => ({
+            ...loc,
+            ...(envelope.messageId ? { messageId: envelope.messageId } : {}),
+          })),
         ])
       }
     }
@@ -1008,7 +1016,11 @@ export class ImapMailProvider implements MailProvider {
     targetPath: string,
     options: { preserveSentAndDrafts?: boolean } = {},
   ): Promise<void> {
-    const moved = new Set<string>()
+    // Track resolved destination UIDs keyed by source `${folder}\0${uid}`.
+    // IMAP UIDs are per-mailbox (RFC 3501 / RFC 6851): never blindly reuse the
+    // source folder's UID in the target folder, or an immediate Undo/follow-up
+    // action could target an unrelated message in targetPath.
+    const movedTargets = new Map<string, ThreadLocation | null>()
     await this.eachLocation(
       threadId,
       async location => {
@@ -1017,18 +1029,56 @@ export class ImapMailProvider implements MailProvider {
           const role = this.folderRoleForPath(location.folder)
           if (role === 'sent' || role === 'drafts') return
         }
-        await this.options.imap.move(location.folder, location.uid, targetPath)
-        moved.add(`${location.folder}\0${location.uid}`)
+        const key = `${location.folder}\0${location.uid}`
+        const returnedUid = (await this.options.imap.move(
+          location.folder,
+          location.uid,
+          targetPath,
+        )) as unknown
+        if (typeof returnedUid === 'number' && Number.isFinite(returnedUid)) {
+          movedTargets.set(key, {
+            folder: targetPath,
+            uid: returnedUid,
+            ...(location.messageId ? { messageId: location.messageId } : {}),
+          })
+          return
+        }
+        if (location.messageId) {
+          try {
+            const matches = await this.options.imap.fetchMessages(
+              targetPath,
+              1,
+              undefined,
+              undefined,
+              { name: 'Message-ID', value: location.messageId },
+            )
+            const matched = matches.find(
+              copy => copy.messageId === location.messageId,
+            )
+            if (matched) {
+              movedTargets.set(key, {
+                folder: targetPath,
+                uid: matched.uid,
+                messageId: location.messageId,
+              })
+              return
+            }
+          } catch {
+            // Fall through and drop unknown destination UID safely.
+          }
+        }
+        movedTargets.set(key, null)
       },
       { skipVirtual: true },
     )
     this.locations.set(
       threadId,
-      (this.locations.get(threadId) ?? []).map(location =>
-        moved.has(`${location.folder}\0${location.uid}`)
-          ? { ...location, folder: targetPath }
-          : location,
-      ),
+      (this.locations.get(threadId) ?? []).flatMap(location => {
+        const key = `${location.folder}\0${location.uid}`
+        if (!movedTargets.has(key)) return [location]
+        const resolved = movedTargets.get(key)
+        return resolved ? [resolved] : []
+      }),
     )
   }
 
@@ -1160,16 +1210,26 @@ export class ImapMailProvider implements MailProvider {
     const inReplyTo = draft.sourceMessageId ? threadMessages.find(message => message.id === draft.sourceMessageId)?.messageIdHeader ?? references.at(-1) : references.at(-1)
     const attachments = options.attachments ?? await this.resolveOutgoingAttachments(draft.attachments)
     const toHeader = formatMimeAddressList(draft.to)
+    const ccHeader = formatMimeAddressList(cc)
+    const bccHeader = formatMimeAddressList(bcc)
+    const replyToHeader = formatMimeAddressList(draft.replyTo ?? [])
+    // Strict SMTP relays may reject messages with zero visible destination
+    // headers when Bcc is stripped from the wire MIME.
+    const effectiveToHeader =
+      toHeader ||
+      (options.includeBcc === false && !ccHeader && (draft.bcc?.length ?? 0) > 0
+        ? 'undisclosed-recipients:;'
+        : '')
     return buildMimeMessage({
       headerLines: [
         `Date: ${options.dateHeader ?? new Date().toUTCString()}`,
         `Message-ID: ${messageId ?? imapDraftMessageId(draft)}`,
         ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${references.join(' ')}`] : []),
         `From: ${this.options.email}`,
-        ...(toHeader ? [`To: ${toHeader}`] : []),
-        ...(cc.length ? [`Cc: ${formatMimeAddressList(cc)}`] : []),
-        ...(bcc.length ? [`Bcc: ${formatMimeAddressList(bcc)}`] : []),
-        ...(draft.replyTo?.length ? [`Reply-To: ${formatMimeAddressList(draft.replyTo)}`] : []),
+        ...(effectiveToHeader ? [`To: ${effectiveToHeader}`] : []),
+        ...(ccHeader ? [`Cc: ${ccHeader}`] : []),
+        ...(bccHeader ? [`Bcc: ${bccHeader}`] : []),
+        ...(replyToHeader ? [`Reply-To: ${replyToHeader}`] : []),
         `Subject: ${encodeMimeHeaderValue(draft.subject)}`,
       ],
       body: draft.body,
@@ -1412,15 +1472,18 @@ export class ImapMailProvider implements MailProvider {
     const copies = await this.options.imap.fetchMessages(sent.path, 1, undefined, undefined, { name: 'Message-ID', value: message.messageIdHeader! })
     if (!copies.some(copy => copy.messageId === message.messageIdHeader)) {
       const toHeader = formatMimeAddressList(message.to)
+      const ccHeader = formatMimeAddressList(message.cc ?? [])
+      const bccHeader = formatMimeAddressList(message.bcc ?? [])
+      const replyToHeader = formatMimeAddressList(message.replyTo ?? [])
       const raw = message.sentCopyMime ?? buildMimeMessage({
         headerLines: [
           `Date: ${new Date(message.receivedAt).toUTCString()}`,
           `Message-ID: ${message.messageIdHeader}`,
           `From: ${this.options.email}`,
           ...(toHeader ? [`To: ${toHeader}`] : []),
-          ...(message.cc?.length ? [`Cc: ${formatMimeAddressList(message.cc)}`] : []),
-          ...(message.bcc?.length ? [`Bcc: ${formatMimeAddressList(message.bcc)}`] : []),
-          ...(message.replyTo?.length ? [`Reply-To: ${formatMimeAddressList(message.replyTo)}`] : []),
+          ...(ccHeader ? [`Cc: ${ccHeader}`] : []),
+          ...(bccHeader ? [`Bcc: ${bccHeader}`] : []),
+          ...(replyToHeader ? [`Reply-To: ${replyToHeader}`] : []),
           `Subject: ${encodeMimeHeaderValue(message.subject)}`,
           ...(message.inReplyTo ? [`In-Reply-To: ${message.inReplyTo}`] : []),
           ...(message.references?.length ? [`References: ${message.references.join(' ')}`] : []),

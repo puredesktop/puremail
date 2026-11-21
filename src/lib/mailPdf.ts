@@ -88,7 +88,20 @@ function messageHtml(message: MailMessage): string {
     .join('')
   const SAFE_RASTER_DATA_URI =
     /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[a-z0-9+/=\s]+$/i
-  let rawBodyHtml = message.bodyHtml?.trim() ?? ''
+  const normalizeCid = (raw: string): string => {
+    const trimmed = raw.trim()
+    let decoded = trimmed
+    try {
+      decoded = decodeURIComponent(trimmed)
+    } catch {
+      decoded = trimmed
+    }
+    return decoded.trim().replace(/^<|>$/g, '').trim().toLowerCase()
+  }
+  const rawBodyHtml = message.bodyHtml?.trim() ?? ''
+  let body = rawBodyHtml
+    ? sanitizeMailHtml(rawBodyHtml, { allowRemoteImages: false })
+    : plainTextHtml(message.body)
   if (rawBodyHtml && message.attachments.length > 0) {
     const cidMap = new Map<string, string>()
     for (const attachment of message.attachments) {
@@ -98,24 +111,24 @@ function messageHtml(message: MailMessage): string {
         SAFE_RASTER_DATA_URI.test(attachment.content.trim())
       ) {
         cidMap.set(
-          attachment.contentId.replace(/^<|>$/g, '').toLowerCase(),
+          normalizeCid(attachment.contentId),
           attachment.content.trim().replace(/\s+/g, ''),
         )
       }
     }
     if (cidMap.size > 0) {
-      rawBodyHtml = rawBodyHtml.replace(
-        /src=(["'])cid:([^"']+)\1/gi,
-        (whole, quote: string, cid: string) => {
-          const resolved = cidMap.get(cid.replace(/^<|>$/g, '').toLowerCase())
-          return resolved ? `src=${quote}${escapeHtml(resolved)}${quote}` : whole
+      // sanitizeMailHtml normalizes attributes via DOMParser into double-quoted
+      // `src="cid:..."`, and we re-validate the data URI + escape it here.
+      body = body.replace(
+        /\bsrc\s*=\s*(?:"\s*cid:([^"]+)"|'\s*cid:([^']+)'|cid:([^\s"'=<>`]+))/gi,
+        (whole, dq?: string, sq?: string, bare?: string) => {
+          const cid = dq ?? sq ?? bare ?? ''
+          const resolved = cidMap.get(normalizeCid(cid))
+          return resolved ? `src="${escapeHtml(resolved)}"` : whole
         },
       )
     }
   }
-  const body = rawBodyHtml
-    ? sanitizeMailHtml(rawBodyHtml, { allowRemoteImages: false })
-    : plainTextHtml(message.body)
   const attachments = message.attachments.length
     ? `<div class="attachments"><strong>Attachments</strong><ul>${message.attachments
         .map(item => `<li>${escapeHtml(item.name)} · ${escapeHtml(attachmentDisplaySize(item))}</li>`)

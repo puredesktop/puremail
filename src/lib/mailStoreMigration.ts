@@ -249,6 +249,7 @@ function reattachRehomedDrafts(store: MailStore): MailStore {
     messages: store.messages.filter(
       message =>
         message.deliveryAccepted ||
+        typeof message.threadId !== 'string' ||
         (!reattachedThreadIds.has(message.threadId) &&
           (!message.threadId.startsWith(FILED_DRAFT_THREAD_PREFIX) ||
             stillHosting.has(message.threadId))),

@@ -2516,9 +2516,19 @@ export function ThreadReader({
                         }
                       }
                       const htmlHistory = stripQuotedHtmlHistory(message.bodyHtml)
-                      const visibleHtml = htmlHistory.quotedHtml
+                      // Only split/collapse quoted HTML when the reply prefix has
+                      // visible text or media; otherwise forwarded/quote-only emails
+                      // wrapped in outer tags would render blank above "Quoted history hidden".
+                      const hasVisibleReplyHtml =
+                        Boolean(htmlHistory.quotedHtml) &&
+                        (stripHtmlToText(htmlHistory.html).trim().length > 0 ||
+                          /<(?:img|table|video|audio|hr)\b/i.test(htmlHistory.html))
+                      const visibleHtml = hasVisibleReplyHtml
                         ? htmlHistory.html
                         : message.bodyHtml
+                      const collapsibleQuotedHtml = hasVisibleReplyHtml
+                        ? htmlHistory.quotedHtml
+                        : undefined
                       return (
                         <>
                           {hasRemoteImages && (
@@ -2586,7 +2596,7 @@ export function ThreadReader({
                             allowRemoteImages={decision.load}
                             onOpenMailto={onOpenMailto}
                           />
-                          {htmlHistory.quotedHtml &&
+                          {collapsibleQuotedHtml &&
                             (quotedExpanded ? (
                               <ExpandedQuoteBlock>
                                 <ExpandedQuoteHeader>
@@ -2602,7 +2612,7 @@ export function ThreadReader({
                                   </TextLinkButton>
                                 </ExpandedQuoteHeader>
                                 <SanitizedMessageBody
-                                  bodyHtml={htmlHistory.quotedHtml}
+                                  bodyHtml={collapsibleQuotedHtml}
                                   allowRemoteImages={decision.load}
                                   onOpenMailto={onOpenMailto}
                                 />

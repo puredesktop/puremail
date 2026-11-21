@@ -21,10 +21,28 @@ export interface SnoozeWakeResult {
 function snoozeIsDue(snoozedUntil: string, now: string): boolean {
   const untilMs = Date.parse(snoozedUntil)
   const nowMs = Date.parse(now)
-  if (Number.isFinite(untilMs) && Number.isFinite(nowMs)) {
-    return untilMs <= nowMs
-  }
-  return snoozedUntil <= now
+  if (!Number.isFinite(untilMs) || !Number.isFinite(nowMs)) return false
+  return untilMs <= nowMs
+}
+
+function resolveWakeMailboxId(
+  store: MailStore,
+  accountId: string,
+  candidateId: string | undefined,
+): string {
+  const accountBoxes = store.mailboxes.filter(
+    mailbox => mailbox.accountId === accountId,
+  )
+  const validCandidate = candidateId
+    ? accountBoxes.find(
+        mailbox => mailbox.id === candidateId && mailbox.role !== 'trash',
+      )
+    : undefined
+  if (validCandidate) return validCandidate.id
+  const inbox =
+    accountBoxes.find(mailbox => mailbox.role === 'inbox') ??
+    store.mailboxes.find(mailbox => mailbox.role === 'inbox')
+  return inbox?.id ?? candidateId ?? ''
 }
 
 export function wakeDueSnoozes(
@@ -62,7 +80,11 @@ export function wakeDueSnoozes(
     const isOrphanDue = orphanDueThreadIds.has(thread.id)
     if ((!entry && !isOrphanDue) || thread.status !== 'snoozed') return thread
     wokenThreadIds.push(thread.id)
-    const returnMailboxId = entry?.returnMailboxId ?? thread.mailboxId
+    const returnMailboxId = resolveWakeMailboxId(
+      store,
+      thread.accountId,
+      entry?.returnMailboxId ?? thread.mailboxId,
+    )
     const { snoozedUntil: _snoozedUntil, ...rest } = thread
     return {
       ...rest,
@@ -95,6 +117,14 @@ export function unsnoozeThread(
   const entry = (store.snoozes ?? []).find(item => item.threadId === threadId)
   const target = store.threads.find(thread => thread.id === threadId)
   if (!entry && target?.status !== 'snoozed') return store
+  // If the thread is no longer snoozed (e.g. archived or trashed), only prune
+  // the stale snooze record without resurrecting the thread back into Inbox.
+  if (target?.status !== 'snoozed') {
+    return {
+      ...store,
+      snoozes: (store.snoozes ?? []).filter(item => item.threadId !== threadId),
+    }
+  }
   const inboxRoleMailboxes = new Set(
     store.mailboxes
       .filter(mailbox => mailbox.role === 'inbox')
@@ -104,7 +134,11 @@ export function unsnoozeThread(
     ...store,
     threads: store.threads.map(thread => {
       if (thread.id !== threadId) return thread
-      const returnMailboxId = entry?.returnMailboxId ?? thread.mailboxId
+      const returnMailboxId = resolveWakeMailboxId(
+        store,
+        thread.accountId,
+        entry?.returnMailboxId ?? thread.mailboxId,
+      )
       const { snoozedUntil: _snoozedUntil, ...rest } = thread
       return {
         ...rest,

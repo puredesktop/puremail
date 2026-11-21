@@ -202,10 +202,11 @@ export function buildMimeMessage(input: MimeMessageInput): string {
   )
   const partLines = (part: MimeAttachmentPart, cid?: string): string[] => {
     const fileName = mimeFileName(part.name)
+    const safeMimeType =
+      sanitizeMimeHeaderValue(part.mimeType || 'application/octet-stream') ||
+      'application/octet-stream'
     return [
-      `Content-Type: ${
-        part.mimeType || 'application/octet-stream'
-      }; name=${fileName}`,
+      `Content-Type: ${safeMimeType}; name=${fileName}`,
       'Content-Transfer-Encoding: base64',
       `Content-Disposition: ${
         cid ? 'inline' : 'attachment'

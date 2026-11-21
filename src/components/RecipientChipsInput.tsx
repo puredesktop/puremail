@@ -229,37 +229,38 @@ export function RecipientChipsInput({
             <RecipientChip
               key={`${chip.email}-${index}`}
               $invalid={!valid}
-              tabIndex={!valid ? 0 : undefined}
-              role={!valid ? 'button' : undefined}
-              aria-label={
-                !valid
-                  ? `Invalid recipient ${chip.email} — press Enter or click to edit`
-                  : undefined
-              }
               title={
                 valid
                   ? `${chip.email} (double-click to edit)`
                   : `"${chip.email}" is not a valid email address — click or press Enter to edit`
               }
-              onClick={event => {
-                if (!valid) {
-                  event.stopPropagation()
-                  editChip(index)
-                }
-              }}
               onDoubleClick={event => {
                 event.stopPropagation()
                 editChip(index)
               }}
-              onKeyDown={event => {
-                if (!valid && (event.key === 'Enter' || event.key === ' ')) {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  editChip(index)
-                }
-              }}
             >
-              <span>
+              <span
+                tabIndex={!valid ? 0 : undefined}
+                role={!valid ? 'button' : undefined}
+                aria-label={
+                  !valid
+                    ? `Invalid recipient ${chip.email} — press Enter or click to edit`
+                    : undefined
+                }
+                onClick={event => {
+                  if (!valid) {
+                    event.stopPropagation()
+                    editChip(index)
+                  }
+                }}
+                onKeyDown={event => {
+                  if (!valid && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    editChip(index)
+                  }
+                }}
+              >
                 {chip.name && chip.name !== chip.email
                   ? `${chip.name} · ${chip.email}`
                   : chip.email}
@@ -269,7 +270,9 @@ export function RecipientChipsInput({
                 type="button"
                 aria-label={`Remove recipient ${chip.email}`}
                 onMouseDown={event => event.preventDefault()}
+                onKeyDown={event => event.stopPropagation()}
                 onClick={event => {
+                  event.stopPropagation()
                   // The second click of a double-click (detail > 1) or any
                   // click within the pick grace period is the ghost of the
                   // selection gesture, not an intent to remove.

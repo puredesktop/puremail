@@ -152,8 +152,10 @@ export function zoneNamedIn(text: string): ZoneGuess | null {
     let m: RegExpExecArray | null
     while ((m = p.re.exec(text)) !== null) {
       const matched = m[0]
+      const before = text.slice(0, m.index).trimEnd()
       const besideTime =
-        /\d\s*(am|pm)?\s*$/i.test(text.slice(0, m.index).trimEnd()) ||
+        /(?:^|[^\d])\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?[\s(,/-]*$/i.test(before) ||
+        /(?:^|[^\d])\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)[\s(,/-]*$/i.test(before) ||
         /^\s*(time|zone)/i.test(text.slice(m.index + matched.length))
       // A one- or two-letter word (z, la, et) only counts beside a time, where it is a zone and not a word.
       if (p.word.length <= 2 && !besideTime) continue

@@ -123,10 +123,14 @@ describe('ComposeEditor audit fixes and must-have UX', () => {
     expect(schedulePendingSend).toHaveBeenCalledTimes(1)
   })
 
-  it('sanitizes untrusted draft bodyHtml while preserving data-run-note and blocking remote pixels by default', async () => {
+  it('sanitizes untrusted draft bodyHtml while preserving data-run-note, blocking remote pixels in editor, and restoring image src on edit sync', async () => {
+    const syncedHtmls: string[] = []
     const { host } = await renderCompose({
       composeBodyHtml:
         '<p>Safe</p><div data-run-note=""><p>Personal note</p></div><img src="https://tracker.example/p.gif"><img src=x onerror="window.__xss=1"><script>window.__xss=2</script>',
+      setComposeBodyHtml: next => {
+        if (typeof next === 'string') syncedHtmls.push(next)
+      },
     })
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!
     expect(editor.innerHTML).toContain('Safe')
@@ -135,6 +139,13 @@ describe('ComposeEditor audit fixes and must-have UX', () => {
     expect(editor.querySelector('[data-run-note]')).toBeTruthy()
     expect(editor.innerHTML).not.toMatch(/\ssrc="https:/)
     expect(editor.innerHTML).toContain('data-puremail-blocked-src=')
+    // Editing the body syncs back valid `src="https://..."` without losing images or leaking blocked attr.
+    await act(async () => {
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const latestSynced = syncedHtmls.at(-1) ?? ''
+    expect(latestSynced).toContain('src="https://tracker.example/p.gif"')
+    expect(latestSynced).not.toContain('data-puremail-blocked-src')
   })
 
   it('enables Send for Bcc-only and attachment-only drafts, shows From identity and duplicate-recipient warning', async () => {

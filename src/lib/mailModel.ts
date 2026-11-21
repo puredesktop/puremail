@@ -291,15 +291,20 @@ export function createTaskFromMessage(
  */
 export function latestInboundMessage(
   messages: MailMessage[],
-  ownerEmail: string,
+  ownerEmail: string | readonly string[],
 ): MailMessage | null {
-  const own = ownerEmail.trim().toLowerCase()
+  const ownSet = new Set(
+    (Array.isArray(ownerEmail) ? ownerEmail : [ownerEmail])
+      .map(email => email.trim().toLowerCase())
+      .filter(Boolean),
+  )
   const sorted = messages.filter(message => !message.isDraft).sort((a, b) =>
     b.receivedAt.localeCompare(a.receivedAt),
   )
   return (
     sorted.find(
-      message => !own || message.from.email.trim().toLowerCase() !== own,
+      message =>
+        ownSet.size === 0 || !ownSet.has(message.from.email.trim().toLowerCase()),
     ) ??
     sorted[0] ??
     null
@@ -310,6 +315,8 @@ export function latestInboundMessage(
  * Reply-all recipients (Gmail semantics): the original sender in To, and
  * everyone else on the message (To + Cc, minus the account owner and the
  * sender) preserved as Cc so nobody silently drops off the conversation.
+ * Replying-all to your own sent message keeps original To recipients in To
+ * and remaining Cc recipients in Cc instead of self-addressing.
  */
 export function replyAllRecipientsForMessage(
   message: MailMessage,
@@ -318,7 +325,26 @@ export function replyAllRecipientsForMessage(
   const ownList = (Array.isArray(ownerEmail) ? ownerEmail : [ownerEmail])
     .map(email => email.trim().toLowerCase())
     .filter(Boolean)
+  const ownSet = new Set(ownList)
   const senderEmail = message.from.email.trim().toLowerCase()
+  if (ownSet.has(senderEmail)) {
+    const to: MailContact[] = []
+    const cc: MailContact[] = []
+    const seen = new Set(ownList)
+    for (const contact of message.to) {
+      const email = contact.email.trim().toLowerCase()
+      if (!email || seen.has(email)) continue
+      seen.add(email)
+      to.push(contact)
+    }
+    for (const contact of message.cc ?? []) {
+      const email = contact.email.trim().toLowerCase()
+      if (!email || seen.has(email)) continue
+      seen.add(email)
+      cc.push(contact)
+    }
+    return { to: to.length > 0 ? to : [message.from], cc }
+  }
   const cc: MailContact[] = []
   const seen = new Set([senderEmail, ...ownList])
   for (const contact of [...message.to, ...(message.cc ?? [])]) {
@@ -382,11 +408,15 @@ export function widenDraftToReplyAll(
  */
 export function replyRecipientsForMessage(
   message: MailMessage,
-  ownerEmail: string,
+  ownerEmail: string | readonly string[],
 ): { to: MailContact[]; cc: MailContact[] } {
-  const own = ownerEmail.trim().toLowerCase()
+  const ownSet = new Set(
+    (Array.isArray(ownerEmail) ? ownerEmail : [ownerEmail])
+      .map(email => email.trim().toLowerCase())
+      .filter(Boolean),
+  )
   const senderEmail = message.from.email.trim().toLowerCase()
-  if (own && senderEmail === own) {
+  if (ownSet.has(senderEmail)) {
     return { to: message.to, cc: [] }
   }
   return { to: [message.from], cc: [] }
@@ -399,7 +429,7 @@ export function createReplyDraft(
   message: MailMessage | null,
   signature = '',
   now = new Date().toISOString(),
-  ownerEmail = '',
+  ownerEmail: string | readonly string[] = '',
   mode: ReplyDraftMode = 'reply_all',
   /** Seeds the body above the signature; empty keeps today's blank reply. */
   initialBody = '',
@@ -1239,18 +1269,29 @@ export function deleteThread(
   trashMailboxId = store.mailboxes.find(mailbox => mailbox.role === 'trash')
     ?.id,
 ): MailStore {
+  const trashIds = new Set(
+    store.mailboxes
+      .filter(mailbox => mailbox.role === 'trash')
+      .map(mailbox => mailbox.id),
+  )
   return {
     ...store,
-    threads: store.threads.map(thread =>
-      thread.id === threadId
-        ? {
-            ...thread,
-            mailboxId: trashMailboxId ?? thread.mailboxId,
-            status: 'archived',
-            syncState: 'pending',
-          }
-        : thread,
-    ),
+    threads: store.threads.map(thread => {
+      if (thread.id !== threadId) return thread
+      const alreadyTrashed = trashIds.has(thread.mailboxId)
+      return {
+        ...thread,
+        ...(!alreadyTrashed
+          ? {
+              archivedFromMailboxId: thread.mailboxId,
+              archivedFromStatus: thread.status,
+            }
+          : {}),
+        mailboxId: trashMailboxId ?? thread.mailboxId,
+        status: 'archived',
+        syncState: 'pending',
+      }
+    }),
   }
 }
 

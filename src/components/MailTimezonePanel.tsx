@@ -124,7 +124,7 @@ function ZonePicker({ choices, value, onChange, label, placeholder }: { choices:
         if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, matches.length - 1)) }
         else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)) }
         else if (e.key === 'Enter' && matches[active]) { e.preventDefault(); pick(matches[active]!) }
-        else if (e.key === 'Escape') { setOpen(false); setTyped(null) }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); setTyped(null) }
       }}
       onBlur={() => {
         // Close the list and clear unpicked text on blur/Tab so the field

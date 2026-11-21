@@ -118,6 +118,15 @@ export function NotesIndex({
                       </span>
                     </div>
                   ))}
+                  {show !== 'private' && record.replyIntent?.trim() ? (
+                    <div className="note" data-ink="reply">
+                      <span className="mark" aria-hidden="true" />
+                      <span className="words">
+                        <span className="quote">Your reply</span>
+                        <span className="text">{record.replyIntent.trim()}</span>
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="foot">
                   <BarButton type="button" onClick={() => onOpen(record.messageId)}>

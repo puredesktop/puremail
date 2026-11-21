@@ -14,6 +14,7 @@ import {
   countThreadQuery,
 } from '../lib/mailQuery'
 import {
+  accountFolderForBoxName,
   addMailFilter,
   deleteMailFilter,
   ensureMailBox,
@@ -186,7 +187,8 @@ export async function searchAllMailHandler(
     )
   }
   const query = requireString(args, 'query')
-  const limit = optionalNumber(args, 'limit') ?? 20
+  const rawLimit = optionalNumber(args, 'limit') ?? 20
+  const limit = Math.max(1, Math.min(100, Math.floor(rawLimit)))
   const results = await context.searchAllMail(query, limit)
   return ok({
     query,
@@ -564,15 +566,16 @@ export function listDraftsHandler(
   const includeSent = args.includeSent === true
   const rawLimit = optionalNumber(args, 'limit') ?? DEFAULT_LIST_LIMIT
   const limit = Math.max(0, Math.floor(rawLimit))
-  const drafts = context.store.drafts
+  const matching = context.store.drafts
     .filter(draft => (includeSent ? true : !draft.sentAt))
     .filter(draft => (threadId ? draft.threadId === threadId : true))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, limit)
+  const drafts = matching.slice(0, limit)
   return ok({
-    total: drafts.length,
+    total: matching.length,
+    returned: drafts.length,
     drafts: drafts.map(draft => draftSummary(context, draft, false)),
-    note: drafts.length
+    note: matching.length
       ? 'Every unsent draft, wherever it was written — including ones that failed. Use getDraft for the full text.'
       : 'There are no drafts. If you were told one was written, it was not.',
   })
@@ -1055,8 +1058,11 @@ export function createFilterHandler(
   const resolved = resolveThreadQuery(context.store, accountId, query, context.now)
 
   context.setStore(store => {
-    let next = ensureMailLabel(store, labelName).store
-    if (fileIntoBox) {
+    const realFolder = fileIntoBox
+      ? accountFolderForBoxName(store, accountId, labelName)
+      : undefined
+    let next = realFolder ? store : ensureMailLabel(store, labelName).store
+    if (fileIntoBox && !realFolder) {
       next = saveMailView(
         next,
         labelName,
@@ -1067,7 +1073,7 @@ export function createFilterHandler(
       name,
       query: resolved.query,
       actions: {
-        labelName,
+        labelName: realFolder ? realFolder.name : labelName,
         ...(fileIntoBox ? { skipInbox: true } : {}),
         ...(markRead ? { markRead: true } : {}),
       },
@@ -1100,12 +1106,18 @@ export function applyFilterRetroactivelyHandler(
       }.`,
     )
   }
+  if (!rule.enabled) {
+    throw new AgentMailToolError(
+      `Filter "${rule.name}" is disabled. Enable it with setFilterEnabled before running it retroactively.`,
+    )
+  }
   let mutations: MailFilterMutation[] = []
   let totalHits = 0
   context.setStore(current => {
     const run = runMailFilters(current, accountId, {
       includeAlreadyRun: true,
       ruleIds: [rule.id],
+      ...(context.now ? { now: context.now } : {}),
     })
     mutations = run.mutations
     totalHits = run.totalHits

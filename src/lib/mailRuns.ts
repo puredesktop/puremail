@@ -277,21 +277,35 @@ export function recipientsFromGrid(
 
 /** `,` `;` or tab — whichever the header line uses most outside quoted fields. */
 export function detectCsvDelimiter(text: string): ',' | ';' | '\t' {
-  const firstLine = text.split(/\r\n|\r|\n/, 1)[0] ?? ''
+  const source = text.replace(/^\uFEFF/, '').replace(/^(?:[ \t]*\r?\n|[ \t]*\r)+/, '')
   const tally: Record<',' | ';' | '\t', number> = { ',': 0, ';': 0, '\t': 0 }
   let inQuotes = false
-  for (let i = 0; i < firstLine.length; i += 1) {
-    const ch = firstLine[i]!
-    if (ch === '"') {
-      if (inQuotes && firstLine[i + 1] === '"') {
-        i += 1
-      } else {
-        inQuotes = !inQuotes
+  let atFieldStart = true
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i]!
+    if (inQuotes) {
+      if (ch === '"') {
+        if (source[i + 1] === '"') {
+          i += 1
+        } else {
+          inQuotes = false
+        }
       }
       continue
     }
-    if (!inQuotes && (ch === ',' || ch === ';' || ch === '\t')) {
+    if (ch === '\r' || ch === '\n') break
+    if (ch === '"' && atFieldStart) {
+      inQuotes = true
+      atFieldStart = false
+      continue
+    }
+    if (ch === ',' || ch === ';' || ch === '\t') {
       tally[ch] += 1
+      atFieldStart = true
+      continue
+    }
+    if (ch !== ' ') {
+      atFieldStart = false
     }
   }
   const counts: Array<[',' | ';' | '\t', number]> = [
@@ -331,9 +345,10 @@ export function parseCsv(
       }
       continue
     }
-    // Only enter quoted mode at the start of a field (RFC 4180) so mid-field
-    // quotes like `Joe "Boss" Smith` do not swallow subsequent rows.
-    if (char === '"' && field.length === 0) {
+    // Enter quoted mode at field start (allowing optional leading spaces after delimiter)
+    // so mid-field quotes like `Joe "Boss" Smith` never swallow subsequent rows.
+    if (char === '"' && field.trim().length === 0) {
+      field = ''
       quoted = true
       continue
     }
@@ -683,16 +698,26 @@ export function mapNoteRegions(
   return out + html.slice(cursor)
 }
 
+export function runHtmlToPlainText(html: string): string {
+  const withParagraphs = html.replace(/<\/(p|div|h[1-6])>/gi, '\n\n')
+  return stripHtmlToText(withParagraphs)
+    .split('\n')
+    .map(line => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 /** The draft as it should leave the machine. Identity when untouched. */
 export function finalizeRunDraftForSend(draft: Draft): Draft {
   if (!draft.bodyHtml) return draft
   const finalized = finalizeRunBodyHtml(draft.bodyHtml)
   if (!finalized.changed) return draft
-  const plainBody = stripHtmlToText(finalized.html).replace(/\n{3,}/g, '\n\n').trim()
+  const plainBody = runHtmlToPlainText(finalized.html)
   return {
     ...draft,
     bodyHtml: finalized.html,
-    ...(plainBody ? { body: plainBody } : {}),
+    body: plainBody,
   }
 }
 
@@ -1046,13 +1071,18 @@ export function renderRun(
   let created = 0
   let updated = 0
 
-  // Match existing items by normalized recipient email (falling back to rowIndex
-  // only when the recipient email is unavailable) so reordering or replacing a
-  // CSV preserves sent status and personal notes on the right person.
+  // Match existing CSV items by normalized recipient email (falling back to
+  // rowIndex only for non-locked or matching-label items when email is absent)
+  // so reordering or replacing a CSV preserves sent status and personal notes
+  // on the right person without touching inherited manual drafts.
   const emailForItem = (item: MailRunItem): string => {
+    if (item.email?.trim()) return item.email.trim().toLowerCase()
     const draft = drafts.find(entry => entry.id === item.draftId)
     const fromDraft = draft?.to[0]?.email?.trim().toLowerCase()
     if (fromDraft) return fromDraft
+    const sentMsg = sentMessageForRunItem({ messages }, item)
+    const fromSent = sentMsg?.to[0]?.email?.trim().toLowerCase()
+    if (fromSent) return fromSent
     const label = item.label ?? ''
     const labelMatch = /<([^>]+)>/.exec(label)
     if (labelMatch?.[1]) return labelMatch[1].trim().toLowerCase()
@@ -1061,9 +1091,12 @@ export function renderRun(
   const byEmail = new Map<string, MailRunItem>()
   const byRow = new Map<number, MailRunItem>()
   for (const item of run.items) {
+    // Inherited drafts (rowIndex === undefined) ride through untouched and must
+    // never be overwritten or duplicated by CSV rows.
+    if (item.rowIndex === undefined) continue
     const email = emailForItem(item)
     if (email && !byEmail.has(email)) byEmail.set(email, item)
-    if (item.rowIndex !== undefined) byRow.set(item.rowIndex, item)
+    byRow.set(item.rowIndex, item)
   }
 
   const validEmails = new Set<string>()
@@ -1106,14 +1139,28 @@ export function renderRun(
         const candidate = byRow.get(rowIndex)
         if (!candidate || consumedItemIds.has(candidate.draftId)) return undefined
         const candidateEmail = emailForItem(candidate)
-        return !candidateEmail || candidateEmail === recipientEmail ? candidate : undefined
+        if (candidateEmail) {
+          return candidateEmail === recipientEmail ? candidate : undefined
+        }
+        // For locked items whose email could not be determined, only match by
+        // rowIndex if the label still agrees with this recipient's name/email.
+        if (runItemLocked(candidate)) {
+          const candLabel = (candidate.label ?? '').trim().toLowerCase()
+          const targetLabel = (fields.to.name || fields.to.email).trim().toLowerCase()
+          return candLabel && candLabel === targetLabel ? candidate : undefined
+        }
+        return candidate
       })()
     if (existing) consumedItemIds.add(existing.draftId)
     const existingDraft = existing
       ? drafts.find(draft => draft.id === existing.draftId)
       : undefined
     if (existing && runItemLocked(existing)) {
-      renderedItems.push({ ...existing, rowIndex })
+      renderedItems.push({
+        ...existing,
+        rowIndex,
+        ...(recipientEmail ? { email: recipientEmail } : {}),
+      })
       continue
     }
     if (existingDraft && !existingDraft.sentAt) {
@@ -1121,7 +1168,7 @@ export function renderRun(
       const note = noteTextFromBodyHtml(existingDraft.bodyHtml)
       const bodyHtml = note ? setNoteInBodyHtml(fields.bodyHtml, note) ?? fields.bodyHtml : fields.bodyHtml
       const plainBody = note
-        ? stripHtmlToText(finalizeRunBodyHtml(bodyHtml).html).replace(/\n{3,}/g, '\n\n').trim() || fields.body
+        ? runHtmlToPlainText(finalizeRunBodyHtml(bodyHtml).html) || fields.body
         : fields.body
       const { bodyHtml: _stale, ...kept } = existingDraft
       const next: Draft = {
@@ -1150,6 +1197,7 @@ export function renderRun(
         rowIndex,
         status: existing!.status === 'missing' ? 'pending' : existing!.status,
         label: draftLabel(next),
+        ...(recipientEmail ? { email: recipientEmail } : {}),
         noteAdded: Boolean(note),
         emailedThisMonth: emailedThisMonth(store, fields.to.email, new Date(now)),
         skipReason: undefined,
@@ -1196,13 +1244,24 @@ export function renderRun(
       draftId,
       status: 'pending',
       label: draftLabel(draft),
+      ...(recipientEmail ? { email: recipientEmail } : {}),
       noteAdded: false,
       emailedThisMonth: emailedThisMonth(store, fields.to.email, new Date(now)),
     })
   }
 
+  // Keep locked (sent / sending / unconfirmed) items whose recipient was
+  // removed from a replacement CSV so receipts and warnings are never lost.
+  const preservedLocked = run.items
+    .filter(
+      item =>
+        item.rowIndex !== undefined &&
+        runItemLocked(item) &&
+        !consumedItemIds.has(item.draftId),
+    )
+    .map(item => ({ ...item, rowIndex: undefined }))
   const inherited = run.items.filter(item => item.rowIndex === undefined)
-  const items = [...renderedItems, ...inherited]
+  const items = [...renderedItems, ...preservedLocked, ...inherited]
   const hasPending = items.some(item => isOpen(item) || item.status === 'sending')
   const status: MailRun['status'] =
     !hasPending && items.length

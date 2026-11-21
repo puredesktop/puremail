@@ -162,12 +162,12 @@ export function fileThreadToBox(
 ): { store: MailStore; mutations: MailFilterMutation[] } {
   const trimmed = boxName.trim()
   if (!trimmed) return { store, mutations: [] }
+  const existingThread = store.threads.find(thread => thread.id === threadId)
+  if (!existingThread) return { store, mutations: [] }
   const realFolder = accountFolderForBoxName(store, accountId, trimmed)
   if (realFolder) {
     // A real account folder: true server move, no local label double.
-    const homeChanged =
-      store.threads.find(thread => thread.id === threadId)?.mailboxId !==
-      realFolder.id
+    const homeChanged = existingThread.mailboxId !== realFolder.id
     return {
       store: fileThreadIntoBox(store, threadId, realFolder.id),
       mutations: homeChanged
@@ -306,7 +306,7 @@ export function runMailFilters(
   const matchesByRule = rules.map(rule => ({
     rule,
     threadIds: resolveThreadQuery(store, accountId, rule.query, now)
-      .threads.map(thread => thread.id)
+      .entries.flatMap(entry => entry.threads.map(thread => thread.id))
       .filter(id => candidateIds.has(id)),
   }))
 
@@ -318,6 +318,23 @@ export function runMailFilters(
   let totalHits = 0
 
   const pushMutation = (mutation: MailFilterMutation): void => {
+    if (mutation.kind === 'move') {
+      // Final move destination wins when multiple rules file the same thread,
+      // and supersedes any prior archive mutation for that thread.
+      for (let i = mutations.length - 1; i >= 0; i -= 1) {
+        const prev = mutations[i]!
+        if (
+          prev.threadId === mutation.threadId &&
+          (prev.kind === 'move' || prev.kind === 'archive')
+        ) {
+          mutations.splice(i, 1)
+          mutationKeys.delete(`${prev.kind}:${prev.threadId}`)
+        }
+      }
+      mutationKeys.add(`move:${mutation.threadId}`)
+      mutations.push(mutation)
+      return
+    }
     const key = `${mutation.kind}:${mutation.threadId}`
     if (mutationKeys.has(key)) return
     mutationKeys.add(key)
@@ -386,6 +403,10 @@ export function runMailFilters(
   )
   for (const rule of rules) {
     if (!rule.actions.skipInbox || !rule.actions.labelName) continue
+    // Never locally relocate threads into a real IMAP folder without a server move.
+    if (accountFolderForBoxName(working, accountId, rule.actions.labelName)) {
+      continue
+    }
     const strays = working.threads.filter(
       thread =>
         thread.accountId === accountId &&
@@ -400,9 +421,9 @@ export function runMailFilters(
     }
   }
 
-  // Stamp candidates so full runs never repeat. When running a subset of
-  // rules (`options.ruleIds`), only stamp matched threads so other enabled
-  // rules are not locked out of unprocessed threads.
+  // Stamp candidates so full runs never repeat. Never advance `filterRunAt`
+  // during a subset run (`options.ruleIds`) so other enabled rules stay
+  // eligible to process those threads on the next full pass.
   const isRuleSubset = Boolean(options.ruleIds && options.ruleIds.length > 0)
   working = {
     ...working,
@@ -412,7 +433,7 @@ export function runMailFilters(
       if (isRuleSubset && !names) return thread
       return {
         ...thread,
-        filterRunAt: nowIso,
+        ...(isRuleSubset ? {} : { filterRunAt: nowIso }),
         ...(names
           ? {
               filteredBy: [
