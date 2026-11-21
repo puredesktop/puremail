@@ -518,12 +518,7 @@ export function MailSettings({
               : 'The password is stored OS-encrypted and read by the shell when dialing; sending reuses it until a separate SMTP password is saved.') +
             ' PureMail is rebooting onto this account now.',
         })
-        const reboot = () => onImapConnected?.()
-        if (flushStorePersistence) {
-          void flushStorePersistence().catch(() => undefined).finally(reboot)
-        } else {
-          reboot()
-        }
+        setImapRebootPending(true)
       })
       .catch(error => {
         setProviderTestResult({
@@ -596,14 +591,20 @@ export function MailSettings({
         : 'Connection removed; its stored passwords were deleted.',
     )
     if (wasActiveImapAccount) {
-      const reboot = () => onImapConnected?.()
-      if (flushStorePersistence) {
-        void flushStorePersistence().catch(() => undefined).finally(reboot)
-      } else {
-        reboot()
-      }
+      setImapRebootPending(true)
     }
   }
+  const [imapRebootPending, setImapRebootPending] = useState(false)
+  useEffect(() => {
+    if (!imapRebootPending) return
+    setImapRebootPending(false)
+    const reboot = () => onImapConnected?.()
+    if (flushStorePersistence) {
+      void flushStorePersistence().catch(() => undefined).finally(reboot)
+    } else {
+      reboot()
+    }
+  }, [imapRebootPending, flushStorePersistence, onImapConnected])
   const [gmailDisconnecting, setGmailDisconnecting] = useState(false)
   useEffect(() => {
     if (!providerDrawerOpen) return

@@ -203,7 +203,10 @@ export function RunScreen({
   const goNext = (): void => {
     const next = nextPendingIndex(run, cursor)
     if (next >= 0) goTo(next)
-    else updateRun(run.id, current => advanceRun(current))
+    else {
+      setInspectingDoneItem(false)
+      updateRun(run.id, current => advanceRun(current))
+    }
   }
   const goPrevious = (): void => goTo(previousIndex(run, cursor))
   const skip = (): void => {

@@ -48,7 +48,7 @@ export function useMailStorePersistence(store: MailStore, input: {
 } = {}): {
   persistFailure: MailPersistFailure | null
   /** Force an immediate write — used before the window goes away. */
-  flush: () => Promise<void>
+  flush: (snapshot?: MailStore) => Promise<void>
   flushForSend: (snapshot: MailStore) => Promise<void>
   /** Take what other copies saved, now. Resolves once this copy's store holds it. */
   syncDrafts: () => Promise<void>
@@ -147,12 +147,12 @@ export function useMailStorePersistence(store: MailStore, input: {
       if (timerRef.current !== null) { window.clearTimeout(timerRef.current); timerRef.current = null }
       await writeNow.current(snapshot, true)
     },
-    flush: async () => {
+    flush: async snapshot => {
       if (typeof window !== 'undefined' && timerRef.current !== null) {
         window.clearTimeout(timerRef.current)
         timerRef.current = null
       }
-      await writeNow.current()
+      await writeNow.current(snapshot)
     },
     syncDrafts: () => syncNow.current(),
   }

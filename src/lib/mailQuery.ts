@@ -262,7 +262,26 @@ export function queryHasFlag(
 }
 
 function parseAbsoluteDate(value: string): number | null {
-  const ms = Date.parse(value.replace(/\//g, '-'))
+  const trimmed = value.trim()
+  const dateOnly = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(trimmed)
+  if (dateOnly) {
+    const year = Number(dateOnly[1])
+    const month = Number(dateOnly[2])
+    const day = Number(dateOnly[3])
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null
+    const ms = Date.UTC(year, month - 1, day)
+    const check = new Date(ms)
+    if (
+      check.getUTCFullYear() !== year ||
+      check.getUTCMonth() !== month - 1 ||
+      check.getUTCDate() !== day
+    ) {
+      return null
+    }
+    return ms
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return null
+  const ms = Date.parse(trimmed)
   return Number.isFinite(ms) ? ms : null
 }
 

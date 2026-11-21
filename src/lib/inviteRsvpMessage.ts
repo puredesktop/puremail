@@ -97,7 +97,7 @@ export function buildInviteRsvpDraft(input: InviteRsvpInput): Draft | null {
 
   const organizerName = invite.organizer?.name.trim() ?? ''
   const attendeeName = accountDisplayName({ ...account, email: replyEmail })
-  const ics = generateIcsReply({
+  let ics = generateIcsReply({
     uid: invite.uid,
     sequence: invite.sequence,
     timestamp: input.timestamp,
@@ -117,6 +117,20 @@ export function buildInviteRsvpDraft(input: InviteRsvpInput): Draft | null {
     },
     response,
   })
+  // RFC 5546: replies to a single occurrence of a recurring event MUST include
+  // RECURRENCE-ID so organizers update only that occurrence rather than the whole series.
+  if (invite.recurrenceId && !/^RECURRENCE-ID[:;]/im.test(ics)) {
+    const cleanRecurrence = invite.recurrenceId.replace(/[\r\n]/g, '').trim()
+    if (cleanRecurrence) {
+      // Convert ISO-like ICAL.Time.toString() (`2026-11-27T14:00:00Z` or `2026-11-27`)
+      // to iCalendar basic format (`20261127T140000Z` or `;VALUE=DATE:20261127`).
+      const dateOnlyMatch = /^(\d{4})-?(\d{2})-?(\d{2})$/.exec(cleanRecurrence)
+      const line = dateOnlyMatch
+        ? `RECURRENCE-ID;VALUE=DATE:${dateOnlyMatch[1]}${dateOnlyMatch[2]}${dateOnlyMatch[3]}`
+        : `RECURRENCE-ID:${cleanRecurrence.replace(/[-:]/g, '')}`
+      ics = ics.replace(/\r?\nEND:VEVENT\b/i, `\r\n${line}\r\nEND:VEVENT`)
+    }
+  }
   const icsBytes = new TextEncoder().encode(ics).length
 
   return {

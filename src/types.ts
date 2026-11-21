@@ -1067,6 +1067,8 @@ export interface MailRunItem {
   status: MailRunItemStatus
   /** Display label (recipient name or address) so the rail needs no draft. */
   label?: string
+  /** Normalized recipient email preserved across draft deletion and CSV reorders. */
+  email?: string
   sentAt?: string
   sentMessageId?: string
   /** The undo-send hold that is still open for this item, while it is. */

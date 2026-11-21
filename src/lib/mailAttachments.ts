@@ -21,7 +21,7 @@ function base64ByteLength(base64: string): number {
   const trimmed = base64.replace(/\s+/g, '')
   if (!trimmed) return 0
   const padding = trimmed.endsWith('==') ? 2 : trimmed.endsWith('=') ? 1 : 0
-  return Math.floor((trimmed.length * 3) / 4) - padding
+  return Math.max(0, Math.floor((trimmed.length * 3) / 4) - padding)
 }
 
 function utf8Bytes(value: string): Uint8Array {
@@ -187,6 +187,7 @@ function dataUriBase64(content: string): string | null {
   if (!match[0].toLowerCase().includes(';base64,')) return null
   const raw = content.slice(match[0].length).replace(/\s+/g, '')
   const padding = raw.length % 4
+  if (padding === 1) return null
   return padding ? `${raw}${'='.repeat(4 - padding)}` : raw
 }
 
@@ -393,14 +394,27 @@ export function attachmentKindLabel(attachment: Attachment): string {
   )
 }
 
+const WINDOWS_RESERVED_STEM = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i
+
 /** Strip path separators and control characters so a mail-supplied name is a safe file name. */
 export function safeAttachmentFileName(name: string): string {
-  const cleaned = name
+  let cleaned = name
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .replace(/[/\\:?*"<>|]/g, '_')
     .trim()
-  if (!cleaned || cleaned === '.' || cleaned === '..') return 'attachment'
+    .replace(/[. ]+$/, '')
+  if (!cleaned || /^\.+$/.test(cleaned)) return 'attachment'
+  const dot = cleaned.lastIndexOf('.')
+  const stem = dot > 0 ? cleaned.slice(0, dot) : cleaned
+  const ext = dot > 0 ? cleaned.slice(dot) : ''
+  if (WINDOWS_RESERVED_STEM.test(stem)) {
+    cleaned = `_${stem}${ext}`
+  }
+  if (cleaned.length > 200) {
+    const safeExt = ext.length <= 24 ? ext : ''
+    cleaned = `${cleaned.slice(0, 200 - safeExt.length)}${safeExt}`
+  }
   return cleaned
 }
 

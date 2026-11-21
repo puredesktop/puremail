@@ -60,7 +60,13 @@ export function createScheduledSendDispatcher(input: {
     input.update(current => markScheduledSend(current, entry.id, 'sending'))
     const finishLocal = (confirmLocal = false): void => {
       input.update(current => {
-        const sentStore = sendDraft(current, draft.id)
+        // When provider delivery already ran settleReceipt (e.g. a movedOn draft
+        // that kept a sentAt receipt draft), do not call sendDraft a second time.
+        const alreadySettled =
+          !confirmLocal &&
+          (Boolean(confirmedSentCopy(current, draft.id)) ||
+            Boolean(current.drafts.find(item => item.id === draft.id)?.sentAt))
+        const sentStore = alreadySettled ? current : sendDraft(current, draft.id)
         const targetThread = sentStore.threads.find(
           thread => thread.id === entry.threadId,
         )

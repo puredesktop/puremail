@@ -60,16 +60,42 @@ export async function prepareMailDrop(
     alt = '',
     caption = ''
   if (kind === 'file') {
-    const file = readContentTransfer(value)
+    // Real 0-byte FileReader outputs (`data:text/plain;base64,`) or parameterized
+    // data URLs (`data:text/plain;charset=utf-8;base64,...`) may not satisfy
+    // readContentTransfer's strict `+` / no-param regex; normalize safely first.
+    let parsedRaw: { dataUrl?: unknown } | null = null
+    try {
+      parsedRaw = JSON.parse(value) as { dataUrl?: unknown }
+    } catch {
+      parsedRaw = null
+    }
+    let normalizedValue = value
+    let originalDataUrl: string | null = null
+    if (parsedRaw && typeof parsedRaw.dataUrl === 'string') {
+      const m = parsedRaw.dataUrl.match(
+        /^data:([\w.+-]+\/[\w.+-]+)(?:;[^;,]*)*;base64,([\s\S]*)$/i,
+      )
+      if (m) {
+        originalDataUrl = parsedRaw.dataUrl
+        const body = m[2]!.trim() ? m[2]! : ' '
+        normalizedValue = JSON.stringify({
+          ...parsedRaw,
+          dataUrl: `data:${m[1]};base64,${body}`,
+        })
+      }
+    }
+    const file = readContentTransfer(normalizedValue)
     if (file.kind !== 'file') throw new Error('Invalid file.')
     name = file.name
-    const match = file.dataUrl.match(/^data:([^;]+);base64,([\s\S]*)$/)
+    const effectiveUrl = originalDataUrl ?? file.dataUrl
+    const match = effectiveUrl.match(
+      /^data:([^;,]+)(?:;[^;,]*)*;base64,([\s\S]*)$/i,
+    )
     if (!match) throw new Error('Invalid file data.')
-    mime = match[1]
-    bytes = match[2]
-      ? Uint8Array.from(atob(match[2].replace(/\s+/g, '')), (c) =>
-          c.charCodeAt(0),
-        )
+    mime = match[1]!.trim().toLowerCase()
+    const compactB64 = match[2]!.replace(/\s+/g, '')
+    bytes = compactB64
+      ? Uint8Array.from(atob(compactB64), (c) => c.charCodeAt(0))
       : new Uint8Array(0)
     alt = name
     if (mime === 'image/svg+xml') {

@@ -30,6 +30,7 @@ import {
   renderRunDraftFields,
   replaceRun,
   runAvailableTokens,
+  runHtmlToPlainText,
   runProgress,
   runStatusLabel,
   runTokensIn,
@@ -43,7 +44,6 @@ import {
   normalizeRunKey,
 } from '../lib/mailRuns'
 import { plainTextToComposeHtml } from '../lib/mailCompose'
-import { stripHtmlToText } from '../lib/mailTextUtils'
 import { deliveryNote, draftEditBlock, draftReleaseBlock, type DraftDelivery } from '../lib/mailDeliveryStatus'
 import { ownAddresses, replyStateInStore } from '../lib/mailReplyState'
 import { normalizeMessageId } from '../lib/mailThreading'
@@ -299,12 +299,18 @@ async function recipientsFromArgs(
     )
   }
   if (lower.endsWith('.sheets') || lower.endsWith('.sheets.html') || lower.endsWith('.json')) {
-    const json = lower.endsWith('.sheets.html')
-      ? JSON.parse(
-          /<script[^>]*id=["']puresheets-workbook-data["'][^>]*>([\s\S]*?)<\/script>/i.exec(raw)?.[1] ?? 'null',
-        )
-      : JSON.parse(raw)
-    return recipientsFromSheetsWorkbook(json, { kind: 'sheet', path, label })
+    try {
+      const json = lower.endsWith('.sheets.html')
+        ? JSON.parse(
+            /<script[^>]*id=["']puresheets-workbook-data["'][^>]*>([\s\S]*?)<\/script>/i.exec(raw)?.[1] ?? 'null',
+          )
+        : JSON.parse(raw)
+      return recipientsFromSheetsWorkbook(json, { kind: 'sheet', path, label })
+    } catch (error) {
+      throw new AgentMailToolError(
+        `Could not parse recipients from "${path}": ${error instanceof Error ? error.message : String(error)}.`,
+      )
+    }
   }
   return recipientsFromCsv(raw, { kind: 'csv', path, label })
 }
@@ -888,8 +894,8 @@ export function setRunNoteHandler(
   const note = requireString(args, 'note')
   const { item } = resolveItem(run, args)
   const draft = context.store.drafts.find(entry => entry.id === item.draftId)
-  if (!draft || draft.sentAt || item.status === 'sent') {
-    throw new AgentMailToolError(`Item "${item.label ?? item.draftId}" is ${item.status === 'sent' ? 'already sent' : 'missing'}; its note cannot change.`)
+  if (!draft || draft.sentAt || runItemLocked(item)) {
+    throw new AgentMailToolError(`Item "${item.label ?? item.draftId}" is ${runItemLocked(item) ? item.status : 'missing'}; its note cannot change.`)
   }
   const editBlock = draftEditBlock(context.store, draft.id)
   if (editBlock) throw new AgentMailToolError(editBlock)
@@ -900,9 +906,7 @@ export function setRunNoteHandler(
     )
   }
   const now = (context.now ?? new Date()).toISOString()
-  const plainBodyWithNote = stripHtmlToText(finalizeRunBodyHtml(bodyHtml).html)
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  const plainBodyWithNote = runHtmlToPlainText(finalizeRunBodyHtml(bodyHtml).html)
   context.setStore(current => {
     const next: MailStore = {
       ...current,
@@ -912,7 +916,7 @@ export function setRunNoteHandler(
               ...entry,
               bodyHtml,
               // The plain body carries the note too, for search and text-only clients.
-              body: plainBodyWithNote || entry.body.replace(/\n{3,}/g, '\n\n'),
+              body: plainBodyWithNote,
               updatedAt: now,
               syncState: 'pending' as const,
             }

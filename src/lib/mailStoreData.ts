@@ -169,28 +169,48 @@ function entryIsRecordWithId(entry: unknown): boolean {
   )
 }
 
-const REMOTE_IMAGE_SRC_ATTR =
-  /\s(src|srcset)\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+)/gi
-const REMOTE_BACKGROUND_ATTR =
-  /\sbackground\s*=\s*("[\u0000-\u0020]*(?:https?:)?\/\/[^"]*"|'[\u0000-\u0020]*(?:https?:)?\/\/[^']*'|[\u0000-\u0020]*(?:https?:)?\/\/[^\s"'=<>`]+)/gi
-
-function attrValueHasRemoteUrl(attrName: string, rawAttrValue: string): boolean {
-  const unquoted =
-    (rawAttrValue.startsWith('"') && rawAttrValue.endsWith('"')) ||
-    (rawAttrValue.startsWith("'") && rawAttrValue.endsWith("'"))
-      ? rawAttrValue.slice(1, -1)
-      : rawAttrValue
+function isRemoteUrlValue(rawValue: string): boolean {
   // Strip embedded ASCII tab/CR/LF and leading C0 control chars the way browsers do.
+  // Treat ANY http:/https: scheme (including WHATWG special-scheme forms like
+  // https:\host, https:/\host, http:host) and protocol-relative // or \\ as remote.
   // eslint-disable-next-line no-control-regex
-  const cleaned = unquoted.replace(/[\t\r\n]/g, '')
-  if (attrName.toLowerCase() === 'srcset') {
-    return cleaned.split(',').some(candidate =>
-      // eslint-disable-next-line no-control-regex
-      /^[\u0000-\u0020]*(?:https?:)?\/\//i.test(candidate),
-    )
+  const cleaned = rawValue.replace(/[\t\r\n]/g, '').replace(/^[\u0000-\u0020]+/, '')
+  return /^(?:https?:|[/\\]{2})/i.test(cleaned)
+}
+
+function srcsetHasRemoteUrl(rawValue: string): boolean {
+  // Parse srcset candidates without splitting on the comma inside `data:mime;base64,...`.
+  const s = rawValue.trim()
+  let i = 0
+  while (i < s.length) {
+    while (i < s.length && /[\s,]/.test(s[i]!)) i += 1
+    if (i >= s.length) break
+    const start = i
+    if (/^data:/i.test(s.slice(i))) {
+      // Consume data URI up to whitespace (descriptors follow whitespace, then comma).
+      while (i < s.length && !/\s/.test(s[i]!)) i += 1
+    } else {
+      while (i < s.length && !/[\s,]/.test(s[i]!)) i += 1
+    }
+    const url = s.slice(start, i)
+    if (url && isRemoteUrlValue(url)) return true
+    // Skip optional descriptor up to next comma.
+    while (i < s.length && s[i] !== ',') i += 1
+    if (i < s.length && s[i] === ',') i += 1
   }
-  // eslint-disable-next-line no-control-regex
-  return /^[\u0000-\u0020]*(?:https?:)?\/\//i.test(cleaned)
+  return false
+}
+
+const REMOTE_STYLE_URL_PATTERN = /url\(\s*(?:&quot;|["'])?\s*(?:https?:|[/\\]{2})/i
+
+const FALLBACK_ATTR_PATTERN =
+  /([^\s"'=<>`/]+)\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+)/g
+
+function unquoteAttr(rawAttrValue: string): string {
+  return (rawAttrValue.startsWith('"') && rawAttrValue.endsWith('"')) ||
+    (rawAttrValue.startsWith("'") && rawAttrValue.endsWith("'"))
+    ? rawAttrValue.slice(1, -1)
+    : rawAttrValue
 }
 
 /**
@@ -204,29 +224,81 @@ export function blockRemoteImagesInMailHtml(html: string): {
   blockedCount: number
 } {
   let blockedCount = 0
-  const blocked = html
-    // Attribute-aware match so quoted `>` inside alt/title never truncates the tag.
-    .replace(/<(?:img|source)\b(?:"[^"]*"|'[^']*'|[^'">])*>/gi, tag =>
-      tag.replace(REMOTE_IMAGE_SRC_ATTR, (match, attr: string, value: string) => {
-        if (!attrValueHasRemoteUrl(attr, value)) return match
-        blockedCount += 1
-        return ` data-puremail-blocked-${attr.toLowerCase()}=${value}`
-      }),
-    )
-    // Legacy background attributes (body/table/td) also fetch remotely.
-    .replace(REMOTE_BACKGROUND_ATTR, () => {
-      blockedCount += 1
-      return ''
-    })
-    // Style attributes can pull remote backgrounds; drop any style that
-    // references a remote url() rather than trying to rewrite CSS.
-    .replace(/\sstyle\s*=\s*("[^"]*"|'[^']*')/gi, (match, value: string) => {
-      if (/url\(\s*(?:&quot;|["'])?\s*(?:https?:)?\/\//i.test(value)) {
-        blockedCount += 1
-        return ''
+  if (typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(html || '', 'text/html')
+    for (const el of [...doc.body.querySelectorAll('*')]) {
+      const tag = el.tagName.toLowerCase()
+      if (tag === 'img' || tag === 'source') {
+        const src = el.getAttribute('src')
+        if (src !== null && isRemoteUrlValue(src)) {
+          el.removeAttribute('src')
+          el.setAttribute('data-puremail-blocked-src', src)
+          blockedCount += 1
+        }
+        const srcset = el.getAttribute('srcset')
+        if (srcset !== null && srcsetHasRemoteUrl(srcset)) {
+          el.removeAttribute('srcset')
+          el.setAttribute('data-puremail-blocked-srcset', srcset)
+          blockedCount += 1
+        }
       }
-      return match
-    })
+      if (tag === 'video') {
+        const poster = el.getAttribute('poster')
+        if (poster !== null && isRemoteUrlValue(poster)) {
+          el.removeAttribute('poster')
+          blockedCount += 1
+        }
+      }
+      const background = el.getAttribute('background')
+      if (background !== null && isRemoteUrlValue(background)) {
+        el.removeAttribute('background')
+        blockedCount += 1
+      }
+      const style = el.getAttribute('style')
+      if (style !== null && REMOTE_STYLE_URL_PATTERN.test(style.replace(/[\t\r\n]/g, ''))) {
+        el.removeAttribute('style')
+        blockedCount += 1
+      }
+    }
+    return { html: doc.body.innerHTML, blockedCount }
+  }
+  // Fallback for non-DOM environments: rewrite attributes only inside HTML tags
+  // so visible body text and quoted attribute values are never corrupted.
+  const blocked = html.replace(
+    /<([a-z][a-z0-9-]*)(\b(?:"[^"]*"|'[^']*'|[^'">])*)>/gi,
+    (_whole, rawTag: string, attrsText: string) => {
+      const tag = rawTag.toLowerCase()
+      const rewrittenAttrs = attrsText.replace(
+        FALLBACK_ATTR_PATTERN,
+        (attrMatch, attrName: string, rawVal: string) => {
+          const name = attrName.toLowerCase()
+          const val = unquoteAttr(rawVal)
+          if ((tag === 'img' || tag === 'source') && name === 'src' && isRemoteUrlValue(val)) {
+            blockedCount += 1
+            return `data-puremail-blocked-src=${rawVal}`
+          }
+          if ((tag === 'img' || tag === 'source') && name === 'srcset' && srcsetHasRemoteUrl(val)) {
+            blockedCount += 1
+            return `data-puremail-blocked-srcset=${rawVal}`
+          }
+          if (tag === 'video' && name === 'poster' && isRemoteUrlValue(val)) {
+            blockedCount += 1
+            return ''
+          }
+          if (name === 'background' && isRemoteUrlValue(val)) {
+            blockedCount += 1
+            return ''
+          }
+          if (name === 'style' && REMOTE_STYLE_URL_PATTERN.test(val.replace(/[\t\r\n]/g, ''))) {
+            blockedCount += 1
+            return ''
+          }
+          return attrMatch
+        },
+      )
+      return `<${rawTag}${rewrittenAttrs}>`
+    },
+  )
   return { html: blocked, blockedCount }
 }
 

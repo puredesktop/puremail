@@ -1,4 +1,5 @@
 import { MailSendError } from './mailDelivery'
+import { MailDraftSaveUncertain } from './mailDeliveryStatus'
 import {
   withHttpRetry,
   type HttpRetryOptions,
@@ -885,6 +886,10 @@ export class GmailMailProvider implements MailProvider {
       maxResults: String(GMAIL_INBOX_PAGE_SIZE),
     })
     if (labelIds === 'TRASH') base.set('includeSpamTrash', 'true')
+    // Unsent drafts have no expiry: windowing DRAFT threads by fetchWindow
+    // caused drafts older than the window to be omitted while draftsCovered was
+    // true, silently deleting synced drafts after two syncs.
+    if (labelIds === 'DRAFT') return base.toString()
     const settings = {
       ...emptyMailStore().settings,
       ...(this.options.settings ?? {}),
@@ -906,6 +911,8 @@ export class GmailMailProvider implements MailProvider {
   private async fetchMailboxThreads(base: Pick<MailStore, 'settings'>): Promise<{
     threads: GmailThread[]
     coverage: MailSyncCoverage | undefined
+    draftsTruncated: boolean
+    failedIds: string[]
   }> {
     const [inbox, trash, sent, drafts] = await Promise.all([
       this.listThreadIds(this.mailboxListQuery('INBOX', base)),
@@ -938,7 +945,20 @@ export class GmailMailProvider implements MailProvider {
         truncatedBuckets.length > 0,
         truncatedBuckets,
       ),
+      draftsTruncated: drafts.truncated,
+      failedIds,
     }
+  }
+
+  private draftsListingCoversAll(
+    draftRefs: ProviderDraftRef[] | null,
+    draftsTruncated: boolean,
+    failedIds: readonly string[],
+  ): boolean {
+    if (!draftRefs || draftsTruncated || draftRefs.length >= 500) return false
+    if (failedIds.length === 0) return true
+    const failed = new Set(failedIds)
+    return !draftRefs.some(ref => ref.threadId && failed.has(ref.threadId))
   }
 
   async fetchStore(): Promise<MailStore> {
@@ -951,19 +971,24 @@ export class GmailMailProvider implements MailProvider {
         ...(this.options.settings ?? {}),
       },
     }
-    const [{ threads, coverage }, labels, draftRefs] = await Promise.all([
-      this.fetchMailboxThreads(base),
-      this.fetchProviderLabels(),
-      this.safeListDrafts(),
-    ])
+    const [{ threads, coverage, draftsTruncated, failedIds }, labels, draftRefs] =
+      await Promise.all([
+        this.fetchMailboxThreads(base),
+        this.fetchProviderLabels(),
+        this.safeListDrafts(),
+      ])
+    const coversDrafts = this.draftsListingCoversAll(
+      draftRefs,
+      draftsTruncated,
+      failedIds,
+    )
     this.store = toMailStore(
       threads,
       email,
       base,
-      // Only claim draft coverage when the listing actually succeeded: the
-      // merge deletes synced drafts the provider no longer has, and it must
-      // never do that on the strength of a failed request.
-      draftRefs ? { ...(coverage ?? {}), draftsCovered: true } : coverage,
+      // Only claim draft coverage when the listing and every draft's thread
+      // actually succeeded without truncation.
+      coversDrafts ? { ...(coverage ?? {}), draftsCovered: true } : coverage,
       labels,
       draftRefs ?? [],
     )
@@ -1042,19 +1067,24 @@ export class GmailMailProvider implements MailProvider {
         ...(store?.settings ?? {}),
       },
     }
-    const [{ threads, coverage }, labels, draftRefs] = await Promise.all([
-      this.fetchMailboxThreads(base),
-      this.fetchProviderLabels(),
-      this.safeListDrafts(),
-    ])
+    const [{ threads, coverage, draftsTruncated, failedIds }, labels, draftRefs] =
+      await Promise.all([
+        this.fetchMailboxThreads(base),
+        this.fetchProviderLabels(),
+        this.safeListDrafts(),
+      ])
+    const coversDrafts = this.draftsListingCoversAll(
+      draftRefs,
+      draftsTruncated,
+      failedIds,
+    )
     this.store = toMailStore(
       threads,
       email,
       base,
-      // Only claim draft coverage when the listing actually succeeded: the
-      // merge deletes synced drafts the provider no longer has, and it must
-      // never do that on the strength of a failed request.
-      draftRefs ? { ...(coverage ?? {}), draftsCovered: true } : coverage,
+      // Only claim draft coverage when the listing and every draft's thread
+      // actually succeeded without truncation.
+      coversDrafts ? { ...(coverage ?? {}), draftsCovered: true } : coverage,
       labels,
       draftRefs ?? [],
     )
@@ -1162,12 +1192,15 @@ export class GmailMailProvider implements MailProvider {
       [],
     )
     const toHeader = formatAddressList(input.draft.to)
+    const ccHeader = formatAddressList(cc)
+    const bccHeader = formatAddressList(bcc)
+    const replyToHeader = formatAddressList(input.draft.replyTo ?? [])
     const headerLines = [
       ...(input.draft.sendMessageId ? [`Message-ID: ${input.draft.sendMessageId}`] : []),
       ...(toHeader ? [`To: ${toHeader}`] : []),
-      ...(cc.length ? [`Cc: ${formatAddressList(cc)}`] : []),
-      ...(bcc.length ? [`Bcc: ${formatAddressList(bcc)}`] : []),
-      ...(input.draft.replyTo?.length ? [`Reply-To: ${formatAddressList(input.draft.replyTo)}`] : []),
+      ...(ccHeader ? [`Cc: ${ccHeader}`] : []),
+      ...(bccHeader ? [`Bcc: ${bccHeader}`] : []),
+      ...(replyToHeader ? [`Reply-To: ${replyToHeader}`] : []),
       `Subject: ${encodeMimeHeaderValue(input.draft.subject)}`,
       ...(inReplyTo
         ? [`In-Reply-To: ${inReplyTo}`, `References: ${references.join(' ')}`]
@@ -1643,12 +1676,15 @@ export class GmailMailProvider implements MailProvider {
       [],
     )
     const toHeader = formatAddressList(draft.to)
+    const ccHeader = formatAddressList(cc)
+    const bccHeader = formatAddressList(bcc)
+    const replyToHeader = formatAddressList(draft.replyTo ?? [])
     return buildMimeMessage({
       headerLines: [
         ...(toHeader ? [`To: ${toHeader}`] : []),
-        ...(cc.length ? [`Cc: ${formatAddressList(cc)}`] : []),
-        ...(bcc.length ? [`Bcc: ${formatAddressList(bcc)}`] : []),
-        ...(draft.replyTo?.length ? [`Reply-To: ${formatAddressList(draft.replyTo)}`] : []),
+        ...(ccHeader ? [`Cc: ${ccHeader}`] : []),
+        ...(bccHeader ? [`Bcc: ${bccHeader}`] : []),
+        ...(replyToHeader ? [`Reply-To: ${replyToHeader}`] : []),
         `Subject: ${encodeMimeHeaderValue(draft.subject)}`,
       ],
       body: draft.body,
@@ -1669,17 +1705,26 @@ export class GmailMailProvider implements MailProvider {
 
   async createDraft(draft: Draft): Promise<string> {
     const gmailThreadId = this.gmailThreadIdForDraft(draft)
-    const created = await this.request<{ id: string }>('/drafts', {
-      method: 'POST',
-      idempotent: false,
-      body: JSON.stringify({
-        message: {
-          ...(gmailThreadId ? { threadId: gmailThreadId } : {}),
-          raw: encodeRfc822(this.draftRaw(draft)),
-        },
-      }),
-    })
-    return created.id
+    try {
+      const created = await this.request<{ id: string }>('/drafts', {
+        method: 'POST',
+        idempotent: false,
+        body: JSON.stringify({
+          message: {
+            ...(gmailThreadId ? { threadId: gmailThreadId } : {}),
+            raw: encodeRfc822(this.draftRaw(draft)),
+          },
+        }),
+      })
+      return created.id
+    } catch (error) {
+      if (error instanceof MailSendError && error.outcome === 'uncertain') {
+        throw new MailDraftSaveUncertain(
+          'Gmail did not confirm the draft save. Check Drafts before retrying.',
+        )
+      }
+      throw error
+    }
   }
 
   async updateDraft(providerDraftId: string, draft: Draft): Promise<void> {

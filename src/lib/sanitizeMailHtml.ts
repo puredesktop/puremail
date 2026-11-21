@@ -299,8 +299,11 @@ function isAllowedSrc(value: string): boolean {
   if (scheme === null) return false
   if (SRC_SCHEMES.has(scheme)) return true
   if (scheme === 'data:') {
+    // Allow only safe raster image data URIs (never data:image/svg+xml).
     // eslint-disable-next-line no-control-regex
-    return /^data:image\//i.test(value.replace(/[\u0000-\u0020]/g, ''))
+    return /^data:image\/(?:png|jpeg|jpg|gif|webp|bmp|avif|x-icon);base64,[a-z0-9+/=\s]*$/i.test(
+      value.replace(/[\u0000-\u0020]/g, ''),
+    )
   }
   return false
 }
@@ -879,7 +882,7 @@ function collapseSpacerBlocks(root: Element): void {
       continue
     }
     const meaningful = block.querySelector(
-      'img, table, hr, iframe, ul, ol, blockquote, a[href]',
+      'img, video, audio, table, hr, iframe, ul, ol, blockquote, a[href]',
     )
     if (meaningful) continue
     if (hasExplicitSpacing(block)) continue

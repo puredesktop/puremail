@@ -162,6 +162,13 @@ export function ReadingRoom({
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       if (timesOpen) {
+        // Let an open ZonePicker combobox dropdown close on the first Escape.
+        if (
+          event.target instanceof Element &&
+          event.target.closest('[role="combobox"][aria-expanded="true"]')
+        ) {
+          return
+        }
         event.preventDefault()
         event.stopPropagation()
         setTimesOpen(false)
