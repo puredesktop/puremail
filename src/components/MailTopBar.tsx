@@ -2,12 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarDays,
   ChevronDown,
+  Columns2,
+  List,
+  PanelBottom,
   RefreshCw,
   Rows2,
   Rows3,
   Search,
   SlidersHorizontal,
   X,
+  Zap,
 } from 'lucide-react'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import {
@@ -18,7 +22,6 @@ import {
   buildMailQuery,
   deleteMailView,
   parseMailQuery,
-  quoteQueryValue,
   renameMailView,
   saveMailView,
   type MailQueryTerm,
@@ -33,6 +36,8 @@ import {
   BulkMenuItem,
   BulkMenuWrap,
   KbdChip,
+  LayoutSwitcherBtn,
+  LayoutSwitcherGroup,
   ListButton,
   MailTopBar as TopBarShellStyle,
   Meta,
@@ -54,8 +59,9 @@ import {
   TopSearchWrap,
 } from './mailShellStyles'
 import { formatDate } from './mailShellHelpers'
+import { SearchFilterBuilder } from './SearchFilterBuilder'
 import { useOutsideClose } from './useOutsideClose'
-import { type MailDensity } from './mailShellLayout'
+import { type MailDensity, type ReadingPaneLayout } from './mailShellLayout'
 
 export interface MailTopBarProps {
   store: MailStore
@@ -97,6 +103,11 @@ export interface MailTopBarProps {
   mailFetchDisabled: boolean
   density: MailDensity
   setDensity: (density: MailDensity) => void
+  readingPaneLayout?: ReadingPaneLayout
+  setReadingPaneLayout?: (layout: ReadingPaneLayout) => void
+  onOpenFocusTriage?: () => void
+  onOpenCommandPalette?: () => void
+  onCreateFilterFromSearch?: (query: string) => void
   connectionControl?: React.ReactNode
   openCalendar?: () => void
   openSettings: () => void
@@ -142,6 +153,11 @@ export function MailTopBar({
   mailFetchDisabled,
   density,
   setDensity,
+  readingPaneLayout,
+  setReadingPaneLayout,
+  onOpenFocusTriage,
+  onOpenCommandPalette,
+  onCreateFilterFromSearch,
   openCalendar,
   openSettings,
   connectionControl,
@@ -182,9 +198,42 @@ export function MailTopBar({
       trimmed === 'in:trash' ||
       trimmed === 'in:drafts' ||
       trimmed === 'is:starred' ||
-      trimmed === 'is:snoozed'
+      trimmed === 'is:snoozed' ||
+      trimmed === 'is:awaiting' ||
+      trimmed === 'is:screener' ||
+      trimmed === 'is:newsletter' ||
+      trimmed === 'is:receipt'
     )
   }
+  const recordRecentSearch = (query: string): void => {
+    const clean = query.trim()
+    if (!clean || isBareNavigationQuery(clean)) return
+    setStore(current => {
+      const existing = current.settings.recentSearches ?? []
+      const next = [
+        clean,
+        ...existing.filter(item => item.toLowerCase() !== clean.toLowerCase()),
+      ].slice(0, 8)
+      return {
+        ...current,
+        settings: {
+          ...current.settings,
+          recentSearches: next,
+        },
+      }
+    })
+  }
+  const accountFolderNames = useMemo(
+    () =>
+      store.mailboxes
+        .filter(mailbox => !selectedAccountId || mailbox.accountId === selectedAccountId)
+        .map(mailbox => mailbox.name),
+    [store.mailboxes, selectedAccountId],
+  )
+  const labelNames = useMemo(
+    () => store.labels.map(label => label.name),
+    [store.labels],
+  )
   useEffect(() => {
     if (!searchPanelOpen) {
       setDraftQueryState(isBareNavigationQuery(currentQuery) ? '' : currentQuery)
@@ -288,11 +337,12 @@ export function MailTopBar({
       .finally(() => { if (generation === searchGeneration.current) setOpeningThread(null) })
   }
 
-  const appendOperator = (operator: string): void => {
-    setDraftQuery(current =>
-      `${current.trim()} ${operator}`.trim().replace(/\s+/g, ' '),
-    )
-    searchInputRef.current?.focus()
+  const applySearchQuery = (nextQuery: string): void => {
+    const clean = nextQuery.trim() || 'in:inbox'
+    draftDirtyRef.current = false
+    setDraftQueryState(isBareNavigationQuery(clean) ? '' : clean)
+    setCurrentQuery(clean)
+    recordRecentSearch(clean)
   }
 
   const activeQueryChips = useMemo(() => {
@@ -371,6 +421,11 @@ export function MailTopBar({
             onFocus={() => setSearchPanelOpen(true)}
             onChange={event => setDraftQuery(event.currentTarget.value)}
             onKeyDown={event => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                applySearchQuery(draftQuery)
+                return
+              }
               if (event.key !== 'Escape') return
               event.preventDefault()
               event.stopPropagation()
@@ -378,7 +433,24 @@ export function MailTopBar({
               event.currentTarget.blur()
             }}
           />
-          <KbdChip aria-hidden="true">⌘K</KbdChip>
+          {onOpenCommandPalette ? (
+            <KbdChip
+              as="button"
+              type="button"
+              aria-label="Open command palette"
+              title="Open command palette (⌘K)"
+              style={{ cursor: 'pointer', border: '1px solid var(--n-line)' }}
+              onClick={event => {
+                event.stopPropagation()
+                setSearchPanelOpen(false)
+                onOpenCommandPalette()
+              }}
+            >
+              ⌘K
+            </KbdChip>
+          ) : (
+            <KbdChip aria-hidden="true">⌘K</KbdChip>
+          )}
         </TopSearchField>
         {searchPanelOpen && (
           <TopSearchPanel id="puremail-search-panel">
@@ -386,6 +458,7 @@ export function MailTopBar({
               <Button
                 size="sm"
                 variant="subtle"
+                data-popover-trigger=""
                 aria-expanded={builderOpen}
                 aria-label="Query operators"
                 onClick={() => setBuilderOpen(open => !open)}
@@ -476,7 +549,7 @@ export function MailTopBar({
                       role="alert"
                       style={{
                         fontSize: 11,
-                        color: 'var(--platform-colors-danger, #c43d3d)',
+                        color: 'var(--platform-colors-danger, var(--puremail-danger-text))',
                       }}
                     >
                       {viewNameError}
@@ -499,44 +572,33 @@ export function MailTopBar({
               )}
             </SearchToolbar>
             {builderOpen && (
-              <div
-                style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
-                role="group"
-                aria-label="Query operator builder"
-              >
-                {[
-                  'is:unread',
-                  'is:starred',
-                  'has:attachment',
-                  'has:calendar',
-                  'from:',
-                  'to:',
-                  'cc:',
-                  'subject:',
-                  'newer_than:7d',
-                  'older_than:30d',
-                  'sort:oldest',
-                ].map(operator => (
-                  <Button
-                    key={operator}
-                    size="sm"
-                    onClick={() => appendOperator(operator)}
-                  >
-                    {operator}
-                  </Button>
-                ))}
-                {store.labels.slice(0, 4).map(label => (
-                  <Button
-                    key={label.id}
-                    size="sm"
-                    onClick={() =>
-                      appendOperator(`label:${quoteQueryValue(label.name)}`)
-                    }
-                  >
-                    label:{label.name}
-                  </Button>
-                ))}
-              </div>
+              <SearchFilterBuilder
+                inline
+                query={draftDirtyRef.current ? draftQuery : currentQuery}
+                folders={accountFolderNames}
+                labels={labelNames}
+                recentSearches={store.settings.recentSearches ?? []}
+                onApply={builtQuery => {
+                  applySearchQuery(builtQuery)
+                  setBuilderOpen(false)
+                }}
+                onCreateFilter={
+                  onCreateFilterFromSearch
+                    ? builtQuery => {
+                        setBuilderOpen(false)
+                        setSearchPanelOpen(false)
+                        onCreateFilterFromSearch(builtQuery)
+                      }
+                    : undefined
+                }
+                onClear={() => {
+                  draftDirtyRef.current = false
+                  setDraftQueryState('')
+                  setCurrentQuery('in:inbox')
+                  setBuilderOpen(false)
+                }}
+                onClose={() => setBuilderOpen(false)}
+              />
             )}
 
             {remoteResults.length > 0 && (
@@ -673,6 +735,50 @@ export function MailTopBar({
           <Rows2 aria-hidden="true" />
         )}
       </TopBarIconButton>
+      {readingPaneLayout && setReadingPaneLayout && (
+        <LayoutSwitcherGroup role="group" aria-label="Reading pane layout">
+          <LayoutSwitcherBtn
+            type="button"
+            $active={readingPaneLayout === 'list-only'}
+            aria-pressed={readingPaneLayout === 'list-only'}
+            aria-label="List only layout"
+            title="List only"
+            onClick={() => setReadingPaneLayout('list-only')}
+          >
+            <List aria-hidden="true" />
+          </LayoutSwitcherBtn>
+          <LayoutSwitcherBtn
+            type="button"
+            $active={readingPaneLayout === 'split-right'}
+            aria-pressed={readingPaneLayout === 'split-right'}
+            aria-label="Split right layout"
+            title="Split right"
+            onClick={() => setReadingPaneLayout('split-right')}
+          >
+            <Columns2 aria-hidden="true" />
+          </LayoutSwitcherBtn>
+          <LayoutSwitcherBtn
+            type="button"
+            $active={readingPaneLayout === 'split-bottom'}
+            aria-pressed={readingPaneLayout === 'split-bottom'}
+            aria-label="Split bottom layout"
+            title="Split bottom"
+            onClick={() => setReadingPaneLayout('split-bottom')}
+          >
+            <PanelBottom aria-hidden="true" />
+          </LayoutSwitcherBtn>
+        </LayoutSwitcherGroup>
+      )}
+      {onOpenFocusTriage && (
+        <TopBarIconButton
+          type="button"
+          aria-label="Focus triage mode"
+          title="Focus triage mode"
+          onClick={onOpenFocusTriage}
+        >
+          <Zap aria-hidden="true" />
+        </TopBarIconButton>
+      )}
       <BulkMenuWrap ref={accountMenuRef}>
         <TopAccountChip
           type="button"

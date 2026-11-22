@@ -27,12 +27,26 @@ import type { MailStore } from '../types'
  */
 
 const NOT_HERE = new Set(['drafts', 'runs', 'scheduledSends', 'aiTriage', 'syncCoverage'])
+const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 type Entries = Map<string, { fingerprint: string; value: unknown }>
 type Shape = { kind: 'records'; key: 'id' | 'threadId' } | { kind: 'strings' } | { kind: 'object' } | { kind: 'value' }
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+function stripUnsafeKeysDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => stripUnsafeKeysDeep(item)) as unknown as T
+  }
+  if (!isPlainObject(value)) return value
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_OBJECT_KEYS.has(key)) continue
+    out[key] = stripUnsafeKeysDeep(entry)
+  }
+  return out as T
+}
 
 function shapeOf(value: unknown): Shape | null {
   if (value === undefined || value === null) return null
@@ -63,6 +77,7 @@ function entriesOf(value: unknown, shape: Shape): Entries {
     for (const item of (value ?? []) as string[]) entries.set(item, { fingerprint: '', value: item })
   } else if (shape.kind === 'object') {
     for (const [key, item] of Object.entries((value ?? {}) as Record<string, unknown>)) {
+      if (UNSAFE_OBJECT_KEYS.has(key)) continue
       if (item !== undefined) entries.set(key, { fingerprint: recordFingerprint(item), value: item })
     }
   }
@@ -70,8 +85,15 @@ function entriesOf(value: unknown, shape: Shape): Entries {
 }
 
 function rebuilt(entries: Iterable<unknown>, shape: Shape): unknown {
-  if (shape.kind !== 'object') return [...entries]
-  return Object.fromEntries(entries as Iterable<[string, unknown]>)
+  if (shape.kind !== 'object') {
+    return [...entries].map(entry => stripUnsafeKeysDeep(entry))
+  }
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of entries as Iterable<[string, unknown]>) {
+    if (UNSAFE_OBJECT_KEYS.has(key)) continue
+    out[key] = stripUnsafeKeysDeep(value)
+  }
+  return out
 }
 
 /** What this copy last agreed with the file on, field by field. */
@@ -83,7 +105,7 @@ export interface StoreBaseline {
 export function storeBaselineOf(store: unknown): StoreBaseline {
   const baseline: StoreBaseline = { entries: new Map(), values: new Map() }
   for (const [field, value] of Object.entries((store ?? {}) as Record<string, unknown>)) {
-    if (NOT_HERE.has(field)) continue
+    if (UNSAFE_OBJECT_KEYS.has(field) || NOT_HERE.has(field)) continue
     const shape = fieldShape(value, undefined)
     if (Array.isArray(value) && value.length === 0) {
       baseline.entries.set(field, new Map())
@@ -122,7 +144,9 @@ const isDate = (value: unknown): value is string => typeof value === 'string' &&
 function fileWins(mine: unknown, theirs: unknown): boolean {
   if (isDate(mine) && isDate(theirs)) return time(theirs) > time(mine)
   if (!isPlainObject(mine) || !isPlainObject(theirs)) return false
-  return time(theirs.updatedAt) > time(mine.updatedAt)
+  const theirTime = time(theirs.updatedAt) || time(theirs.decidedAt)
+  const myTime = time(mine.updatedAt) || time(mine.decidedAt)
+  return theirTime > myTime
 }
 
 export interface StoreFieldChanges {
@@ -173,6 +197,7 @@ export function mergeStoreFile(input: {
   let differs = input.disk === null
 
   for (const field of new Set([...Object.keys(memory), ...Object.keys(disk)])) {
+    if (UNSAFE_OBJECT_KEYS.has(field)) continue
     if (NOT_HERE.has(field)) {
       if (field in memory) merged[field] = memory[field]
       else differs = true
@@ -188,7 +213,7 @@ export function mergeStoreFile(input: {
         if (mine === held) takeFile = true
         else if (theirs !== held) takeFile = fileWins(memory[field], disk[field])
       }
-      const kept = takeFile ? disk[field] : memory[field]
+      const kept = stripUnsafeKeysDeep(takeFile ? disk[field] : memory[field])
       if (kept !== undefined) merged[field] = kept
       if (takeFile) changes.values[field] = kept
       else if (mine !== theirs) differs = true
@@ -268,8 +293,12 @@ export function applyStoreFileChanges(store: MailStore, changes: StoreFileChange
   const valueNames = Object.keys(changes.values)
   if (fieldNames.length === 0 && valueNames.length === 0) return store
   const next = { ...store } as unknown as Record<string, unknown>
-  for (const field of valueNames) next[field] = changes.values[field]
+  for (const field of valueNames) {
+    if (UNSAFE_OBJECT_KEYS.has(field)) continue
+    next[field] = stripUnsafeKeysDeep(changes.values[field])
+  }
   for (const field of fieldNames) {
+    if (UNSAFE_OBJECT_KEYS.has(field)) continue
     const { shape, upserts, removed } = changes.fields[field]
     if (shape.kind === 'strings') {
       const held = new Set((next[field] ?? []) as string[])
@@ -277,9 +306,14 @@ export function applyStoreFileChanges(store: MailStore, changes: StoreFileChange
       for (const item of upserts) held.add(item.key)
       next[field] = [...held]
     } else if (shape.kind === 'object') {
-      const held = { ...((next[field] ?? {}) as Record<string, unknown>) }
+      const held: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries((next[field] ?? {}) as Record<string, unknown>)) {
+        if (!UNSAFE_OBJECT_KEYS.has(key)) held[key] = value
+      }
       for (const item of removed) {
+        if (UNSAFE_OBJECT_KEYS.has(item.key)) continue
         if (
+          !Object.prototype.hasOwnProperty.call(held, item.key) ||
           held[item.key] === undefined ||
           (item.over !== undefined &&
             recordFingerprint(held[item.key]) !== item.over)
@@ -289,15 +323,17 @@ export function applyStoreFileChanges(store: MailStore, changes: StoreFileChange
         delete held[item.key]
       }
       for (const item of upserts) {
+        if (UNSAFE_OBJECT_KEYS.has(item.key)) continue
         // Preserve edits made locally while the async save/sync was in flight.
         if (
+          Object.prototype.hasOwnProperty.call(held, item.key) &&
           held[item.key] !== undefined &&
           (item.over === undefined ||
             recordFingerprint(held[item.key]) !== item.over)
         ) {
           continue
         }
-        held[item.key] = item.value
+        held[item.key] = stripUnsafeKeysDeep(item.value)
       }
       next[field] = held
     } else if (shape.kind === 'records') {
@@ -309,14 +345,25 @@ export function applyStoreFileChanges(store: MailStore, changes: StoreFileChange
       for (const item of upserts) {
         const at = position.get(item.key)
         if (at === undefined) {
-          added.push(item.value as Record<string, unknown>)
+          added.push(stripUnsafeKeysDeep(item.value as Record<string, unknown>))
           continue
         }
         // Edited here since the merge was made: this edit stays, and the next save decides.
         if (item.over === undefined || recordFingerprint(asFiled(field, results[at])) !== item.over) continue
-        const incoming = item.value as Record<string, unknown>
-        // The file holds plain text; the rich rendering in memory stays until the next sync replaces it.
-        results[at] = field === 'messages' && !incoming.bodyHtml && results[at].bodyHtml ? { ...incoming, bodyHtml: results[at].bodyHtml } : incoming
+        const incoming = stripUnsafeKeysDeep(item.value as Record<string, unknown>)
+        // The file drops ephemeral bodyHtml and rawHeaders; preserve in-memory copies until the next sync replaces them.
+        results[at] =
+          field === 'messages'
+            ? {
+                ...incoming,
+                ...(!incoming.bodyHtml && results[at].bodyHtml
+                  ? { bodyHtml: results[at].bodyHtml }
+                  : {}),
+                ...(!incoming.rawHeaders && results[at].rawHeaders
+                  ? { rawHeaders: results[at].rawHeaders }
+                  : {}),
+              }
+            : incoming
       }
       next[field] = [
         ...results.filter(record => {

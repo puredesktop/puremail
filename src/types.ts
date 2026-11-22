@@ -225,7 +225,65 @@ export interface MailMessage {
   calendarInvite?: MailCalendarInvite
   /** Raw RFC 2369 List-Unsubscribe header, when the sender provided one. */
   listUnsubscribe?: string
+  /** Raw RFC 8058 List-Unsubscribe-Post header (e.g. `List-Unsubscribe=One-Click`). */
+  listUnsubscribePost?: string
+  /** Parsed SPF / DKIM / DMARC authentication verdicts. */
+  authResults?: MailAuthResults
+  /** Raw Return-Path header (envelope sender). */
+  returnPath?: string
+  /** Capped raw message headers for inspection (excluding sensitive cookies). */
+  rawHeaders?: Array<{ name: string; value: string }>
+  /** Sender-declared message importance (`Importance` / `X-Priority`). */
+  importance?: 'low' | 'normal' | 'high'
   read: boolean
+}
+
+export type ScreenerDestination = 'inbox' | 'feed' | 'paper_trail' | 'blocked'
+
+export interface ScreenerDecision {
+  email: string
+  destination: ScreenerDestination
+  decidedAt: string
+  senderName?: string
+  updatedAt?: string
+}
+
+export interface FollowUpReminder {
+  id: string
+  threadId: string
+  accountId: string
+  remindAt: string
+  createdAt: string
+  note?: string
+  cancelOnReply: boolean
+  dismissedAt?: string
+  updatedAt: string
+}
+
+export interface MailSnippet {
+  id: string
+  title: string
+  shortcut: string
+  subject?: string
+  body: string
+  bodyHtml?: string
+  updatedAt: string
+}
+
+export interface MailContactGroup {
+  id: string
+  name: string
+  members: MailContact[]
+  updatedAt: string
+}
+
+export type MailAuthVerdict = 'pass' | 'fail' | 'neutral' | 'none'
+
+export interface MailAuthResults {
+  spf: MailAuthVerdict
+  dkim: MailAuthVerdict
+  dmarc: MailAuthVerdict
+  raw?: string
 }
 
 export interface MailLabel {
@@ -321,6 +379,10 @@ export interface Draft {
   sendMessageId?: string
   /** Attempt identities this draft's later explicit send decision supersedes; no clock ordering. */
   sendSupersedes?: string[]
+  /** Optional message importance (`Importance` + `X-Priority` headers on send). */
+  importance?: 'low' | 'normal' | 'high'
+  /** Optional RFC 8098 read-receipt request (`Disposition-Notification-To` on send). */
+  requestReadReceipt?: boolean
   /** Uncertainty from a different submission, kept apart from the current attempt's outcome. */
   sendUncertainties?: Array<{ attemptId: string; reason: string; messageId?: string; checkedAt?: string }>
   sendState?: 'failed' | 'uncertain'
@@ -575,6 +637,16 @@ export interface MailFilterActions {
   /** Leave the inbox (archive) — the "file into box" half of the recipe. */
   skipInbox?: boolean
   markRead?: boolean
+  /** Star matched threads. */
+  star?: boolean
+  /** Set thread priority. */
+  priority?: 'high' | 'normal'
+  /** Mute matched threads (suppress future replies from Inbox). */
+  mute?: boolean
+  /** Move matched threads to Trash. */
+  trash?: boolean
+  /** Automatically create a linked mail task for matched threads. */
+  createTask?: boolean
 }
 
 /**
@@ -611,8 +683,21 @@ export interface RemoteImageSettings {
   trustedSenders?: string[]
 }
 
+export interface DecisionModelOperationsSettings {
+  /** Suggest Inbox / Feed / Paper Trail / Block for unknown senders in Screener. */
+  screenerRouting?: boolean
+  /** Semantic phishing, credential-harvesting & impersonation checks in Security Shield. */
+  securityShield?: boolean
+  /** Detect whether threads expect a reply and suggest follow-up reminder timing. */
+  followUpRadar?: boolean
+  /** Recommend next action & urgency in Triage Focus Mode and Thread Reader. */
+  triageActionHints?: boolean
+  /** Match incoming messages to your saved reply snippets in Quick Reply. */
+  snippetSuggestions?: boolean
+}
+
 export interface MailSettings {
-  typedTriage?: { provider?: 'typesafe' | 'local'; localModel?: string; localConfidence?: number; mode: 'off' | 'shadow' | 'suggest'; dailyCap: number; confidence: number }
+  typedTriage?: { provider?: 'typesafe' | 'local'; localModel?: string; localConfidence?: number; mode: 'off' | 'shadow' | 'suggest'; dailyCap: number; confidence: number; operations?: DecisionModelOperationsSettings }
 
   /** The IMAP-family account, when one is configured. */
   imapAccount?: ImapAccountSettings
@@ -638,6 +723,12 @@ export interface MailSettings {
   connectionProfiles?: MailConnectionProfile[]
   /** Remote-image loading policy; missing = ask, no trusted senders. */
   remoteImages?: RemoteImageSettings
+  /** Whether the first-time sender Screener is enabled. */
+  screenerEnabled?: boolean
+  /** Optional reply-specific signature id per account (separate from new compose default). */
+  replySignatureIdByAccount?: Record<string, string>
+  /** Most recent search queries entered by the user. */
+  recentSearches?: string[]
 }
 
 /**
@@ -684,6 +775,8 @@ export type QueuedMailActionType =
   | 'unstar'
   | 'pin'
   | 'unpin'
+  | 'mute'
+  | 'unmute'
   | 'snooze'
   | 'unsnooze'
 
@@ -759,6 +852,18 @@ export interface MailStore {
   starredThreadIds?: string[]
   /** Thread ids the user has pinned to the top of the rail. */
   pinnedThreadIds?: string[]
+  /** Normalized sender emails marked as VIP. */
+  vipSenders?: string[]
+  /** Thread ids muted by the user (future replies auto-archive). */
+  mutedThreadIds?: string[]
+  /** First-time sender Screener decisions keyed by normalized sender email. */
+  screenerDecisions?: Record<string, ScreenerDecision>
+  /** Explicit follow-up reminders scheduled for sent or awaiting threads. */
+  followUpReminders?: FollowUpReminder[]
+  /** Reusable compose snippets / templates. */
+  snippets?: MailSnippet[]
+  /** Named contact groups for quick multi-recipient addressing. */
+  contactGroups?: MailContactGroup[]
   /** Full snooze metadata per snoozed thread. */
   snoozes?: MailThreadSnooze[]
   /** Named queries pinned to the sidebar. */

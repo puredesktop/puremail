@@ -114,7 +114,13 @@ export function replyStateInStore(
   const threshold =
     store.settings?.followUp?.replyThresholdWorkingDays ??
     DEFAULT_REPLY_THRESHOLD_WORKING_DAYS
-  return replyStateForThread(thread, store.messages, account, now, threshold)
+  const own: OwnAddresses | undefined = account
+    ? {
+        email: account.email,
+        emails: store.settings?.ownerIdentities?.emails,
+      }
+    : undefined
+  return replyStateForThread(thread, store.messages, own, now, threshold)
 }
 
 /** How long a fresh "replied" stays worth showing in Sent. */

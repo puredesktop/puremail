@@ -11,8 +11,17 @@ export interface DecisionSettings {
 export type DecisionResult =
   | Extract<TypedJudgmentResult, {status: 'completed'}>
   | {status: 'skipped'; reason: Extract<TypedJudgmentResult, {status: 'skipped'}>['reason'] | 'settings-changed'}
+const settingsListeners = new Set<(settings: DecisionSettings) => void>()
+export function onDecisionModelSettingsChange(listener: (settings: DecisionSettings) => void): () => void {
+  settingsListeners.add(listener)
+  return () => { settingsListeners.delete(listener) }
+}
 export const getDecisionModelSettings = () => bridge.call<DecisionSettings>('decisionModels.settings', [])
-export const setDecisionModelOverride = (modelId: string | null) => bridge.call<DecisionSettings>('decisionModels.override', [modelId])
+export const setDecisionModelOverride = async (modelId: string | null) => {
+  const next = await bridge.call<DecisionSettings>('decisionModels.override', [modelId])
+  for (const listener of settingsListeners) listener(next)
+  return next
+}
 export const evaluateDecision = (request: Omit<TypedJudgmentRequest, 'provider' | 'localModel'>) => bridge.call<DecisionResult>('decisionModels.evaluate', [request])
 
 /** Whether a decision ran on this device. Local models self-report their confidence; hosted ones are calibrated by their provider. */

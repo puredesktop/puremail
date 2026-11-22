@@ -9,7 +9,15 @@ import {
   ensureMailLabel,
   setMailFilterEnabled,
   suggestMailFilters,
+  updateMailFilter,
 } from '../lib/mailFilters'
+import {
+  DEFAULT_SNIPPETS,
+  deleteSnippet,
+  upsertSnippet,
+} from '../lib/mailSnippets'
+import { setVipSender, toggleVipSender } from '../lib/mailTriage'
+import { isValidEmailAddress, parseRecipientInput } from '../lib/mailCompose'
 import { quoteQueryValue, saveMailView } from '../lib/mailQuery'
 import { Fragment, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -662,6 +670,31 @@ export function MailSettings({
     signature =>
       !signature.accountId || signature.accountId === selectedAccount?.id,
   )
+  // Wave 2B Settings state: VIPs, Contact Groups, Filter Editing, Snippets CRUD
+  const [newVipEmail, setNewVipEmail] = useState('')
+  const [newGroupName, setNewGroupName] = useState('')
+  const [newGroupMembers, setNewGroupMembers] = useState('')
+  const [groupError, setGroupError] = useState<string | null>(null)
+  const [editingFilterId, setEditingFilterId] = useState<string | null>(null)
+  const [filterDraft, setFilterDraft] = useState<{
+    name: string
+    query: string
+    labelName: string
+    skipInbox: boolean
+    markRead: boolean
+    star: boolean
+    markHighPriority: boolean
+    mute: boolean
+    trash: boolean
+    createTask: boolean
+  } | null>(null)
+  const [editingSnippetId, setEditingSnippetId] = useState<string | null>(null)
+  const [snippetTitle, setSnippetTitle] = useState('')
+  const [snippetShortcut, setSnippetShortcut] = useState('')
+  const [snippetSubject, setSnippetSubject] = useState('')
+  const [snippetBody, setSnippetBody] = useState('')
+  const activeSnippets =
+    store.snippets === undefined ? DEFAULT_SNIPPETS : store.snippets
   const [selectedMailProviderId, setSelectedMailProviderId] =
     useState<MailProviderOptionId | null>(null)
   const syncedGoogleAccountEmail =
@@ -1780,6 +1813,189 @@ export function MailSettings({
                     </div>
                   )}
                 </SettingsFullRow>
+                <SettingsFullRow>
+                  <SettingToggle>
+                    Enable Sender Screener (screen first-time senders into Inbox, Feed, or Paper Trail)
+                    <input
+                      type="checkbox"
+                      aria-label="Enable Sender Screener"
+                      checked={store.settings.screenerEnabled !== false}
+                      onChange={event =>
+                        setStore(current => ({
+                          ...current,
+                          settings: {
+                            ...current.settings,
+                            screenerEnabled: event.currentTarget.checked,
+                          },
+                        }))
+                      }
+                    />
+                  </SettingToggle>
+                </SettingsFullRow>
+                <SettingsFullRow>
+                  <Subject>VIP senders</Subject>
+                  <Meta>
+                    VIP senders get a gold badge in the thread list, bypass the Screener, and match the VIP chip.
+                  </Meta>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    <ComposeInput
+                      value={newVipEmail}
+                      aria-label="Add VIP sender email"
+                      placeholder="ceo@company.com"
+                      onChange={event => setNewVipEmail(event.currentTarget.value)}
+                      onKeyDown={event => {
+                        if (event.key !== 'Enter') return
+                        event.preventDefault()
+                        const clean = newVipEmail.trim().toLowerCase()
+                        if (!isValidEmailAddress(clean)) return
+                        setStore(current => setVipSender(current, clean, true))
+                        setNewVipEmail('')
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      disabled={!isValidEmailAddress(newVipEmail.trim())}
+                      onClick={() => {
+                        const clean = newVipEmail.trim().toLowerCase()
+                        if (!isValidEmailAddress(clean)) return
+                        setStore(current => setVipSender(current, clean, true))
+                        setNewVipEmail('')
+                      }}
+                    >
+                      Add VIP
+                    </Button>
+                  </div>
+                  {(store.vipSenders ?? []).length > 0 && (
+                    <div style={{ display: 'grid', gap: 4, marginTop: 8 }}>
+                      {(store.vipSenders ?? []).map(email => (
+                        <div
+                          key={email}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                        >
+                          <Meta style={{ flex: 1, minWidth: 0 }}>{email}</Meta>
+                          <Button
+                            size="sm"
+                            variant="text"
+                            aria-label={`Remove VIP ${email}`}
+                            onClick={() =>
+                              setStore(current => toggleVipSender(current, email))
+                            }
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SettingsFullRow>
+                <SettingsFullRow>
+                  <Subject>Contact groups</Subject>
+                  <Meta>
+                    Type a group name in Compose To/Cc/Bcc to expand all members into recipient chips.
+                  </Meta>
+                  <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                    <ComposeInput
+                      value={newGroupName}
+                      aria-label="New contact group name"
+                      placeholder="Group name (e.g. Engineering)"
+                      onChange={event => {
+                        setNewGroupName(event.currentTarget.value)
+                        if (groupError) setGroupError(null)
+                      }}
+                    />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <ComposeInput
+                        value={newGroupMembers}
+                        aria-label="Contact group members"
+                        placeholder="alice@company.com, Bob <bob@company.com>"
+                        onChange={event => {
+                          setNewGroupMembers(event.currentTarget.value)
+                          if (groupError) setGroupError(null)
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={!newGroupName.trim() || !newGroupMembers.trim()}
+                        onClick={() => {
+                          const trimmedName = newGroupName.trim()
+                          if (!trimmedName) return
+                          const duplicate = (store.contactGroups ?? []).some(
+                            g => g.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+                          )
+                          if (duplicate) {
+                            setGroupError(`A contact group named "${trimmedName}" already exists.`)
+                            return
+                          }
+                          const members = parseRecipientInput(newGroupMembers).filter(
+                            m => isValidEmailAddress(m.email),
+                          )
+                          if (members.length === 0) {
+                            setGroupError('Enter at least one valid email address for the group.')
+                            return
+                          }
+                          setGroupError(null)
+                          const now = new Date().toISOString()
+                          setStore(current => ({
+                            ...current,
+                            contactGroups: [
+                              ...(current.contactGroups ?? []),
+                              {
+                                id: `group_${crypto.randomUUID()}`,
+                                name: trimmedName,
+                                members,
+                                updatedAt: now,
+                              },
+                            ],
+                          }))
+                          setNewGroupName('')
+                          setNewGroupMembers('')
+                        }}
+                      >
+                        Add group
+                      </Button>
+                    </div>
+                    {groupError && (
+                      <Meta
+                        role="alert"
+                        style={{ color: 'var(--puremail-danger-text)' }}
+                      >
+                        {groupError}
+                      </Meta>
+                    )}
+                  </div>
+                  {(store.contactGroups ?? []).length > 0 && (
+                    <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                      {(store.contactGroups ?? []).map(group => (
+                        <div
+                          key={group.id}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Subject>{group.name}</Subject>
+                            <Meta>
+                              {group.members.map(m => m.email).join(', ')}
+                            </Meta>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="text"
+                            aria-label={`Delete contact group ${group.name}`}
+                            onClick={() =>
+                              setStore(current => ({
+                                ...current,
+                                contactGroups: (current.contactGroups ?? []).filter(
+                                  g => g.id !== group.id,
+                                ),
+                              }))
+                            }
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </SettingsFullRow>
               </SettingsOptionGrid>
             </SettingsCard>
 
@@ -1883,6 +2099,11 @@ export function MailSettings({
                               } “${rule.actions.labelName}”`
                             : ''}
                           {rule.actions.markRead ? ' · mark read' : ''}
+                          {rule.actions.star ? ' · star' : ''}
+                          {rule.actions.priority === 'high' ? ' · high priority' : ''}
+                          {rule.actions.mute ? ' · mute' : ''}
+                          {rule.actions.trash ? ' · trash' : ''}
+                          {rule.actions.createTask ? ' · create task' : ''}
                           {' · '}
                           {rule.hitCount > 0
                             ? `${rule.hitCount} hit${
@@ -1890,7 +2111,172 @@ export function MailSettings({
                               }`
                             : 'no matches yet'}
                         </Meta>
+                        {editingFilterId === rule.id && filterDraft && (
+                          <div
+                            style={{
+                              display: 'grid',
+                              gap: 6,
+                              marginTop: 8,
+                              padding: 10,
+                              border: '1px solid var(--n-line)',
+                              borderRadius: 4,
+                              background: 'var(--n-panel)',
+                            }}
+                          >
+                            <ComposeInput
+                              value={filterDraft.name}
+                              aria-label="Edit filter name"
+                              placeholder="Filter name"
+                              onChange={event =>
+                                setFilterDraft(d =>
+                                  d ? { ...d, name: event.currentTarget.value } : d,
+                                )
+                              }
+                            />
+                            <ComposeInput
+                              value={filterDraft.query}
+                              aria-label="Edit filter query"
+                              placeholder="from:example.com"
+                              onChange={event =>
+                                setFilterDraft(d =>
+                                  d ? { ...d, query: event.currentTarget.value } : d,
+                                )
+                              }
+                            />
+                            <ComposeInput
+                              value={filterDraft.labelName}
+                              aria-label="Edit filter label or box"
+                              placeholder="Label / box name (optional)"
+                              onChange={event =>
+                                setFilterDraft(d =>
+                                  d
+                                    ? { ...d, labelName: event.currentTarget.value }
+                                    : d,
+                                )
+                              }
+                            />
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                              {(
+                                [
+                                  ['skipInbox', 'Archive (skip inbox)'],
+                                  ['markRead', 'Mark read'],
+                                  ['star', 'Star'],
+                                  ['markHighPriority', 'High priority'],
+                                  ['mute', 'Mute'],
+                                  ['trash', 'Trash'],
+                                  ['createTask', 'Create task'],
+                                ] as const
+                              ).map(([field, label]) => (
+                                <label
+                                  key={field}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={filterDraft[field]}
+                                    onChange={event =>
+                                      setFilterDraft(d =>
+                                        d
+                                          ? {
+                                              ...d,
+                                              [field]: event.currentTarget.checked,
+                                            }
+                                          : d,
+                                      )
+                                    }
+                                  />
+                                  {label}
+                                </label>
+                              ))}
+                            </div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                disabled={!filterDraft.name.trim() || !filterDraft.query.trim()}
+                                onClick={() => {
+                                  setStore(current => {
+                                    let baseStore = current
+                                    let resolvedLabel = filterDraft.labelName.trim()
+                                    if (resolvedLabel) {
+                                      const ensured = ensureMailLabel(
+                                        baseStore,
+                                        resolvedLabel,
+                                      )
+                                      baseStore = ensured.store
+                                      resolvedLabel = ensured.label.name
+                                    }
+                                    return updateMailFilter(baseStore, rule.id, {
+                                      name: filterDraft.name.trim(),
+                                      query: filterDraft.query.trim(),
+                                      actions: {
+                                        ...(resolvedLabel
+                                          ? { labelName: resolvedLabel }
+                                          : {}),
+                                        skipInbox: filterDraft.skipInbox,
+                                        markRead: filterDraft.markRead,
+                                        star: filterDraft.star,
+                                        ...(filterDraft.markHighPriority
+                                          ? { priority: 'high' as const }
+                                          : {}),
+                                        mute: filterDraft.mute,
+                                        trash: filterDraft.trash,
+                                        createTask: filterDraft.createTask,
+                                      },
+                                    })
+                                  })
+                                  setEditingFilterId(null)
+                                  setFilterDraft(null)
+                                  setCommandNotice(`Updated filter “${filterDraft.name.trim()}”.`)
+                                }}
+                              >
+                                Save filter
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="text"
+                                onClick={() => {
+                                  setEditingFilterId(null)
+                                  setFilterDraft(null)
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
+                      <Button
+                        size="sm"
+                        variant="text"
+                        onClick={() => {
+                          if (editingFilterId === rule.id) {
+                            setEditingFilterId(null)
+                            setFilterDraft(null)
+                          } else {
+                            setEditingFilterId(rule.id)
+                            setFilterDraft({
+                              name: rule.name,
+                              query: rule.query,
+                              labelName: rule.actions.labelName ?? '',
+                              skipInbox: Boolean(rule.actions.skipInbox),
+                              markRead: Boolean(rule.actions.markRead),
+                              star: Boolean(rule.actions.star),
+                              markHighPriority: rule.actions.priority === 'high',
+                              mute: Boolean(rule.actions.mute),
+                              trash: Boolean(rule.actions.trash),
+                              createTask: Boolean(rule.actions.createTask),
+                            })
+                          }
+                        }}
+                      >
+                        Edit
+                      </Button>
                       <Button
                         size="sm"
                         variant="text"
@@ -2181,6 +2567,134 @@ export function MailSettings({
                     <option value="30">30 seconds</option>
                   </SelectField>
                 </SettingToggle>
+                <SettingsFullRow>
+                  <Subject>Snippets &amp; canned responses</Subject>
+                  <Meta>
+                    Type ; in the composer to insert a snippet. Supports{' '}
+                    {'{{first_name}}'}, {'{{name}}'}, {'{{my_name}}'}, {'{{subject}}'}, and {'{{date}}'}.
+                  </Meta>
+                  <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <ComposeInput
+                        value={snippetTitle}
+                        aria-label="Snippet title"
+                        placeholder="Title (e.g. Quick Follow-Up)"
+                        onChange={event => setSnippetTitle(event.currentTarget.value)}
+                      />
+                      <ComposeInput
+                        value={snippetShortcut}
+                        aria-label="Snippet shortcut"
+                        placeholder="Shortcut (e.g. followup)"
+                        style={{ maxWidth: 160 }}
+                        onChange={event => setSnippetShortcut(event.currentTarget.value)}
+                      />
+                    </div>
+                    <ComposeInput
+                      value={snippetSubject}
+                      aria-label="Snippet optional subject"
+                      placeholder="Optional subject (e.g. Recap: {{subject}})"
+                      onChange={event => setSnippetSubject(event.currentTarget.value)}
+                    />
+                    <ComposeTextArea
+                      value={snippetBody}
+                      aria-label="Snippet body"
+                      placeholder="Hi {{first_name}},&#10;&#10;Following up on {{subject}}…"
+                      style={{ minHeight: 72, resize: 'vertical' }}
+                      onChange={event => setSnippetBody(event.currentTarget.value)}
+                    />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={!snippetTitle.trim() || !snippetBody.trim()}
+                        onClick={() => {
+                          setStore(current =>
+                            upsertSnippet(current, {
+                              ...(editingSnippetId ? { id: editingSnippetId } : {}),
+                              title: snippetTitle.trim(),
+                              shortcut:
+                                snippetShortcut.trim() ||
+                                snippetTitle.trim().toLowerCase().replace(/\s+/g, '-'),
+                              ...(snippetSubject.trim()
+                                ? { subject: snippetSubject.trim() }
+                                : {}),
+                              body: snippetBody,
+                            }),
+                          )
+                          setEditingSnippetId(null)
+                          setSnippetTitle('')
+                          setSnippetShortcut('')
+                          setSnippetSubject('')
+                          setSnippetBody('')
+                        }}
+                      >
+                        {editingSnippetId ? 'Update snippet' : 'Add snippet'}
+                      </Button>
+                      {editingSnippetId && (
+                        <Button
+                          size="sm"
+                          variant="text"
+                          onClick={() => {
+                            setEditingSnippetId(null)
+                            setSnippetTitle('')
+                            setSnippetShortcut('')
+                            setSnippetSubject('')
+                            setSnippetBody('')
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+                    {activeSnippets.map(snippet => (
+                      <div
+                        key={snippet.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '6px 8px',
+                          border: '1px solid var(--n-fence)',
+                          borderRadius: 4,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <Subject>
+                            {snippet.title}{' '}
+                            <Meta as="span">;{snippet.shortcut}</Meta>
+                          </Subject>
+                          <Meta>
+                            {snippet.body.replace(/\s+/g, ' ').slice(0, 90)}
+                          </Meta>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="text"
+                          onClick={() => {
+                            setEditingSnippetId(snippet.id)
+                            setSnippetTitle(snippet.title)
+                            setSnippetShortcut(snippet.shortcut)
+                            setSnippetSubject(snippet.subject ?? '')
+                            setSnippetBody(snippet.body)
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="text"
+                          onClick={() =>
+                            setStore(current => deleteSnippet(current, snippet.id))
+                          }
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </SettingsFullRow>
               </SettingsOptionGrid>
             </SettingsCard>
 
@@ -2330,6 +2844,45 @@ export function MailSettings({
                   </SettingsActions>
                 </SignatureListRow>
               ))}
+              {accountSignatures.length > 0 && selectedAccount && (
+                <SettingsFullRow>
+                  <SettingToggle>
+                    Signature for replies &amp; forwards
+                    <SelectField
+                      aria-label="Reply and forward signature"
+                      value={
+                        store.settings.replySignatureIdByAccount?.[
+                          selectedAccount.id
+                        ] ?? ''
+                      }
+                      onChange={event => {
+                        const value = event.currentTarget.value
+                        setStore(current => {
+                          const existing = {
+                            ...(current.settings.replySignatureIdByAccount ?? {}),
+                          }
+                          if (value) existing[selectedAccount.id] = value
+                          else delete existing[selectedAccount.id]
+                          return {
+                            ...current,
+                            settings: {
+                              ...current.settings,
+                              replySignatureIdByAccount: existing,
+                            },
+                          }
+                        })
+                      }}
+                    >
+                      <option value="">Same as new messages (default)</option>
+                      {accountSignatures.map(sig => (
+                        <option key={sig.id} value={sig.id}>
+                          {sig.name}
+                        </option>
+                      ))}
+                    </SelectField>
+                  </SettingToggle>
+                </SettingsFullRow>
+              )}
             </SettingsCard>
 
             <SettingsCard id="settings-shortcuts">

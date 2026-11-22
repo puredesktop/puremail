@@ -1,4 +1,5 @@
 import { blockRemoteImagesInMailHtml } from './mailModel'
+import { stripTrackingPixels } from './mailPrivacyShield'
 
 /**
  * Render-time sanitizer for mail `bodyHtml` (M2). Runs immediately before
@@ -71,6 +72,7 @@ const ALLOWED_TAGS = new Set([
   'code',
   'col',
   'colgroup',
+  'del',
   'div',
   'em',
   'font',
@@ -89,6 +91,7 @@ const ALLOWED_TAGS = new Set([
   'ol',
   'p',
   'pre',
+  's',
   'span',
   'strong',
   'table',
@@ -960,9 +963,19 @@ function sanitizedMailBody(
 
 export function sanitizeMailHtml(
   html: string,
-  options: { allowRemoteImages?: boolean; preserveRunNoteAttr?: boolean } = {},
+  options: {
+    allowRemoteImages?: boolean
+    preserveRunNoteAttr?: boolean
+    stripTrackers?: boolean
+  } = {},
 ): string {
-  const clean = sanitizedMailBody(html, {
+  // Run tracker stripping BEFORE sanitization so beacons relying on
+  // `visibility:hidden`, `opacity:0`, `width="0"`, or `width="1px"` are
+  // detected before the sanitizer removes those styles/attributes.
+  const preFiltered = options.stripTrackers
+    ? stripTrackingPixels(html || '').html
+    : html
+  const clean = sanitizedMailBody(preFiltered, {
     preserveRunNoteAttr: options.preserveRunNoteAttr,
   })
   if (options.allowRemoteImages) return clean
@@ -970,6 +983,12 @@ export function sanitizeMailHtml(
 }
 
 /** Whether the sanitized rendering of `html` blocked any remote images. */
-export function mailHtmlHasRemoteImages(html: string): boolean {
-  return blockRemoteImagesInMailHtml(sanitizedMailBody(html)).blockedCount > 0
+export function mailHtmlHasRemoteImages(
+  html: string,
+  options: { stripTrackers?: boolean } = {},
+): boolean {
+  const preFiltered = options.stripTrackers
+    ? stripTrackingPixels(html || '').html
+    : html
+  return blockRemoteImagesInMailHtml(sanitizedMailBody(preFiltered)).blockedCount > 0
 }

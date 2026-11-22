@@ -13,6 +13,13 @@ import type {
  * (the same reasoning as the provider's no-retry-on-send policy); failed
  * sends stay in Drafts with an explicit notice instead.
  */
+const LOCAL_ONLY_ACTION_TYPES = new Set<QueuedMailActionType>([
+  'pin',
+  'unpin',
+  'mute',
+  'unmute',
+])
+
 export function enqueueMailAction(
   store: MailStore,
   type: QueuedMailActionType,
@@ -20,6 +27,7 @@ export function enqueueMailAction(
   payload?: Record<string, unknown>,
   now = new Date().toISOString(),
 ): MailStore {
+  if (LOCAL_ONLY_ACTION_TYPES.has(type)) return store
   const action: QueuedMailAction = {
     id: `queued_${type}_${threadId}_${now.replace(/[^0-9]/g, '')}_${
       (store.queuedActions ?? []).length

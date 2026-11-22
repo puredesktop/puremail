@@ -35,6 +35,118 @@ export function setThreadStarred(
   }
 }
 
+export function setThreadPinned(
+  store: MailStore,
+  threadId: string,
+  pinned: boolean,
+): MailStore {
+  const current = store.pinnedThreadIds ?? []
+  if (pinned === current.includes(threadId)) return store
+  return {
+    ...store,
+    pinnedThreadIds: pinned
+      ? [...current, threadId]
+      : current.filter(id => id !== threadId),
+  }
+}
+
+export function togglePinThread(store: MailStore, threadId: string): MailStore {
+  const isPinned = (store.pinnedThreadIds ?? []).includes(threadId)
+  return setThreadPinned(store, threadId, !isPinned)
+}
+
+export function setThreadMuted(
+  store: MailStore,
+  threadId: string,
+  muted: boolean,
+): MailStore {
+  const current = store.mutedThreadIds ?? []
+  if (muted === current.includes(threadId)) return store
+  return {
+    ...store,
+    mutedThreadIds: muted
+      ? [...current, threadId]
+      : current.filter(id => id !== threadId),
+  }
+}
+
+export function toggleMuteThread(store: MailStore, threadId: string): MailStore {
+  const isMuted = (store.mutedThreadIds ?? []).includes(threadId)
+  return setThreadMuted(store, threadId, !isMuted)
+}
+
+export function setVipSender(
+  store: MailStore,
+  email: string,
+  vip: boolean,
+): MailStore {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return store
+  const current = (store.vipSenders ?? []).map(item => item.trim().toLowerCase())
+  const exists = current.includes(normalized)
+  if (vip === exists) return store
+  return {
+    ...store,
+    vipSenders: vip
+      ? [...current, normalized]
+      : current.filter(item => item !== normalized),
+  }
+}
+
+export function toggleVipSender(store: MailStore, email: string): MailStore {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return store
+  const isVip = (store.vipSenders ?? []).some(
+    item => item.trim().toLowerCase() === normalized,
+  )
+  return setVipSender(store, normalized, !isVip)
+}
+
+/**
+ * Auto-archive any muted thread that landed back in an Inbox mailbox (e.g.
+ * after a new reply arrived on a muted conversation), scoped per account.
+ */
+export function archiveMutedRepliedThreadsWithIds(
+  store: MailStore,
+  accountId?: string,
+): { store: MailStore; archivedThreadIds: string[] } {
+  const muted = new Set(store.mutedThreadIds ?? [])
+  if (muted.size === 0) return { store, archivedThreadIds: [] }
+  const inboxIds = new Set(
+    store.mailboxes
+      .filter(
+        m => m.role === 'inbox' && (!accountId || m.accountId === accountId),
+      )
+      .map(m => m.id),
+  )
+  const toArchive = store.threads.filter(
+    thread =>
+      (!accountId || thread.accountId === accountId) &&
+      muted.has(thread.id) &&
+      inboxIds.has(thread.mailboxId) &&
+      thread.status !== 'archived' &&
+      thread.status !== 'snoozed',
+  )
+  if (toArchive.length === 0) return { store, archivedThreadIds: [] }
+  let next = store
+  const archivedThreadIds: string[] = []
+  for (const thread of toArchive) {
+    const accountArchive = next.mailboxes.find(
+      m => m.accountId === thread.accountId && m.role === 'archive',
+    )
+    next = archiveThread(next, thread.id, accountArchive?.id)
+    archivedThreadIds.push(thread.id)
+  }
+  return { store: next, archivedThreadIds }
+}
+
+export function archiveMutedRepliedThreads(
+  store: MailStore,
+  accountId?: string,
+): MailStore {
+  return archiveMutedRepliedThreadsWithIds(store, accountId).store
+}
+
 function fold(
   store: MailStore,
   threadIds: string[],
@@ -118,6 +230,36 @@ export function bulkSnoozeThreads(
   return { ...withThreads, snoozes: [...kept, ...added] }
 }
 
+export function bulkStarThreads(
+  store: MailStore,
+  threadIds: string[],
+  starred: boolean,
+): MailStore {
+  return fold(store, threadIds, (current, threadId) =>
+    setThreadStarred(current, threadId, starred),
+  )
+}
+
+export function bulkMuteThreads(
+  store: MailStore,
+  threadIds: string[],
+  muted: boolean,
+): MailStore {
+  return fold(store, threadIds, (current, threadId) =>
+    setThreadMuted(current, threadId, muted),
+  )
+}
+
+export function bulkPinThreads(
+  store: MailStore,
+  threadIds: string[],
+  pinned: boolean,
+): MailStore {
+  return fold(store, threadIds, (current, threadId) =>
+    setThreadPinned(current, threadId, pinned),
+  )
+}
+
 /**
  * One vocabulary for every multi-select triage action so the rail UI, the
  * shell dispatcher, and tests can never disagree about what an action is.
@@ -130,6 +272,11 @@ export type BulkTriageAction =
   | { type: 'move'; mailboxId: string }
   | { type: 'snooze'; snoozedUntil: string }
   | { type: 'star'; starred: boolean }
+  | { type: 'unstar' }
+  | { type: 'mute'; muted?: boolean }
+  | { type: 'unmute' }
+  | { type: 'pin'; pinned?: boolean }
+  | { type: 'unpin' }
 
 export function applyBulkTriageAction(
   store: MailStore,
@@ -175,20 +322,30 @@ export function applyBulkTriageAction(
       return bulkSnoozeThreads(store, threadIds, action.snoozedUntil, now)
     case 'star':
       // The same per-thread star path the UI's star toggle uses.
-      return fold(store, threadIds, (current, threadId) =>
-        setThreadStarred(current, threadId, action.starred),
-      )
+      return bulkStarThreads(store, threadIds, action.starred)
+    case 'unstar':
+      return bulkStarThreads(store, threadIds, false)
+    case 'mute':
+      return bulkMuteThreads(store, threadIds, action.muted ?? true)
+    case 'unmute':
+      return bulkMuteThreads(store, threadIds, false)
+    case 'pin':
+      return bulkPinThreads(store, threadIds, action.pinned ?? true)
+    case 'unpin':
+      return bulkPinThreads(store, threadIds, false)
   }
 }
 
 /**
  * Provider-side encoding of a bulk action, for providers that implement
  * `bulkModifyThreads` behind the `bulkActions` capability flag.
+ * Returns `null` for local-only triage actions (`pin`, `unpin`, `mute`,
+ * `unmute`) so they are never queued as remote provider operations.
  */
 export function queuedActionForBulkTriage(action: BulkTriageAction): {
   type: QueuedMailActionType
   payload?: Record<string, unknown>
-} {
+} | null {
   switch (action.type) {
     case 'archive':
       return { type: 'archive' }
@@ -204,6 +361,13 @@ export function queuedActionForBulkTriage(action: BulkTriageAction): {
       return { type: 'snooze', payload: { snoozedUntil: action.snoozedUntil } }
     case 'star':
       return { type: action.starred ? 'star' : 'unstar' }
+    case 'unstar':
+      return { type: 'unstar' }
+    case 'mute':
+    case 'unmute':
+    case 'pin':
+    case 'unpin':
+      return null
   }
 }
 
@@ -232,5 +396,19 @@ export function bulkTriageActionSummary(
       return action.starred
         ? `Starred ${threads}.`
         : `Unstarred ${threads}.`
+    case 'unstar':
+      return `Unstarred ${threads}.`
+    case 'mute':
+      return (action.muted ?? true)
+        ? `Muted ${threads}.`
+        : `Unmuted ${threads}.`
+    case 'unmute':
+      return `Unmuted ${threads}.`
+    case 'pin':
+      return (action.pinned ?? true)
+        ? `Pinned ${threads}.`
+        : `Unpinned ${threads}.`
+    case 'unpin':
+      return `Unpinned ${threads}.`
   }
 }

@@ -44,11 +44,11 @@ describe('mail query parsing', () => {
   })
 
   it('keeps unknown operators and invalid values as free text', () => {
-    const query = parseMailQuery('filename:report.pdf is:banana sort:sideways')
+    const query = parseMailQuery('unknownop:report.pdf is:banana sort:sideways')
 
     expect(query.terms).toHaveLength(0)
     expect(query.sort).toBe('newest')
-    expect(query.text).toContain('filename:report.pdf')
+    expect(query.text).toContain('unknownop:report.pdf')
     expect(query.text).toContain('is:banana')
     expect(query.text).toContain('sort:sideways')
   })

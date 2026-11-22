@@ -9,6 +9,10 @@ export type MailSpecialRailView =
   | { kind: 'starred' }
   | { kind: 'snoozed' }
   | { kind: 'scheduled' }
+  | { kind: 'waiting' }
+  | { kind: 'screener' }
+  | { kind: 'feed' }
+  | { kind: 'paper_trail' }
   | { kind: 'label'; labelId: string }
 
 export function threadIsStarred(

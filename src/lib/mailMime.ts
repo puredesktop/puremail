@@ -23,6 +23,12 @@ export interface MimeMessageInput {
   attachments: MimeAttachmentPart[]
   /** Injectable for deterministic tests. */
   boundary?: string
+  /** Optional message importance (`Importance` + `X-Priority` headers). */
+  importance?: 'low' | 'normal' | 'high'
+  /** Optional MDN read receipt request (`Disposition-Notification-To`). */
+  requestReadReceipt?: boolean
+  /** Explicit address for `Disposition-Notification-To` (defaults to From header). */
+  readReceiptTo?: string
 }
 
 const MIME_LINE_LENGTH = 76
@@ -88,8 +94,9 @@ export function formatMimeAddressList(
 ): string {
   return contacts
     .map(contact => {
-      const email = sanitizeMimeHeaderValue(contact.email)
-      if (!email) return ''
+      // eslint-disable-next-line no-control-regex
+      const email = sanitizeMimeHeaderValue(contact.email).replace(/[<>,\s\r\n\u0000]+/g, '')
+      if (!email || !email.includes('@')) return ''
       const name = sanitizeMimeHeaderValue(contact.name ?? '')
       if (!name || name === email) return email
       if (!/^[ -~]*$/.test(name)) {
@@ -183,6 +190,42 @@ export function buildMimeMessage(input: MimeMessageInput): string {
   const safeHeaders = input.headerLines.map(line =>
     line.replace(/\u0000/g, '').replace(/\r(?!\n[ \t])|\r?\n(?![ \t])/g, ' '),
   )
+  const hasHeader = (name: string): boolean => {
+    const prefix = `${name.toLowerCase()}:`
+    return safeHeaders.some(line => line.toLowerCase().startsWith(prefix))
+  }
+  const importance =
+    input.importance === 'low' ||
+    input.importance === 'normal' ||
+    input.importance === 'high'
+      ? input.importance
+      : undefined
+  if (importance) {
+    if (!hasHeader('Importance')) {
+      safeHeaders.push(`Importance: ${importance}`)
+    }
+    if (!hasHeader('X-Priority')) {
+      const xPriority =
+        importance === 'high'
+          ? '1 (Highest)'
+          : importance === 'low'
+            ? '5 (Lowest)'
+            : '3 (Normal)'
+      safeHeaders.push(`X-Priority: ${xPriority}`)
+    }
+  }
+  if (input.requestReadReceipt && !hasHeader('Disposition-Notification-To')) {
+    const fromHeader = safeHeaders
+      .find(line => line.toLowerCase().startsWith('from:'))
+      ?.slice(5)
+      .trim()
+    const notifyTo = sanitizeMimeHeaderValue(
+      input.readReceiptTo ?? fromHeader ?? '',
+    )
+    if (notifyTo) {
+      safeHeaders.push(`Disposition-Notification-To: ${notifyTo}`)
+    }
+  }
   // Composer previews use data URLs; email carries the same bytes as CID parts.
   const inline = new Map<number, string>()
   const html = input.bodyHtml?.replace(
@@ -226,6 +269,7 @@ export function buildMimeMessage(input: MimeMessageInput): string {
     const related = input.boundary
       ? `${input.boundary}_related`
       : generateMimeBoundary(contents)
+    contents.push(related)
     relatedLines = [
       `Content-Type: multipart/related; boundary="${related}"`,
       '',
@@ -248,6 +292,7 @@ export function buildMimeMessage(input: MimeMessageInput): string {
       ? `${input.boundary}_alt`
       : generateMimeBoundary(contents)
     : null
+  if (altBoundary) contents.push(altBoundary)
   const bodyLines = bodyPartLines(bodyInput, altBoundary, relatedLines)
   const attachments = input.attachments.filter((_, index) => !inline.has(index))
   if (!attachments.length) {
@@ -262,6 +307,7 @@ export function buildMimeMessage(input: MimeMessageInput): string {
     return [...safeHeaders, 'MIME-Version: 1.0', ...bodyLines].join('\r\n')
   }
   const boundary = input.boundary ?? generateMimeBoundary(contents)
+  contents.push(boundary)
   const lines = [
     ...safeHeaders,
     'MIME-Version: 1.0',

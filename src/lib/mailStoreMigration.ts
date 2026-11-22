@@ -1,13 +1,19 @@
 import { isAiTriageVerdict } from './aiTriageState'
 import type { MailAiTriageRecord } from '../types'
 import type {
+  FollowUpReminder,
+  MailContact,
+  MailContactGroup,
   MailNotificationPreferences,
   MailRun,
+  MailSnippet,
   MailStore,
   MailThreadSnooze,
   ProviderLabelMetadata,
   QueuedMailAction,
   ScheduledSend,
+  ScreenerDecision,
+  ScreenerDestination,
 } from '../types'
 
 /**
@@ -282,15 +288,194 @@ function isAiTriageEntry(entry: unknown): entry is MailAiTriageRecord {
   )
 }
 
+const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+const VALID_SCREENER_DESTINATIONS = new Set<ScreenerDestination>([
+  'inbox',
+  'feed',
+  'paper_trail',
+  'blocked',
+])
+
+const VALID_IMPORTANCE = new Set(['low', 'normal', 'high'] as const)
+
+function isValidImportance(value: unknown): value is 'low' | 'normal' | 'high' {
+  return (
+    typeof value === 'string' &&
+    VALID_IMPORTANCE.has(value as 'low' | 'normal' | 'high')
+  )
+}
+
+function isScreenerDecisionEntry(entry: unknown): entry is ScreenerDecision {
+  return (
+    isRecord(entry) &&
+    typeof entry.email === 'string' &&
+    entry.email.trim().length > 0 &&
+    typeof entry.destination === 'string' &&
+    VALID_SCREENER_DESTINATIONS.has(entry.destination as ScreenerDestination) &&
+    typeof entry.decidedAt === 'string' &&
+    (entry.senderName === undefined || typeof entry.senderName === 'string') &&
+    (entry.updatedAt === undefined || typeof entry.updatedAt === 'string')
+  )
+}
+
+function normalizedScreenerDecisions(
+  value: unknown,
+): Record<string, ScreenerDecision> {
+  if (!isRecord(value)) return {}
+  const out: Record<string, ScreenerDecision> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (UNSAFE_OBJECT_KEYS.has(key)) continue
+    if (!isScreenerDecisionEntry(entry)) continue
+    const normalizedKey = entry.email.trim().toLowerCase()
+    if (!normalizedKey || UNSAFE_OBJECT_KEYS.has(normalizedKey)) continue
+    out[normalizedKey] = {
+      ...entry,
+      email: normalizedKey,
+    }
+  }
+  return out
+}
+
+function isFollowUpReminderEntry(entry: unknown): entry is FollowUpReminder {
+  return (
+    isRecord(entry) &&
+    typeof entry.id === 'string' &&
+    typeof entry.threadId === 'string' &&
+    typeof entry.accountId === 'string' &&
+    typeof entry.remindAt === 'string' &&
+    typeof entry.createdAt === 'string' &&
+    typeof entry.cancelOnReply === 'boolean' &&
+    typeof entry.updatedAt === 'string' &&
+    (entry.note === undefined || typeof entry.note === 'string') &&
+    (entry.dismissedAt === undefined || typeof entry.dismissedAt === 'string')
+  )
+}
+
+function isMailSnippetEntry(entry: unknown): entry is MailSnippet {
+  return (
+    isRecord(entry) &&
+    typeof entry.id === 'string' &&
+    typeof entry.title === 'string' &&
+    typeof entry.shortcut === 'string' &&
+    typeof entry.body === 'string' &&
+    typeof entry.updatedAt === 'string' &&
+    (entry.subject === undefined || typeof entry.subject === 'string') &&
+    (entry.bodyHtml === undefined || typeof entry.bodyHtml === 'string')
+  )
+}
+
+function isMailContactEntry(entry: unknown): entry is MailContact {
+  return (
+    isRecord(entry) &&
+    typeof entry.name === 'string' &&
+    typeof entry.email === 'string'
+  )
+}
+
+function isMailContactGroupEntry(entry: unknown): entry is MailContactGroup {
+  return (
+    isRecord(entry) &&
+    typeof entry.id === 'string' &&
+    typeof entry.name === 'string' &&
+    Array.isArray(entry.members) &&
+    entry.members.every(isMailContactEntry) &&
+    typeof entry.updatedAt === 'string'
+  )
+}
+
+function normalizedSettings(settings: MailStore['settings']): MailStore['settings'] {
+  if (!isRecord(settings)) return settings
+  const raw = settings as MailStore['settings'] & Record<string, unknown>
+  let changed = false
+  const next: Record<string, unknown> = { ...raw }
+
+  if ('screenerEnabled' in raw && typeof raw.screenerEnabled !== 'boolean') {
+    delete next.screenerEnabled
+    changed = true
+  }
+  if ('recentSearches' in raw) {
+    const cleaned = stringArray(raw.recentSearches)
+    if (
+      !Array.isArray(raw.recentSearches) ||
+      cleaned.length !== raw.recentSearches.length
+    ) {
+      next.recentSearches = cleaned
+      changed = true
+    }
+  }
+  if ('replySignatureIdByAccount' in raw) {
+    if (!isRecord(raw.replySignatureIdByAccount)) {
+      delete next.replySignatureIdByAccount
+      changed = true
+    } else {
+      const cleanedMap: Record<string, string> = {}
+      let mapChanged = false
+      for (const [k, v] of Object.entries(raw.replySignatureIdByAccount)) {
+        if (UNSAFE_OBJECT_KEYS.has(k) || typeof v !== 'string') {
+          mapChanged = true
+          continue
+        }
+        cleanedMap[k] = v
+      }
+      if (mapChanged) {
+        next.replySignatureIdByAccount = cleanedMap
+        changed = true
+      }
+    }
+  }
+
+  return changed ? (next as unknown as MailStore['settings']) : settings
+}
+
+function normalizedMessages(messages: MailStore['messages']): MailStore['messages'] {
+  let changed = false
+  const out = messages.map(message => {
+    if (message.importance !== undefined && !isValidImportance(message.importance)) {
+      changed = true
+      const { importance: _drop, ...rest } = message
+      return rest
+    }
+    return message
+  })
+  return changed ? out : messages
+}
+
+function normalizedDrafts(drafts: MailStore['drafts']): MailStore['drafts'] {
+  let changed = false
+  const out = drafts.map(draft => {
+    const record = draft as MailStore['drafts'][number] & { importance?: unknown }
+    if (record.importance !== undefined && !isValidImportance(record.importance)) {
+      changed = true
+      const { importance: _drop, ...rest } = record
+      return rest as MailStore['drafts'][number]
+    }
+    return draft
+  })
+  return changed ? out : drafts
+}
+
 export function migratePersistedMailStore(input: MailStore): MailStore {
   const store = reattachRehomedDrafts(input)
   const candidate = store as MailStore & Record<string, unknown>
   const snoozes = validEntries(candidate.snoozes, isSnoozeEntry)
   return {
     ...store,
+    settings: normalizedSettings(store.settings),
+    messages: normalizedMessages(store.messages),
+    drafts: normalizedDrafts(store.drafts),
     storeVersion: MAIL_STORE_VERSION,
     starredThreadIds: stringArray(candidate.starredThreadIds),
     pinnedThreadIds: stringArray(candidate.pinnedThreadIds),
+    vipSenders: stringArray(candidate.vipSenders),
+    mutedThreadIds: stringArray(candidate.mutedThreadIds),
+    screenerDecisions: normalizedScreenerDecisions(candidate.screenerDecisions),
+    followUpReminders: validEntries(
+      candidate.followUpReminders,
+      isFollowUpReminderEntry,
+    ),
+    snippets: validEntries(candidate.snippets, isMailSnippetEntry),
+    contactGroups: validEntries(candidate.contactGroups, isMailContactGroupEntry),
     snoozes: backfilledSnoozes(store, snoozes),
     providerLabels: validEntries(candidate.providerLabels, isProviderLabelEntry),
     queuedActions: validEntries(candidate.queuedActions, isQueuedActionEntry),

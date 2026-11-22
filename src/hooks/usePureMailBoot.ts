@@ -94,6 +94,72 @@ export async function createBootProvider(persistedStore?: MailStore | null): Pro
   source: 'demo' | 'gmail' | 'imap'
   notice?: string
 }> {
+  // Standalone dev preview mode (`?preview=1`): loads the rich fixture mailbox
+  // only during local `vite` development outside the desktop iframe. Completely
+  // dead-code-eliminated from production builds (`import.meta.env.DEV === false`).
+  if (
+    import.meta.env.DEV &&
+    typeof window !== 'undefined' &&
+    window.parent === window &&
+    new URLSearchParams(window.location.search).get('preview') === '1'
+  ) {
+    const { demoMailStoreForNow: devPreviewStore } = await import('../test/mailFixtures')
+    const base = devPreviewStore(new Date())
+    const previewStore: MailStore = {
+      ...base,
+      snippets: [
+        {
+          id: 'snip_approve',
+          title: 'Quick Approval',
+          shortcut: 'approve',
+          body: 'Hi {{recipient_first_name}},\n\nLooks great — approved to proceed.\n\nBest,\n{{my_name}}',
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'snip_schedule',
+          title: 'Schedule Sync',
+          shortcut: 'sync',
+          body: 'Hi {{recipient_first_name}},\n\nHappy to walk through {{subject}} live. Do you have 20 minutes Tuesday or Wednesday afternoon?\n\nBest,\n{{my_name}}',
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'snip_followup',
+          title: 'Gentle Follow-Up',
+          shortcut: 'bump',
+          body: 'Hi {{recipient_first_name}},\n\nFloating this back up in case it got buried — let me know when you have a moment.\n\nBest,\n{{my_name}}',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      vipSenders: base.threads[0]?.participants?.[0]?.email
+        ? [base.threads[0].participants[0].email]
+        : [],
+      settings: {
+        ...base.settings,
+        screenerEnabled: true,
+      },
+      messages: base.messages.map((msg, idx) =>
+        idx === 0
+          ? {
+              ...msg,
+              authResults: {
+                spf: 'pass',
+                dkim: 'pass',
+                dmarc: 'pass',
+                raw: 'mx.pure.science; spf=pass smtp.mailfrom=acme.example; dkim=pass header.i=@acme.example; dmarc=pass',
+              },
+              bodyHtml:
+                msg.bodyHtml ||
+                `<p>${msg.body.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br/>')}</p><img src="https://track.hubspot.com/open.gif?id=demo123" width="1" height="1" alt="" />`,
+            }
+          : msg,
+      ),
+    }
+    return {
+      source: 'demo' as const,
+      provider: new DemoMailProvider(previewStore),
+    }
+  }
+
   const persisted = persistedStore === undefined ? await readPersistedStore() : persistedStore
   const settings = { ...persisted?.settings, ...readPersistedSettings() }
   const demoBoot = async (notice?: string) => {

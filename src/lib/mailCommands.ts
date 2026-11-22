@@ -4,6 +4,14 @@ export type MailCommandId =
   | 'forward'
   | 'archive'
   | 'snooze-follow-up'
+  | 'snooze'
+  | 'label'
+  | 'move'
+  | 'mute'
+  | 'pin'
+  | 'select'
+  | 'undo'
+  | 'shortcuts-help'
   | 'create-task'
   | 'thread-tasks'
   | 'my-tasks'
@@ -14,6 +22,38 @@ export type MailCommandId =
   | 'focus-search'
   | 'toggle-unread'
   | 'trash'
+
+export type GChordDestination =
+  | 'inbox'
+  | 'starred'
+  | 'snoozed'
+  | 'sent'
+  | 'drafts'
+  | 'archive'
+  | 'waiting'
+  | 'feed'
+  | 'paper_trail'
+  | 'screener'
+
+export const G_CHORD_DESTINATIONS: Record<string, GChordDestination> = {
+  i: 'inbox',
+  s: 'starred',
+  h: 'snoozed',
+  t: 'sent',
+  d: 'drafts',
+  a: 'archive',
+  w: 'waiting',
+  f: 'feed',
+  p: 'paper_trail',
+  c: 'screener',
+}
+
+export function mailGChordDestinationForKey(key: string): GChordDestination | null {
+  const lowered = key.toLowerCase()
+  return Object.prototype.hasOwnProperty.call(G_CHORD_DESTINATIONS, lowered)
+    ? G_CHORD_DESTINATIONS[lowered]!
+    : null
+}
 
 export interface MailCommand {
   id: MailCommandId
@@ -101,6 +141,62 @@ export const mailCommands: MailCommand[] = [
     shortcut: 'S',
     scope: 'thread',
     description: 'Create a follow-up task and snooze the selected thread.',
+  },
+  {
+    id: 'snooze',
+    label: 'Snooze picker',
+    shortcut: 'H',
+    scope: 'thread',
+    description: 'Open the snooze time picker for the selected thread.',
+  },
+  {
+    id: 'label',
+    label: 'Label',
+    shortcut: 'L',
+    scope: 'thread',
+    description: 'Open the label picker for the selected thread.',
+  },
+  {
+    id: 'move',
+    label: 'Move / File',
+    shortcut: 'V',
+    scope: 'thread',
+    description: 'Open the move / file picker for the selected thread.',
+  },
+  {
+    id: 'mute',
+    label: 'Mute thread',
+    shortcut: 'M',
+    scope: 'thread',
+    description: 'Mute or unmute future replies on the selected thread.',
+  },
+  {
+    id: 'pin',
+    label: 'Pin thread',
+    shortcut: 'P',
+    scope: 'thread',
+    description: 'Pin or unpin the selected thread to the top of the list.',
+  },
+  {
+    id: 'select',
+    label: 'Select thread',
+    shortcut: 'X',
+    scope: 'thread',
+    description: 'Toggle multi-select on the focused thread row.',
+  },
+  {
+    id: 'undo',
+    label: 'Undo',
+    shortcut: 'Z',
+    scope: 'global',
+    description: 'Undo the last triage action.',
+  },
+  {
+    id: 'shortcuts-help',
+    label: 'Keyboard shortcuts',
+    shortcut: '?',
+    scope: 'global',
+    description: 'Show the keyboard shortcuts reference modal.',
   },
   {
     id: 'create-task',

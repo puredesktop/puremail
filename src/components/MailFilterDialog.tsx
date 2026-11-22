@@ -155,6 +155,7 @@ const IMAP_MAILBOX_PREFIX = 'imap_mbx_'
 export interface MailFilterDialogSeed {
   senderEmail: string
   subject: string
+  initialQuery?: string
 }
 
 export interface MailFilterDialogSubmit {
@@ -186,7 +187,9 @@ export function MailFilterDialog({
   const [subjectText, setSubjectText] = useState(seed.subject)
   const [hasAttachment, setHasAttachment] = useState(false)
   // null = query follows the condition chips; a hand edit takes over.
-  const [customQuery, setCustomQuery] = useState<string | null>(null)
+  const [customQuery, setCustomQuery] = useState<string | null>(
+    seed.initialQuery?.trim() ? seed.initialQuery.trim() : null,
+  )
   const [target, setTarget] = useState('')
   const [mode, setMode] = useState<'box' | 'label'>('box')
   const [markRead, setMarkRead] = useState(false)
