@@ -1,4 +1,7 @@
 import { markDraftSendFailed } from '../lib/mailDeliveryStatus'
+import { ScheduleInsertPopover } from './ScheduleInsertPopover'
+import { bridge } from '@purescience/platform-ui/bridge/client'
+import { PLATFORM_BRIDGE_METHODS } from '@purescience/platform-ui/bridge/methods'
 import { useMailDrop } from './useMailDrop'
 import { prepareMailDrop, rasterizeMailSvg } from '../lib/mailDrop'
 import {
@@ -16,6 +19,7 @@ import {
   Bell,
   Bold,
   Braces,
+  Calendar,
   ChevronDown,
   Clock,
   Code,
@@ -565,6 +569,14 @@ export function ComposeEditor({
   const effectiveAccount =
     store.accounts.find(a => a.id === composeAccountId) ?? selectedAccount
   const [snippetMenuOpen, setSnippetMenuOpen] = useState(false)
+  const [availabilityMenuOpen, setAvailabilityMenuOpen] = useState(false)
+  const insertSchedulingText = (text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    const nextBody = composeBody.trim() ? `${composeBody.trimEnd()}\n\n${trimmed}\n` : `${trimmed}\n`
+    setComposeBody(nextBody)
+    setComposeBodyHtml('')
+  }
   const [snippetInitialQuery, setSnippetInitialQuery] = useState('')
   const savedSnippetRangeRef = useRef<Range | null>(null)
   const [importance, setImportance] = useState<'normal' | 'high'>(
@@ -1983,6 +1995,7 @@ export function ComposeEditor({
       scheduleMenuOpen ||
       signatureMenuOpen ||
       snippetMenuOpen ||
+      availabilityMenuOpen ||
       followUpMenuOpen ||
       linkUrlDraft !== null ||
       fieldMenuOpen
@@ -2657,6 +2670,29 @@ export function ComposeEditor({
                 />
               )}
             </BulkMenuWrap>
+            <BulkMenuWrap>
+              <ComposeDockToolbarButton
+                type="button"
+                aria-label="Insert booking link or available times"
+                title="Insert PureCalendar booking link or multi-timezone available times"
+                aria-haspopup="dialog"
+                aria-expanded={availabilityMenuOpen}
+                onMouseDown={event => event.preventDefault()}
+                onClick={() => setAvailabilityMenuOpen(open => !open)}
+              >
+                <Calendar aria-hidden="true" />
+              </ComposeDockToolbarButton>
+              {availabilityMenuOpen && (
+                <ScheduleInsertPopover
+                  placement="up"
+                  onInsert={insertSchedulingText}
+                  onOpenCalendar={() =>
+                    void bridge.call(PLATFORM_BRIDGE_METHODS.WORKSPACE_OPEN_APP, [{ appSlug: 'calendar' }]).catch(() => undefined)
+                  }
+                  onClose={() => setAvailabilityMenuOpen(false)}
+                />
+              )}
+            </BulkMenuWrap>
             {runMode === 'template' && runChrome && (
               <>
                 <ComposeDockToolbarDivider aria-hidden="true" />
@@ -3307,6 +3343,29 @@ export function ComposeEditor({
                   onInsert={rendered => insertRenderedSnippet(rendered)}
                   onManageSnippets={onManageSnippets}
                   onClose={() => setSnippetMenuOpen(false)}
+                />
+              )}
+            </BulkMenuWrap>
+            <BulkMenuWrap>
+              <ComposeToolbarButton
+                type="button"
+                aria-label="Insert booking link or available times"
+                title="Insert PureCalendar booking link or multi-timezone available times"
+                aria-haspopup="dialog"
+                aria-expanded={availabilityMenuOpen}
+                onMouseDown={event => event.preventDefault()}
+                onClick={() => setAvailabilityMenuOpen(open => !open)}
+              >
+                <Calendar aria-hidden="true" />
+              </ComposeToolbarButton>
+              {availabilityMenuOpen && (
+                <ScheduleInsertPopover
+                  placement="down"
+                  onInsert={insertSchedulingText}
+                  onOpenCalendar={() =>
+                    void bridge.call(PLATFORM_BRIDGE_METHODS.WORKSPACE_OPEN_APP, [{ appSlug: 'calendar' }]).catch(() => undefined)
+                  }
+                  onClose={() => setAvailabilityMenuOpen(false)}
                 />
               )}
             </BulkMenuWrap>

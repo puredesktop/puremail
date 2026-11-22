@@ -1,6 +1,7 @@
 import { mailSetsOwnColours } from '../lib/mailSetsOwnColours'
 import type { TeamReadStatuses } from '../lib/teamMailReview'
 import { InviteDescription } from './InviteDescription'
+import { formatInviteMultiZoneSummary } from '../lib/calendarSchedulingBridge'
 import type { InviteActionState } from '../types'
 import {
   Fragment,
@@ -1597,24 +1598,12 @@ export function ThreadReader({
     : inviteAttendee?.name || 'They'
   const inviteWhen = selectedInvite
     ? (() => {
-        const starts = new Date(selectedInvite.startsAt)
-        const ends = new Date(selectedInvite.endsAt)
-        const sameDay = starts.toDateString() === ends.toDateString()
-        const day = starts.toLocaleDateString(undefined, {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
+        const multi = formatInviteMultiZoneSummary({
+          startsAt: selectedInvite.startsAt,
+          endsAt: selectedInvite.endsAt,
+          inviteTimeZone: selectedInvite.timeZone,
         })
-        const time = (date: Date): string =>
-          date.toLocaleTimeString(undefined, {
-            hour: 'numeric',
-            minute: '2-digit',
-          })
-        return sameDay
-          ? `${day} · ${time(starts)} – ${time(ends)}`
-          : `${formatDate(selectedInvite.startsAt)} – ${formatDate(
-              selectedInvite.endsAt,
-            )}`
+        return multi.secondary ? `${multi.primary} · ${multi.secondary}` : multi.primary
       })()
     : ''
   /** True when this message's body is the machine notice the card absorbs. */

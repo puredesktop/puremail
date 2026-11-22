@@ -126,7 +126,7 @@ import { useHeldCommand } from '@purescience/platform-ui/bridge/react/heldComman
 import { latestThreadFrom } from '../lib/heldMail'
 import { THREAD_LINK_PREFIX, threadLinkTarget } from '../lib/threadLink'
 import { heldCopyFetchDue, heldCopySendRefusal } from '../lib/heldCopySends'
-import { takeComposeIntents } from '../lib/composeIntents'
+import { takeRichComposeIntent } from '../lib/composeIntents'
 import { applyStoreFileChanges } from '../lib/storeFileMerge'
 import { applyDraftsFileChanges } from '../lib/draftsFileMerge'
 import { draftHeldByAnotherCopy, recordDraftDiscard } from '../lib/mailPersistence'
@@ -1778,10 +1778,20 @@ export function PureMailShell({
     const sweep = async (): Promise<void> => {
       try {
         if (composeOpenRef.current) return
-        const addresses = await takeComposeIntents()
-        if (addresses.length === 0) return
+        const intent = await takeRichComposeIntent()
+        if (!intent) return
         composeOpenRef.current = true
-        setComposeTo(addresses.join(', '))
+        setComposeTo(intent.to.join(', '))
+        if (intent.cc.length > 0) {
+          setComposeCc(intent.cc.join(', '))
+          setComposeCcBccOpen(true)
+        }
+        if (intent.subject !== undefined) setComposeSubject(intent.subject)
+        if (intent.body !== undefined) {
+          setComposeBody(intent.body)
+          setComposeBodyHtml('')
+        }
+        if (intent.attachments.length > 0) setComposeAttachments(intent.attachments)
         setComposeMode(modeAfterOpenCompose)
       } catch {
         // Best-effort: the intent stays queued for the next sweep.
