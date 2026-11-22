@@ -4,24 +4,63 @@ import type { Attachment, Draft, MailMessage, MailStore, MailThread } from '../t
 import type { MailProposal } from '../lib/mailProposal'
 import type { SweepProvider } from '../lib/archiveSweepRun'
 
-/** Keep in sync with `plugin.json` -> `app.agents.tools[].name`. */
-export const PUREMAIL_AGENT_TOOL_NAMES = [
+/**
+ * Exposed PureMail operations (must stay in sync 1:1 with `plugin.json` -> `app.agents.tools[].name`).
+ *
+ * 3-tier exposure (built on `src/lib/appFunctions.ts`):
+ *   1. 9 composite `function` workflows (`fn_*`) — replace 3–15 atomic round-trips each
+ *   2. 13 core/release atomic tools (~20% of 66) — indispensable direct verbs + mandatory release gates
+ *   3. 3 universal escape-hatch meta-tools (`discoverAppTools`, `callExtendedReadTool`, `callExtendedTool`)
+ *      providing full on-demand access to the remaining 53 specialist atomic tools.
+ */
+export const PUREMAIL_FUNCTION_NAMES = [
+  'fn_inboxBriefing',
+  'fn_triageInbox',
+  'fn_followUpSweep',
+  'fn_senderDossier',
+  'fn_prepareReply',
+  'fn_cleanupPromotions',
+  'fn_screenerReview',
+  'fn_auditThreadSecurity',
+  'fn_exportThreadBundle',
+] as const
+
+export const PUREMAIL_CORE_TOOL_NAMES = [
   'getMailContext',
   'listThreads',
   'searchAllMail',
   'getThread',
   'showQuery',
+  'applyMailAction',
+  'markThreadsRead',
+  'composeMessage',
+  'updateDraft',
+  // Release tools MUST stay direct manifest tools (ps-suite #1017).
+  'sendDraft',
+  'createMailTask',
+  'openThread',
+  'sendRunItem',
+] as const
+
+export const PUREMAIL_META_TOOL_NAMES = [
+  'discoverAppTools',
+  'callExtendedReadTool',
+  'callExtendedTool',
+] as const
+
+export const PUREMAIL_AGENT_TOOL_NAMES = [
+  ...PUREMAIL_FUNCTION_NAMES,
+  ...PUREMAIL_CORE_TOOL_NAMES,
+  ...PUREMAIL_META_TOOL_NAMES,
+] as const
+
+export const PUREMAIL_EXTENDED_TOOL_NAMES = [
   'listViews',
   'saveView',
   'deleteView',
-  'applyMailAction',
-  'markThreadsRead',
-  // AI triage: the assistant judges each thread; the app feeds it batches
-  // that fit one tool result and keeps the verdicts.
   'nextTriageBatch',
   'recordTriage',
   'getTriageReport',
-  // An archive sweep: every message on the server, once, keeping its place.
   'startArchiveSweep',
   'nextArchiveBatch',
   'recordArchiveBatch',
@@ -32,19 +71,13 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   'listMailChanges',
   'draftReply',
   'commitReplyDraft',
-  'composeMessage',
   'listDrafts',
   'getDraft',
-  'updateDraft',
   'discardDraft',
-  // A release: only a person's approval (Send in PureMail, or the Executive team's Send) runs it.
-  'sendDraft',
   'addDraftAttachments',
   'removeDraftAttachment',
-  // Documents out of mail: attachments saved as files, an email as a PDF.
   'saveAttachments',
   'saveMessageAsPdf',
-  'createMailTask',
   'listFilters',
   'createFilter',
   'applyFilterRetroactively',
@@ -53,8 +86,6 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   'createBox',
   'listBoxes',
   'fileThread',
-  'openThread',
-  // Send runs (mail-merge with a review-and-send loop). No "send all".
   'listRuns',
   'getRun',
   'getRunReplies',
@@ -62,7 +93,6 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   'createRunFromDrafts',
   'renderRun',
   'setRunNote',
-  'sendRunItem',
   'skipRunItem',
   'pauseRun',
   'resumeRun',
@@ -73,8 +103,6 @@ export const PUREMAIL_AGENT_TOOL_NAMES = [
   'previewRunItem',
   'addDraftsToRun',
   'archiveRun',
-  // The reading room: notes in two inks, and messages kept as context.
-  // Private notes are never returned by any tool.
   'getMessageNotes',
   'addMessageNote',
   'listKeptContext',
