@@ -1,118 +1,58 @@
-import { useRef, type RefObject } from 'react'
+import { useMemo, useRef, type RefObject } from 'react'
 import { isHeldCopy } from '../lib/heldCopy'
-import { usePlatformAgentTools } from '@purescience/platform-ui/bridge/react/usePlatformAgentTools'
+import {
+  usePlatformAgentTools,
+  type AgentToolHandler,
+} from '@purescience/platform-ui/bridge/react/usePlatformAgentTools'
 import {
   AgentMailToolError,
   PUREMAIL_AGENT_LOG_LABEL,
   PUREMAIL_AGENT_TOOL_NAMES,
   type MailAgentToolContext,
 } from '../agents/catalog'
-import {
-  addDraftAttachmentsHandler,
-  removeDraftAttachmentHandler,
-  applyFilterRetroactivelyHandler,
-  createBoxHandler,
-  createFilterHandler,
-  listFiltersHandler,
-  createMailTaskHandler,
-  deleteViewHandler,
-  composeMessageHandler,
-  discardDraftHandler,
-  sendDraftHandler,
-  draftReplyHandler,
-  commitReplyDraftHandler,
-  getDraftHandler,
-  listDraftsHandler,
-  updateDraftHandler,
-  deleteFilterHandler,
-  setFilterEnabledHandler,
-  listBoxesHandler,
-  fileThreadHandler,
-  openThreadHandler,
-  getMailContextHandler,
-  getThreadHandler,
-  listThreadsHandler,
-  listViewsHandler,
-  applyMailActionHandler,
-  markThreadsReadHandler,
-  listMailChangesHandler,
-  saveViewHandler,
-  searchAllMailHandler,
-  showQueryHandler,
-} from '../agents/handlers'
-import {
-  saveAttachmentsHandler,
-  saveMessageAsPdfHandler,
-} from '../agents/documentHandlers'
-import {
-  getArchiveSweepHandler,
-  listArchiveSweepsHandler,
-  nextArchiveBatchHandler,
-  readArchiveItemHandler,
-  recordArchiveBatchHandler,
-  startArchiveSweepHandler,
-  stopArchiveSweepHandler,
-} from '../agents/archiveSweepHandlers'
-import {
-  getTriageReportHandler,
-  nextTriageBatchHandler,
-  recordTriageHandler,
-} from '../agents/aiTriageHandlers'
-import {
-  addDraftsToRunHandler,
-  archiveRunHandler,
-  createRunFromDraftsHandler,
-  createRunHandler,
-  getRunHandler,
-  getRunRepliesHandler,
-  insertRunNoteSlotHandler,
-  listRunsHandler,
-  pauseRunHandler,
-  previewRunItemHandler,
-  renderRunHandler,
-  resumeRunHandler,
-  sendRunItemHandler,
-  setRunFieldMapHandler,
-  setRunNoteHandler,
-  setRunRecipientsHandler,
-  setRunTemplateHandler,
-  skipRunItemHandler,
-} from '../agents/runHandlers'
-import {
-  addMessageNoteHandler,
-  getMessageNotesHandler,
-  keepAsContextHandler,
-  listKeptContextHandler,
-  removeKeptContextHandler,
-} from '../agents/readingRoomHandlers'
+import { PUREMAIL_OPERATIONS_REGISTRY } from '../agents/operationsRegistry'
 
 /**
- * Registers PureMail's agent tools with the shell. Without this the tools
- * declared in plugin.json are still shown to the model but every call times
- * out — the platform routes an invoke to the app tab and waits for a handler
- * that never registered.
+ * Registers PureMail's exposed operations (9 composite `fn_*` functions, 13
+ * core/release atomic tools, and 3 escape-hatch meta-tools for the 53 extended
+ * specialist tools) with the shell.
  */
-/** What every tool but getMailContext says while PureMail has no mail account on this desktop. */
+
+/** What every tool but getMailContext / discoverAppTools says while PureMail has no mail account on this desktop. */
 export const NO_ACCOUNT_MESSAGE =
   'PureMail has no mail account on this desktop, so it cannot read, draft or send mail here yet. A person connects one in Mail settings → Providers; until then nothing can be done in PureMail. Say so in your answer rather than trying again.'
 
+const NO_ACCOUNT_ALLOWED = new Set(['getMailContext', 'discoverAppTools'])
+
 /**
  * The handlers as they answer: as they are with an account; without one, at once and plainly (only getMailContext
- * runs, and says there is no account). Before, PureMail offered no tools at all without an account, so a call from
- * an assignment's step (a background tab, with no account chosen) waited for a minute and timed out.
+ * and discoverAppTools run).
  */
 export function answeringWithoutAccount<T extends Record<string, (...args: never[]) => unknown>>(hasAccount: boolean, handlers: T): T {
   if (hasAccount) return handlers
   const refuse = async () => {
     throw new AgentMailToolError(NO_ACCOUNT_MESSAGE)
   }
-  return Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, name === 'getMailContext' ? handler : refuse])) as T
+  return Object.fromEntries(
+    Object.entries(handlers).map(([name, handler]) => [
+      name,
+      NO_ACCOUNT_ALLOWED.has(name) ? handler : refuse,
+    ]),
+  ) as T
 }
 
 const HELD_COPY_MESSAGE =
   'This is a copy of PureMail held in a page, which does not send mail or run send runs. Those happen in Mail\'s own tab. Say so in your answer rather than trying again; nothing was sent.'
+
 /** The tools that send, or start something that sends. Reading, drafting and looking at runs stay available. */
-const SENDING_TOOLS = new Set(['sendDraft', 'createRun', 'createRunFromDrafts', 'renderRun', 'resumeRun', 'sendRunItem'])
+export const SENDING_TOOLS = new Set([
+  'sendDraft',
+  'createRun',
+  'createRunFromDrafts',
+  'renderRun',
+  'resumeRun',
+  'sendRunItem',
+])
 
 /** A held copy never sends for an agent. A person's own click on Send is theirs, and goes through the one send path. */
 export function refusingSendsWhenHeld<T extends Record<string, (...args: never[]) => unknown>>(held: boolean, handlers: T): T {
@@ -120,7 +60,33 @@ export function refusingSendsWhenHeld<T extends Record<string, (...args: never[]
   const refuse = async () => {
     throw new AgentMailToolError(HELD_COPY_MESSAGE)
   }
-  return Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, SENDING_TOOLS.has(name) ? refuse : handler])) as T
+  return Object.fromEntries(
+    Object.entries(handlers).map(([name, handler]) => [
+      name,
+      SENDING_TOOLS.has(name) ? refuse : handler,
+    ]),
+  ) as T
+}
+
+/** Build the guarded PureMail handler map (exported for direct security tests). */
+export function buildGuardedPureMailHandlers(
+  getContext: () => MailAgentToolContext,
+  options: { hasAccount: () => boolean; heldCopy: () => boolean },
+): Record<string, AgentToolHandler> {
+  return PUREMAIL_OPERATIONS_REGISTRY.buildHandlers(getContext, {
+    createError: message => new AgentMailToolError(message),
+    recordOperation: (ctx, kind, summary) => {
+      ctx.recordOperation?.(kind, summary)
+    },
+    beforeInvoke: ({ name }) => {
+      if (!options.hasAccount() && !NO_ACCOUNT_ALLOWED.has(name)) {
+        throw new AgentMailToolError(NO_ACCOUNT_MESSAGE)
+      }
+      if (options.heldCopy() && SENDING_TOOLS.has(name)) {
+        throw new AgentMailToolError(HELD_COPY_MESSAGE)
+      }
+    },
+  })
 }
 
 export function usePureMailAgentTools(
@@ -131,140 +97,39 @@ export function usePureMailAgentTools(
   // current store and query rather than the values from registration time.
   const contextRef = useRef(context)
   contextRef.current = context
+  const hasAccountRef = useRef(hasAccount)
+  hasAccountRef.current = hasAccount
+
+  const registryHandlers = useMemo(
+    () =>
+      buildGuardedPureMailHandlers(() => contextRef.current, {
+        hasAccount: () => hasAccountRef.current,
+        heldCopy: () => isHeldCopy(),
+      }),
+    [],
+  )
+
+  // Statically key-preserving registration so `scripts/check-manifests.mjs`
+  // can verify every manifest tool has a live registered handler at build time.
+  const handlers = useMemo(
+    () =>
+      Object.fromEntries(
+        PUREMAIL_AGENT_TOOL_NAMES.map(name => [
+          name,
+          async (invoke: Parameters<AgentToolHandler>[0]) =>
+            registryHandlers[name]!(invoke),
+        ]),
+      ),
+    [registryHandlers],
+  )
 
   usePlatformAgentTools({
-    // Always offered, so a call never goes unanswered; without an account they say so (answeringWithoutAccount).
+    // Always offered, so a call never goes unanswered; without an account they say so.
     ready: true,
     tools: PUREMAIL_AGENT_TOOL_NAMES,
     logLabel: PUREMAIL_AGENT_LOG_LABEL,
     errorType: AgentMailToolError,
-    handlers: refusingSendsWhenHeld(isHeldCopy(), answeringWithoutAccount(hasAccount, {
-      getMailContext: async () => getMailContextHandler(contextRef.current),
-      getMessageNotes: async invoke => getMessageNotesHandler(contextRef.current, invoke.arguments ?? {}),
-      addMessageNote: async invoke => addMessageNoteHandler(contextRef.current, invoke.arguments ?? {}),
-      listKeptContext: async invoke => listKeptContextHandler(contextRef.current, invoke.arguments ?? {}),
-      keepAsContext: async invoke => keepAsContextHandler(contextRef.current, invoke.arguments ?? {}),
-      removeKeptContext: async invoke => removeKeptContextHandler(contextRef.current, invoke.arguments ?? {}),
-      listThreads: async invoke =>
-        listThreadsHandler(contextRef.current, invoke.arguments ?? {}),
-      searchAllMail: async invoke =>
-        searchAllMailHandler(contextRef.current, invoke.arguments ?? {}),
-      getThread: async invoke =>
-        getThreadHandler(contextRef.current, invoke.arguments ?? {}),
-      showQuery: async invoke =>
-        showQueryHandler(contextRef.current, invoke.arguments ?? {}),
-      listViews: async () => listViewsHandler(contextRef.current),
-      saveView: async invoke =>
-        saveViewHandler(contextRef.current, invoke.arguments ?? {}),
-      deleteView: async invoke =>
-        deleteViewHandler(contextRef.current, invoke.arguments ?? {}),
-      applyMailAction: async invoke =>
-        applyMailActionHandler(contextRef.current, invoke.arguments ?? {}),
-      markThreadsRead: async invoke =>
-        markThreadsReadHandler(contextRef.current, invoke.arguments ?? {}),
-      startArchiveSweep: async invoke =>
-        startArchiveSweepHandler(contextRef.current, invoke.arguments ?? {}),
-      nextArchiveBatch: async invoke =>
-        nextArchiveBatchHandler(contextRef.current, invoke.arguments ?? {}),
-      recordArchiveBatch: async invoke =>
-        recordArchiveBatchHandler(contextRef.current, invoke.arguments ?? {}),
-      readArchiveItem: async invoke =>
-        readArchiveItemHandler(contextRef.current, invoke.arguments ?? {}),
-      getArchiveSweep: async invoke =>
-        getArchiveSweepHandler(contextRef.current, invoke.arguments ?? {}),
-      listArchiveSweeps: async () => listArchiveSweepsHandler(),
-      stopArchiveSweep: async invoke =>
-        stopArchiveSweepHandler(contextRef.current, invoke.arguments ?? {}),
-      nextTriageBatch: async invoke =>
-        nextTriageBatchHandler(contextRef.current, invoke.arguments ?? {}),
-      recordTriage: async invoke =>
-        recordTriageHandler(contextRef.current, invoke.arguments ?? {}),
-      getTriageReport: async invoke =>
-        getTriageReportHandler(contextRef.current, invoke.arguments ?? {}),
-      listMailChanges: async invoke =>
-        listMailChangesHandler(contextRef.current, invoke.arguments ?? {}),
-      commitReplyDraft: async invoke =>
-        commitReplyDraftHandler(contextRef.current, invoke.arguments ?? {}),
-      draftReply: async invoke =>
-        draftReplyHandler(contextRef.current, invoke.arguments ?? {}),
-      listDrafts: async invoke =>
-        listDraftsHandler(contextRef.current, invoke.arguments ?? {}),
-      getDraft: async invoke =>
-        getDraftHandler(contextRef.current, invoke.arguments ?? {}),
-      updateDraft: async invoke =>
-        updateDraftHandler(contextRef.current, invoke.arguments ?? {}),
-      discardDraft: async invoke =>
-        discardDraftHandler(contextRef.current, invoke.arguments ?? {}),
-      sendDraft: async invoke =>
-        sendDraftHandler(contextRef.current, invoke.arguments ?? {}),
-      composeMessage: async invoke =>
-        composeMessageHandler(contextRef.current, invoke.arguments ?? {}),
-      addDraftAttachments: async invoke =>
-        addDraftAttachmentsHandler(contextRef.current, invoke.arguments ?? {}),
-      removeDraftAttachment: async invoke =>
-        removeDraftAttachmentHandler(contextRef.current, invoke.arguments ?? {}),
-      saveAttachments: async invoke =>
-        saveAttachmentsHandler(contextRef.current, invoke.arguments ?? {}),
-      saveMessageAsPdf: async invoke =>
-        saveMessageAsPdfHandler(contextRef.current, invoke.arguments ?? {}),
-      createMailTask: async invoke =>
-        createMailTaskHandler(contextRef.current, invoke.arguments ?? {}),
-      listFilters: async () => listFiltersHandler(contextRef.current),
-      createFilter: async invoke =>
-        createFilterHandler(contextRef.current, invoke.arguments ?? {}),
-      applyFilterRetroactively: async invoke =>
-        applyFilterRetroactivelyHandler(
-          contextRef.current,
-          invoke.arguments ?? {},
-        ),
-      createBox: async invoke =>
-        createBoxHandler(contextRef.current, invoke.arguments ?? {}),
-      deleteFilter: async invoke =>
-        deleteFilterHandler(contextRef.current, invoke.arguments ?? {}),
-      setFilterEnabled: async invoke =>
-        setFilterEnabledHandler(contextRef.current, invoke.arguments ?? {}),
-      listBoxes: async () => listBoxesHandler(contextRef.current),
-      fileThread: async invoke =>
-        fileThreadHandler(contextRef.current, invoke.arguments ?? {}),
-      openThread: async invoke =>
-        openThreadHandler(contextRef.current, invoke.arguments ?? {}),
-      listRuns: async invoke =>
-        listRunsHandler(contextRef.current, invoke.arguments ?? {}),
-      getRun: async invoke =>
-        getRunHandler(contextRef.current, invoke.arguments ?? {}),
-      getRunReplies: async invoke =>
-        getRunRepliesHandler(contextRef.current, invoke.arguments ?? {}),
-      createRun: async invoke =>
-        createRunHandler(contextRef.current, invoke.arguments ?? {}),
-      createRunFromDrafts: async invoke =>
-        createRunFromDraftsHandler(contextRef.current, invoke.arguments ?? {}),
-      renderRun: async invoke =>
-        renderRunHandler(contextRef.current, invoke.arguments ?? {}),
-      setRunNote: async invoke =>
-        setRunNoteHandler(contextRef.current, invoke.arguments ?? {}),
-      sendRunItem: async invoke =>
-        sendRunItemHandler(contextRef.current, invoke.arguments ?? {}),
-      skipRunItem: async invoke =>
-        skipRunItemHandler(contextRef.current, invoke.arguments ?? {}),
-      pauseRun: async invoke =>
-        pauseRunHandler(contextRef.current, invoke.arguments ?? {}),
-      resumeRun: async invoke =>
-        resumeRunHandler(contextRef.current, invoke.arguments ?? {}),
-      setRunRecipients: async invoke =>
-        setRunRecipientsHandler(contextRef.current, invoke.arguments ?? {}),
-      setRunFieldMap: async invoke =>
-        setRunFieldMapHandler(contextRef.current, invoke.arguments ?? {}),
-      setRunTemplate: async invoke =>
-        setRunTemplateHandler(contextRef.current, invoke.arguments ?? {}),
-      insertRunNoteSlot: async invoke =>
-        insertRunNoteSlotHandler(contextRef.current, invoke.arguments ?? {}),
-      previewRunItem: async invoke =>
-        previewRunItemHandler(contextRef.current, invoke.arguments ?? {}),
-      addDraftsToRun: async invoke =>
-        addDraftsToRunHandler(contextRef.current, invoke.arguments ?? {}),
-      archiveRun: async invoke =>
-        archiveRunHandler(contextRef.current, invoke.arguments ?? {}),
-    })),
+    handlers,
   })
   return contextRef
 }
