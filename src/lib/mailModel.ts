@@ -1083,11 +1083,17 @@ export function attachDraftToTask(
 export function archiveThread(
   store: MailStore,
   threadId: string,
-  archiveMailboxId = store.mailboxes.find(mailbox => mailbox.role === 'archive')
-    ?.id,
+  archiveMailboxId?: string,
 ): MailStore {
-  const thread = store.threads.find(item => item.id === threadId)
-  if (thread?.status === 'archived') return store
+  const target = store.threads.find(item => item.id === threadId)
+  if (!target || target.status === 'archived') return store
+  const resolvedArchiveId =
+    archiveMailboxId ??
+    store.mailboxes.find(
+      mailbox =>
+        mailbox.accountId === target.accountId && mailbox.role === 'archive',
+    )?.id ??
+    store.mailboxes.find(mailbox => mailbox.role === 'archive')?.id
   return {
     ...store,
     threads: store.threads.map(thread =>
@@ -1102,7 +1108,7 @@ export function archiveThread(
               thread.status === 'archived'
                 ? thread.archivedFromStatus
                 : thread.status,
-            mailboxId: archiveMailboxId ?? thread.mailboxId,
+            mailboxId: resolvedArchiveId ?? thread.mailboxId,
             status: 'archived',
             syncState: 'pending',
           }
@@ -1266,9 +1272,17 @@ export function removeProviderAccountData(
 export function deleteThread(
   store: MailStore,
   threadId: string,
-  trashMailboxId = store.mailboxes.find(mailbox => mailbox.role === 'trash')
-    ?.id,
+  trashMailboxId?: string,
 ): MailStore {
+  const target = store.threads.find(item => item.id === threadId)
+  if (!target) return store
+  const resolvedTrashId =
+    trashMailboxId ??
+    store.mailboxes.find(
+      mailbox =>
+        mailbox.accountId === target.accountId && mailbox.role === 'trash',
+    )?.id ??
+    store.mailboxes.find(mailbox => mailbox.role === 'trash')?.id
   const trashIds = new Set(
     store.mailboxes
       .filter(mailbox => mailbox.role === 'trash')
@@ -1287,7 +1301,7 @@ export function deleteThread(
               archivedFromStatus: thread.status,
             }
           : {}),
-        mailboxId: trashMailboxId ?? thread.mailboxId,
+        mailboxId: resolvedTrashId ?? thread.mailboxId,
         status: 'archived',
         syncState: 'pending',
       }

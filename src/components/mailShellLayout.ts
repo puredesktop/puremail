@@ -8,10 +8,12 @@ export type TaskMode = 'thread' | 'mine' | 'followups'
  * drift because both read this map.
  */
 export type MailDensity = 'compact' | 'comfortable'
+export type ReadingPaneLayout = 'list-only' | 'split-right' | 'split-bottom'
+
 export const THREAD_ROW_HEIGHTS: Record<MailDensity, number> = {
   /** --pure-chrome-list-row-height: a number because the rail windows on it. */
   compact: 36,
-  comfortable: 48,
+  comfortable: 62,
 }
 
 export type MailLayoutState = {
@@ -39,6 +41,8 @@ export type MailLayoutState = {
    */
   taskDrawerOpen: Record<string, boolean>
   density: MailDensity
+  /** Split-pane layout preference: list-only (default), split-right, or split-bottom. */
+  readingPaneLayout?: ReadingPaneLayout
 }
 
 export const MAIL_LAYOUT_STORAGE_KEY = 'puremail.layout.v1'
@@ -63,6 +67,7 @@ export function defaultLayoutState(store: MailStore): MailLayoutState {
     taskMode: 'mine',
     taskDrawerOpen: {},
     density: 'compact',
+    readingPaneLayout: 'list-only',
   }
 }
 
@@ -131,6 +136,11 @@ export function readLayoutState(store: MailStore): MailLayoutState {
      * is a session gesture now, never a persisted one.
      */
     const taskMode = parsed.taskMode === 'followups' ? 'followups' : 'mine'
+    const readingPaneLayout: ReadingPaneLayout =
+      parsed.readingPaneLayout === 'split-right' ||
+      parsed.readingPaneLayout === 'split-bottom'
+        ? parsed.readingPaneLayout
+        : 'list-only'
     return {
       selectedAccountId,
       query,
@@ -142,6 +152,7 @@ export function readLayoutState(store: MailStore): MailLayoutState {
       taskMode,
       taskDrawerOpen: readTaskDrawerOpen(parsed, selectedAccountId),
       density: parsed.density === 'comfortable' ? 'comfortable' : 'compact',
+      readingPaneLayout,
     }
   } catch (error) {
     console.warn(

@@ -1,6 +1,11 @@
 import { aiTriageCurrent, isAiTriageVerdict } from './aiTriageState'
-import type { MailStore, MailThread, MailContact } from '../types'
+import type { FollowUpReminder, MailStore, MailThread, MailContact } from '../types'
 import { threadIsInsideFetchWindow } from './mailModel'
+import {
+  DEFAULT_REPLY_THRESHOLD_WORKING_DAYS,
+  replyStateForThread,
+} from './mailReplyState'
+import { isNewsletterThread, isPaperTrailThread } from './mailScreener'
 
 /**
  * The one query language. A thread list only ever comes into existence by
@@ -44,6 +49,9 @@ export type MailQueryField =
   | 'older_than'
   | 'newer_than'
   | 'triage'
+  | 'larger'
+  | 'smaller'
+  | 'filename'
 
 export interface MailQuery {
   terms: MailQueryTerm[]
@@ -67,6 +75,9 @@ const FIELDS: MailQueryField[] = [
   'older_than',
   'newer_than',
   'triage',
+  'larger',
+  'smaller',
+  'filename',
 ]
 
 const HAS_VALUES = new Set(['attachment', 'calendar'])
@@ -79,6 +90,13 @@ const IS_VALUES = new Set([
   'draft',
   'triaged',
   'untriaged',
+  'vip',
+  'muted',
+  'pinned',
+  'awaiting',
+  'overdue',
+  'newsletter',
+  'receipt',
 ])
 const SORT_VALUES = new Set<MailQuerySort>([
   'newest',
@@ -88,7 +106,7 @@ const SORT_VALUES = new Set<MailQuerySort>([
 ])
 
 const OPERATOR_TOKEN = new RegExp(
-  `^(-?)(${FIELDS.join('|')}|sort|limit):(?:"((?:\\\\.|[^"\\\\])*)"|(\\S+))$`,
+  `^(-?)(${FIELDS.join('|')}|folder|sort|limit):(?:"((?:\\\\.|[^"\\\\])*)"|(\\S+))$`,
   'i',
 )
 
@@ -151,7 +169,8 @@ export function parseMailQuery(input: string): MailQuery {
       continue
     }
     const negated = match[1] === '-'
-    const field = (match[2] ?? '').toLowerCase()
+    const rawField = (match[2] ?? '').toLowerCase()
+    const field = rawField === 'folder' ? 'in' : rawField
     const rawValue =
       match[3] !== undefined
         ? match[3].replace(/\\(.)/g, '$1')
@@ -192,6 +211,13 @@ export function parseMailQuery(input: string): MailQuery {
     if (
       (field === 'older_than' || field === 'newer_than') &&
       parseRelativeDuration(value) === null
+    ) {
+      textParts.push(token)
+      continue
+    }
+    if (
+      (field === 'larger' || field === 'smaller') &&
+      parseByteSize(value) === null
     ) {
       textParts.push(token)
       continue
@@ -283,6 +309,20 @@ function parseAbsoluteDate(value: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return null
   const ms = Date.parse(trimmed)
   return Number.isFinite(ms) ? ms : null
+}
+
+/** `500`, `50k`, `2m`, `1g` (optional `b` suffix) → bytes. */
+export function parseByteSize(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)\s*([kmg]?b?)$/i.exec(value.trim())
+  if (!match) return null
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount) || amount < 0) return null
+  const unit = (match[2] ?? '').toLowerCase()
+  if (!unit || unit === 'b') return Math.round(amount)
+  if (unit === 'k' || unit === 'kb') return Math.round(amount * 1024)
+  if (unit === 'm' || unit === 'mb') return Math.round(amount * 1024 * 1024)
+  if (unit === 'g' || unit === 'gb') return Math.round(amount * 1024 * 1024 * 1024)
+  return null
 }
 
 /** `30d`, `12h`, `2w`, `6m`, `1y` → milliseconds. Bare numbers mean days. */
@@ -387,7 +427,11 @@ interface ThreadFacts {
   thread: MailThread
   messages: MailStore['messages']
   starred: boolean
+  pinned: boolean
+  muted: boolean
+  vip: boolean
   scheduled: boolean
+  byteSize: number
   haystack: string
 }
 
@@ -405,7 +449,11 @@ interface ThreadFacts {
 interface StoreQueryIndexes {
   messagesByThread: Map<string, MailStore['messages']>
   starred: Set<string>
+  pinned: Set<string>
+  muted: Set<string>
+  vip: Set<string>
   scheduled: Set<string>
+  activeRemindersByThread: Map<string, FollowUpReminder[]>
   factsByThread: Map<string, ThreadFacts>
   /** Lazy: threads holding at least one unread message. */
   unreadThreadIds?: Set<string>
@@ -422,18 +470,56 @@ function indexesForStore(store: MailStore): StoreQueryIndexes {
     if (list) list.push(message)
     else messagesByThread.set(message.threadId, [message])
   }
+  const activeRemindersByThread = new Map<string, FollowUpReminder[]>()
+  for (const reminder of store.followUpReminders ?? []) {
+    if (reminder.dismissedAt) continue
+    const list = activeRemindersByThread.get(reminder.threadId)
+    if (list) list.push(reminder)
+    else activeRemindersByThread.set(reminder.threadId, [reminder])
+  }
   const built: StoreQueryIndexes = {
     messagesByThread,
     starred: new Set(store.starredThreadIds ?? []),
+    pinned: new Set(store.pinnedThreadIds ?? []),
+    muted: new Set(store.mutedThreadIds ?? []),
+    vip: new Set(
+      (store.vipSenders ?? []).map(email => email.trim().toLowerCase()).filter(Boolean),
+    ),
     scheduled: new Set(
       (store.scheduledSends ?? [])
         .filter(entry => entry.status === 'scheduled')
         .map(entry => entry.threadId),
     ),
+    activeRemindersByThread,
     factsByThread: new Map(),
   }
   storeQueryIndexes.set(store, built)
   return built
+}
+
+const utf8ByteEncoder = new TextEncoder()
+
+function estimateThreadByteSize(messages: MailStore['messages']): number {
+  let total = 0
+  for (const message of messages) {
+    total +=
+      utf8ByteEncoder.encode(message.subject ?? '').length +
+      utf8ByteEncoder.encode(message.body ?? '').length +
+      utf8ByteEncoder.encode(message.bodyHtml ?? '').length
+    for (const att of message.attachments ?? []) {
+      if (typeof att.size === 'number' && Number.isFinite(att.size)) {
+        total += att.size
+      } else if (att.content) {
+        const b64Match = /^data:[^;,]+(?:;[^;,]+)*;base64,([\s\S]+)$/i.exec(
+          att.content,
+        )
+        total += b64Match
+          ? Math.floor((b64Match[1]!.replace(/\s+/g, '').length * 3) / 4)
+          : utf8ByteEncoder.encode(att.content).length
+      }
+    }
+  }
+  return total
 }
 
 /** Threads with at least one unread message, computed once per store. */
@@ -455,11 +541,23 @@ function buildThreadFacts(store: MailStore, threads: MailThread[]): ThreadFacts[
     const cached = indexes.factsByThread.get(thread.id)
     if (cached) return cached
     const messages = indexes.messagesByThread.get(thread.id) ?? []
+    const vip =
+      indexes.vip.size > 0 &&
+      (messages.some(message =>
+        indexes.vip.has(message.from.email.trim().toLowerCase()),
+      ) ||
+        thread.participants.some(contact =>
+          indexes.vip.has(contact.email.trim().toLowerCase()),
+        ))
     const facts: ThreadFacts = {
       thread,
       messages,
       starred: indexes.starred.has(thread.id),
+      pinned: indexes.pinned.has(thread.id),
+      muted: indexes.muted.has(thread.id),
+      vip,
       scheduled: indexes.scheduled.has(thread.id),
+      byteSize: estimateThreadByteSize(messages),
       haystack: [
         thread.subject,
         thread.summary,
@@ -551,7 +649,69 @@ function termHolds(
       if (lowered === 'draft') return threadHasUnsentDraft(store, thread.id)
       if (lowered === 'triaged') return aiTriageCurrent(store, thread) !== null
       if (lowered === 'untriaged') return aiTriageCurrent(store, thread) === null
+      if (lowered === 'vip') return facts.vip
+      if (lowered === 'muted') return facts.muted
+      if (lowered === 'pinned') return facts.pinned
+      if (lowered === 'newsletter') {
+        return isNewsletterThread(thread, messages, store.screenerDecisions)
+      }
+      if (lowered === 'receipt') {
+        return isPaperTrailThread(thread, messages, store.screenerDecisions)
+      }
+      if (lowered === 'awaiting' || lowered === 'overdue') {
+        const reminders =
+          indexesForStore(store).activeRemindersByThread.get(thread.id) ?? []
+        if (
+          lowered === 'awaiting' &&
+          reminders.length > 0
+        ) {
+          return true
+        }
+        if (
+          lowered === 'overdue' &&
+          reminders.some(reminder => Date.parse(reminder.remindAt) <= nowMs)
+        ) {
+          return true
+        }
+        const account = store.accounts.find(a => a.id === thread.accountId)
+        const threshold =
+          store.settings?.followUp?.replyThresholdWorkingDays ??
+          DEFAULT_REPLY_THRESHOLD_WORKING_DAYS
+        const state = replyStateForThread(
+          thread,
+          messages,
+          account
+            ? {
+                email: account.email,
+                emails: store.settings.ownerIdentities?.emails,
+              }
+            : undefined,
+          new Date(nowMs),
+          threshold,
+        )
+        return lowered === 'awaiting'
+          ? state.kind === 'awaiting'
+          : state.kind === 'awaiting' && state.overdue
+      }
       return facts.scheduled
+    }
+    case 'larger': {
+      const bytes = parseByteSize(value)
+      if (bytes === null) return false
+      return facts.byteSize > bytes
+    }
+    case 'smaller': {
+      const bytes = parseByteSize(value)
+      if (bytes === null) return false
+      return facts.byteSize < bytes
+    }
+    case 'filename': {
+      const needle = value.toLowerCase()
+      return messages.some(message =>
+        (message.attachments ?? []).some(attachment =>
+          attachment.name.toLowerCase().includes(needle),
+        ),
+      )
     }
     case 'before': {
       const ms = parseAbsoluteDate(value)
@@ -753,7 +913,29 @@ export function resolveThreadQuery(
     return { thread: representative, threads, sortAt }
   })
 
+  const pinnedSet = indexesForStore(store).pinned
+  const namesNonPinMailbox = parsed.terms.some(term => {
+    if (term.field !== 'in' || term.negated) return false
+    if (isDraftsMailboxToken(store, term.value)) return true
+    const ids = mailboxIdsForToken(store, term.value)
+    return store.mailboxes.some(
+      mailbox =>
+        ids.has(mailbox.id) &&
+        (mailbox.role === 'trash' || mailbox.role === 'sent'),
+    )
+  })
+  const floatPinnedFirst =
+    parsed.sort === DEFAULT_MAIL_QUERY_SORT &&
+    !parsed.limit &&
+    !namesNonPinMailbox &&
+    pinnedSet.size > 0
+
   entries.sort((a, b) => {
+    if (floatPinnedFirst) {
+      const aPinned = a.threads.some(thread => pinnedSet.has(thread.id))
+      const bPinned = b.threads.some(thread => pinnedSet.has(thread.id))
+      if (aPinned !== bPinned) return aPinned ? -1 : 1
+    }
     if (parsed.sort === 'oldest') return a.sortAt.localeCompare(b.sortAt)
     if (parsed.sort === 'sender') {
       const left = a.thread.participants[0]?.name ?? ''

@@ -288,7 +288,7 @@ export const TaskDrawerAdd = styled.button`
  * area. Fetch outcomes used to be routed into a notice string that nothing
  * rendered, so a fetch could fail in complete silence.
  */
-export const MailToast = styled.div`
+export const MailToast = styled.div<{ $tone?: 'info' | 'undo' | 'error' }>`
   position: fixed;
   bottom: 14px;
   left: 50%;
@@ -297,11 +297,23 @@ export const MailToast = styled.div`
   max-width: min(560px, calc(100% - 32px));
   align-items: center;
   gap: 12px;
-  border: 1px solid var(--puremail-line);
+  border: 1px solid
+    ${({ $tone }) =>
+      $tone === 'error'
+        ? 'var(--p-failed-line, var(--puremail-danger-border))'
+        : $tone === 'undo'
+          ? 'var(--pure-chrome-accent, var(--n-line))'
+          : 'var(--n-line, var(--puremail-line))'};
   border-radius: 6px;
-  background: var(--platform-colors-text);
-  color: var(--pure-chrome-on-accent);
-  box-shadow: 0 8px 24px color-mix(in srgb, #111827 22%, transparent);
+  background: ${({ $tone }) =>
+    $tone === 'error'
+      ? 'var(--p-failed-tint, var(--puremail-danger-bg))'
+      : 'var(--n-sheet, var(--platform-colors-elevated))'};
+  color: ${({ $tone }) =>
+    $tone === 'error'
+      ? 'var(--p-failed-text, var(--puremail-danger-text))'
+      : 'var(--n-ink, var(--platform-colors-text))'};
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.22);
   font-size: var(--pure-chrome-ui-size);
   padding: 8px 12px;
   transform: translateX(-50%);
@@ -316,12 +328,16 @@ export const MailToastAction = styled.button`
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: inherit;
+  color: var(--pure-chrome-accent, currentColor);
   cursor: pointer;
   font: inherit;
   font-weight: 600;
   padding: 2px 6px;
   text-decoration: underline;
+
+  &:hover {
+    background: var(--n-hover);
+  }
 `
 
 export const TaskDrawerEmpty = styled.p`
@@ -588,7 +604,7 @@ export const ReaderToolbar = styled.div.attrs(chrome('toolbar'))`
   top: 0;
   z-index: 6;
   height: ${READER_TOOLBAR_HEIGHT}px;
-  gap: 10px;
+  gap: 6px;
   white-space: nowrap;
   /* Not hidden: the More menu is absolutely positioned inside this row, and
      clipping the row clipped the menu out of existence. The labels give way
@@ -603,28 +619,28 @@ export const ReaderToolbar = styled.div.attrs(chrome('toolbar'))`
   }
 
   /* Icons only. The label is the part of an action that can go. */
-  @container mail-actions (max-width: 1000px) {
+  @container mail-actions (max-width: 1080px) {
     ${ReaderToolbarLabel} {
       display: none;
     }
   }
 
-  /* Then what has another way to it: the thread's place, and the reply
-     switches, which the reply itself offers again. */
-  @container mail-actions (max-width: 660px) {
+  /* Then what has another way to it: the thread's place, Pin, Mute, Sender
+     drawer, and secondary actions fold cleanly into More in split panes. */
+  @container mail-actions (max-width: 860px) {
     [data-goes-first] {
       display: none;
     }
   }
 
-  @container mail-actions (max-width: 580px) {
+  @container mail-actions (max-width: 640px) {
     [data-goes-next] {
       display: none;
     }
   }
 
   @media (max-width: 860px) {
-    gap: 6px;
+    gap: 4px;
 
     ${ReaderToolbarLabel} {
       display: none;
@@ -645,14 +661,15 @@ export const ReaderToolbarSwap = styled.div`
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
+  overflow: hidden;
 
   /* Its layers are out of flow, so it has no width of its own: without this
      it shrinks to nothing and the reply actions lie on top of the others. */
-  @container mail-actions (max-width: 1000px) {
-    min-width: 260px;
+  @container mail-actions (max-width: 1080px) {
+    min-width: 225px;
   }
 
-  @container mail-actions (max-width: 580px) {
+  @container mail-actions (max-width: 640px) {
     min-width: 170px;
   }
 `
@@ -662,7 +679,7 @@ export const ReaderToolbarSwapLayer = styled.div<{ $shown?: boolean }>`
   inset: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
   white-space: nowrap;
   opacity: ${({ $shown }) => ($shown ? 1 : 0)};
@@ -677,7 +694,7 @@ export const ReaderToolbarSwapLayer = styled.div<{ $shown?: boolean }>`
   }
 
   @media (max-width: 860px) {
-    gap: 6px;
+    gap: 4px;
   }
 `
 
@@ -704,9 +721,11 @@ export const ReaderToolbarButton = styled.button.attrs(chrome('toolbar-control')
     color: var(--platform-colors-text);
   }
 
-  svg {
+  && svg {
+    width: 15px;
+    height: 15px;
     flex: none;
-    opacity: 0.75;
+    opacity: 0.78;
   }
   ${fastTipCss}
 `
@@ -3895,7 +3914,13 @@ export const ComposeToolbar = styled.div.attrs(chrome('toolbar'))`
 `
 
 /** A format control; \`aria-pressed\` marks it active for the chrome. */
-export const ComposeToolbarButton = styled.button.attrs(chrome('toolbar-control'))<{ $active?: boolean }>``
+export const ComposeToolbarButton = styled.button.attrs(chrome('toolbar-control'))<{ $active?: boolean }>`
+  && svg {
+    width: 14px;
+    height: 14px;
+    flex: none;
+  }
+`
 
 export const ComposeRichBody = styled.div`
   flex: 1;
@@ -4153,7 +4178,10 @@ export const TopBarIconButton = styled.button.attrs(chrome('toolbar-control'))<{
     color: var(--platform-colors-text);
   }
 
-  svg {
+  && svg {
+    width: 15px;
+    height: 15px;
+    flex: none;
     animation: ${({ $fetching }) =>
       $fetching ? 'puremail-fetch-spin 900ms linear infinite' : 'none'};
   }
@@ -4381,7 +4409,10 @@ export const ListIconButton = styled.button.attrs(chrome('toolbar-control'))<{ $
     color: var(--platform-colors-text);
   }
 
-  svg {
+  && svg {
+    width: 15px;
+    height: 15px;
+    flex: none;
     animation: ${({ $fetching }) =>
       $fetching ? 'puremail-fetch-spin 900ms linear infinite' : 'none'};
   }
@@ -4400,11 +4431,48 @@ export const ListIconButton = styled.button.attrs(chrome('toolbar-control'))<{ $
  * inset, hairline, faces and hover; the density map supplies the height
  * the virtualised rail windows on.
  */
+export const RowTime = styled.span.attrs(chrome('meta', { 'data-row-time': '' }))`
+  /* Sized to its text, never narrower than the column. A fixed 64px box
+     let "Sep 3, 6:07 PM" run past the pane edge and lose its last letters;
+     the subject beside it is the column that gives. */
+  min-width: 56px;
+  flex: none;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 120ms ease;
+`
+
+/**
+ * The four triage icons, shown on hover OVER the time — absolutely
+ * positioned so nothing reflows under the cursor.
+ */
+export const RowHoverActions = styled.span.attrs(
+  (): Record<string, string> => ({ 'data-row-hover-actions': '' }),
+)<{ $topAligned?: boolean }>`
+  position: absolute;
+  right: 10px;
+  top: ${({ $topAligned }) => ($topAligned ? '6px' : '50%')};
+  transform: ${({ $topAligned }) => ($topAligned ? 'none' : 'translateY(-50%)')};
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  background: var(--n-hover);
+  padding: 2px 2px 2px 8px;
+  border-radius: 4px;
+  z-index: 2;
+`
+
 export const MailListRow = styled.div.attrs(chrome('list-row'))<{
   $density?: MailDensity
   $unread?: boolean
   $active?: boolean
   $checked?: boolean
+  $stacked?: boolean
 }>`
   position: relative;
   width: 100%;
@@ -4416,6 +4484,7 @@ export const MailListRow = styled.div.attrs(chrome('list-row'))<{
   cursor: pointer;
   font: inherit;
   text-align: left;
+  transition: background-color 100ms ease;
 
   /* The open conversation has the selected look every app shares; ticked ones are a shade of grey. */
   && {
@@ -4423,11 +4492,56 @@ export const MailListRow = styled.div.attrs(chrome('list-row'))<{
     background: ${({ $checked, $active }) =>
       $active ? 'var(--p-chosen)' : $checked ? 'var(--n-selected)' : 'transparent'};
     box-shadow: ${({ $active }) => ($active ? 'var(--p-chosen-edge)' : 'none')};
+    ${({ $density }) =>
+      $density === 'comfortable'
+        ? css`
+            align-items: center;
+            gap: 10px;
+            padding-top: 6px;
+            padding-bottom: 6px;
+          `
+        : ''}
   }
 
   &&:hover {
     background: ${({ $checked, $active }) =>
       $active ? 'var(--p-chosen)' : $checked ? 'var(--n-selected)' : 'var(--n-hover)'};
+  }
+
+  &:hover ${RowHoverActions},
+  &:focus-within ${RowHoverActions} {
+    opacity: 1;
+    pointer-events: auto;
+    background: ${({ $checked, $active }) =>
+      $active ? 'var(--p-chosen)' : $checked ? 'var(--n-selected)' : 'var(--n-hover)'};
+  }
+
+  &:hover ${RowTime},
+  &:focus-within ${RowTime} {
+    opacity: 0;
+  }
+
+  @container threadlist (max-width: 560px) {
+    && {
+      height: ${THREAD_ROW_HEIGHTS.comfortable}px;
+      align-items: center;
+      padding-top: 6px;
+      padding-bottom: 6px;
+    }
+
+    [data-row-inline-body] {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 3px;
+    }
+
+    [data-row-sender-cluster] {
+      width: 100%;
+    }
+
+    [data-row-time] {
+      align-self: flex-start;
+    }
   }
 `
 
@@ -4438,14 +4552,14 @@ export const RowStar = styled.span<{ $starred?: boolean }>`
   justify-content: center;
   color: ${({ $starred }) =>
     $starred
-      ? 'var(--platform-colors-semantic-orange, #b58a00)'
+      ? 'var(--b-amber, var(--platform-colors-semantic-orange))'
       : 'color-mix(in srgb, var(--platform-colors-text) 24%, transparent)'};
   cursor: pointer;
 
   &:hover {
     color: ${({ $starred }) =>
       $starred
-        ? 'var(--platform-colors-semantic-orange, #b58a00)'
+        ? 'var(--b-amber, var(--platform-colors-semantic-orange))'
         : 'var(--platform-colors-text-secondary)'};
   }
 
@@ -4457,15 +4571,19 @@ export const RowStar = styled.span<{ $starred?: boolean }>`
 `
 
 export const RowSender = styled.span<{ $unread?: boolean }>`
-  width: 190px;
+  width: 168px;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: ${({ $unread }) =>
     $unread
-      ? 'var(--platform-colors-text)'
-      : 'var(--platform-colors-text-secondary)'};
+      ? 'var(--n-ink, var(--platform-colors-text))'
+      : 'var(--n-soft, var(--platform-colors-text-secondary))'};
   font-size: var(--pure-chrome-ui-size);
   font-weight: ${({ $unread }) => ($unread ? 600 : 400)};
 `
@@ -4478,21 +4596,28 @@ export const RowChip = styled.span`
   text-overflow: ellipsis;
 `
 
-/** The labels' own column: a fixed width, each label at its natural width from the left, so every subject starts on one line. */
+/** Auto-sized labels container: zero wasted river when a thread has no labels/chips. */
 export const RowLabels = styled.span`
   display: flex;
-  flex: 0 0 132px;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 180px;
   align-items: center;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
+
+  &:empty {
+    display: none;
+  }
 `
 
-/** Room for the priority mark on every row, so the sender column never moves. */
+/** Room for the unread/priority mark on every row, so the sender column never moves. */
 export const RowMark = styled.span`
   display: inline-flex;
-  flex: 0 0 6px;
+  flex: 0 0 8px;
   align-items: center;
+  justify-content: center;
 `
 
 export const RowChipDot = styled.span<{ $color?: string }>`
@@ -4505,40 +4630,23 @@ export const RowSubject = styled.span<{ $unread?: boolean }>`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--platform-colors-text-secondary);
+  color: var(--n-soft, var(--platform-colors-text-secondary));
   font-size: var(--pure-chrome-ui-size);
 
   strong {
-    color: var(--platform-colors-text);
+    color: var(--n-ink, var(--platform-colors-text));
     font-weight: ${({ $unread }) => ($unread ? 600 : 500)};
   }
 `
 
-export const RowTime = styled.span.attrs(chrome('meta'))`
-  /* Sized to its text, never narrower than the column. A fixed 64px box
-     let "Sep 3, 6:07 PM" run past the pane edge and lose its last letters;
-     the subject beside it is the column that gives. */
-  min-width: 64px;
-  flex: none;
-  text-align: right;
-  white-space: nowrap;
-`
-
-/**
- * The four triage icons, shown on hover OVER the time — absolutely
- * positioned so nothing reflows under the cursor.
- */
-export const RowHoverActions = styled.span`
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 2px;
-`
-
-export const RowActionButton = styled.span`
+export const RowActionButton = styled.button`
   display: inline-flex;
   width: 24px;
   height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
   align-items: center;
   justify-content: center;
   color: var(--platform-colors-text-secondary);
@@ -5345,4 +5453,384 @@ export const ListPositionInput = styled.input`
   font-family: var(--platform-typography-font-family);
   font-size: var(--pure-chrome-meta-size);
   font-variant-numeric: tabular-nums;
+`
+
+/* ── Wave 2B Enterprise Craft Primitives ────────────────────────────────── */
+
+export const SplitWorkspace = styled.div<{ $layout: 'split-right' | 'split-bottom' }>`
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: ${({ $layout }) => ($layout === 'split-bottom' ? 'column' : 'row')};
+  overflow: hidden;
+`
+
+export const SplitListPane = styled.div<{ $layout: 'split-right' | 'split-bottom' }>`
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: threadlist;
+  ${({ $layout }) =>
+    $layout === 'split-right'
+      ? css`
+          flex: 0 0 38%;
+          min-width: 300px;
+          max-width: 520px;
+          border-right: 1px solid var(--n-fence, var(--puremail-line));
+        `
+      : css`
+          flex: 0 0 45%;
+          min-height: 200px;
+          border-bottom: 1px solid var(--n-fence, var(--puremail-line));
+        `}
+`
+
+export const SplitReaderPane = styled.div`
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--n-sheet, var(--puremail-reader-bg));
+`
+
+export const RowAvatar = styled.span<{ $size?: 'sm' | 'md' }>`
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: ${({ $size }) => ($size === 'md' ? '28px' : '22px')};
+  height: ${({ $size }) => ($size === 'md' ? '28px' : '22px')};
+  border-radius: 50%;
+  font-size: ${({ $size }) => ($size === 'md' ? '11.5px' : '10px')};
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  user-select: none;
+`
+
+export const RowUnreadDot = styled.span`
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--pure-chrome-accent, var(--p-text));
+`
+
+export const RowVipBadge = styled.span`
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--b-amber) 45%, transparent);
+  background: color-mix(in srgb, var(--b-amber) 14%, transparent);
+  color: var(--b-amber);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+`
+
+export const RowPinIcon = styled.span`
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--pure-chrome-accent, var(--p-text));
+  svg {
+    width: 11px;
+    height: 11px;
+  }
+`
+
+export const RowThreadCount = styled.span`
+  flex: none;
+  color: var(--n-faint, var(--platform-colors-text-tertiary));
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+`
+
+export const RowAttachmentChip = styled.span`
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  color: var(--n-faint, var(--platform-colors-text-tertiary));
+  font-size: 11px;
+  svg {
+    width: 12px;
+    height: 12px;
+  }
+`
+
+export const RowInlineBody = styled.div.attrs(
+  (): Record<string, string> => ({ 'data-row-inline-body': '' }),
+)`
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+`
+
+export const RowTwoLineBody = styled.div`
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+`
+
+export const RowTopLine = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+`
+
+export const RowBottomLine = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+`
+
+export const NavRailGroupDivider = styled.div`
+  flex: none;
+  height: 1px;
+  margin: 6px 12px;
+  background: var(--n-fence, var(--pure-chrome-line));
+`
+
+export const NavRailSectionHeaderRow = styled.div`
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 2px 14px;
+  gap: 4px;
+`
+
+export const NavRailSectionToggle = styled.button`
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--n-soft, var(--platform-colors-text-secondary));
+  font-family: var(--platform-typography-font-family);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    color: var(--n-ink, var(--platform-colors-text));
+  }
+
+  svg {
+    width: 12px;
+    height: 12px;
+    flex: none;
+  }
+`
+
+export const NavRailInlineAddBtn = styled.button`
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--n-faint, var(--platform-colors-text-tertiary));
+  cursor: pointer;
+
+  &:hover {
+    background: var(--n-hover, var(--pure-chrome-hover));
+    color: var(--n-ink, var(--platform-colors-text));
+  }
+`
+
+export const LayoutSwitcherGroup = styled.div`
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  border: 1px solid var(--n-line, var(--pure-chrome-line));
+  border-radius: 4px;
+  background: var(--n-panel, var(--pure-chrome-bar));
+  overflow: hidden;
+`
+
+export const LayoutSwitcherBtn = styled.button<{ $active?: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: ${({ $active }) =>
+    $active ? 'var(--p-chosen, var(--pure-chrome-selection))' : 'transparent'};
+  color: ${({ $active }) =>
+    $active ? 'var(--n-ink, var(--platform-colors-text))' : 'var(--n-soft, var(--platform-colors-text-secondary))'};
+  cursor: pointer;
+
+  &:hover {
+    color: var(--n-ink, var(--platform-colors-text));
+    background: ${({ $active }) =>
+      $active ? 'var(--p-chosen, var(--pure-chrome-selection))' : 'var(--n-hover, var(--pure-chrome-hover))'};
+  }
+
+  svg {
+    width: 13px;
+    height: 13px;
+  }
+`
+
+export const QuoteTrimPill = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  margin-top: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--n-line, var(--puremail-line));
+  border-radius: 999px;
+  background: var(--n-panel, var(--puremail-pane-header-bg));
+  color: var(--n-soft, var(--platform-colors-text-secondary));
+  font-family: var(--platform-typography-font-family);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+
+  &:hover {
+    background: var(--n-hover, var(--pure-chrome-hover));
+    color: var(--n-ink, var(--platform-colors-text));
+  }
+`
+
+export const CollapsedMessageCard = styled.div`
+  width: var(--puremail-page-width);
+  margin: 0 auto 8px;
+  border: 1px solid var(--n-line, var(--puremail-line));
+  border-radius: 5px;
+  background: var(--n-sheet, var(--puremail-message-bg));
+  overflow: hidden;
+`
+
+export const CollapsedMessageBar = styled.button`
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--n-ink, var(--platform-colors-text));
+  font-family: var(--platform-typography-font-family);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--n-hover, var(--pure-chrome-hover));
+  }
+`
+
+export const CollapsedMessageSender = styled.span`
+  flex: none;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--n-ink, var(--platform-colors-text));
+`
+
+export const CollapsedMessageSnippet = styled.span`
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--n-soft, var(--platform-colors-text-secondary));
+`
+
+export const CollapsedMessageMeta = styled.span`
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--n-faint, var(--platform-colors-text-tertiary));
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+`
+
+export const CollapsedMessageBody = styled.div`
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--n-fence, var(--puremail-line));
+  font-size: 13.5px;
+  line-height: 1.55;
+`
+
+export const ReaderActionBanner = styled.div<{ $tone?: 'info' | 'warn' }>`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: var(--puremail-page-width);
+  margin: 10px auto 0;
+  padding: 8px 12px;
+  border: 1px solid
+    ${({ $tone }) =>
+      $tone === 'warn'
+        ? 'var(--p-needs-you-line, var(--puremail-warning-border))'
+        : 'var(--n-line, var(--puremail-line))'};
+  border-radius: 5px;
+  background: ${({ $tone }) =>
+    $tone === 'warn'
+      ? 'var(--p-needs-you-tint, var(--puremail-warning-bg))'
+      : 'var(--n-panel, var(--puremail-pane-header-bg))'};
+  color: ${({ $tone }) =>
+    $tone === 'warn'
+      ? 'var(--p-needs-you-text, var(--puremail-warning-text))'
+      : 'var(--n-ink, var(--platform-colors-text))'};
+  font-size: 12.5px;
+`
+
+export const ComposeDropOverlay = styled.div`
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed var(--pure-chrome-accent, var(--p-text));
+  background: color-mix(in srgb, var(--n-sheet, var(--puremail-message-bg)) 90%, transparent);
+  color: var(--pure-chrome-accent, var(--p-text));
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
 `

@@ -17,18 +17,26 @@ import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
+  Bell,
+  BellOff,
   BookOpen,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
   FolderInput,
   Forward,
+  MailMinus,
   MailOpen,
   MoreHorizontal,
+  Paperclip,
+  Pin,
   Reply as ReplyIcon,
   ReplyAll,
   Sparkles,
+  Star,
   Trash2,
+  UserRound,
 } from 'lucide-react'
 import type { CalendarInviteResponse } from '@purescience/platform-ui/bridge/calendarInviteIntent'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
@@ -75,6 +83,39 @@ import {
   mailHtmlHasRemoteImages,
   sanitizeMailHtml,
 } from '../lib/sanitizeMailHtml'
+import { inspectMailPrivacy } from '../lib/mailPrivacyShield'
+import {
+  buildEmlFromMessage,
+  buildMarkdownFromThread,
+  safeExportFilename,
+} from '../lib/mailExport'
+import {
+  buildFollowUpNudgeText,
+  dismissFollowUpReminder,
+  dueFollowUpReminders,
+  scheduleFollowUpReminder,
+} from '../lib/followUpRadar'
+import {
+  executeOneClickUnsubscribe,
+  parseListUnsubscribe,
+  unsubscribeLinkFromBody,
+} from '../lib/mailUnsubscribe'
+import { applyScreenerDecision } from '../lib/mailScreener'
+import { buildSenderProfile } from '../lib/senderIntelligence'
+import {
+  toggleMuteThread,
+  togglePinThread,
+  toggleVipSender,
+} from '../lib/mailTriage'
+import { PrivacyInspectorModal } from './PrivacyInspectorModal'
+import { QuickReplyBar, type QuickReplySendResult } from './QuickReplyBar'
+import { SecurityShieldPill } from './SecurityShieldPill'
+import {
+  computeFollowUpIso,
+  type ThreadDecisionInsight,
+} from '../lib/mailDecisionOps'
+import { SenderDrawer } from './SenderDrawer'
+import { TimePickerPopover } from './TimePickerPopover'
 import {
   remoteImageBannerState,
   remoteImageDecision,
@@ -139,6 +180,12 @@ import {
   AttachmentList,
   AttachmentMeta,
   AttachmentName,
+  CollapsedMessageBar,
+  CollapsedMessageBody,
+  CollapsedMessageCard,
+  CollapsedMessageMeta,
+  CollapsedMessageSender,
+  CollapsedMessageSnippet,
   CollapsedQuoteBoundary,
   ComposeLabel,
   ExpandedQuoteBlock,
@@ -151,6 +198,9 @@ import {
   MessageCard,
   Meta,
   QaEditedTag,
+  QuoteTrimPill,
+  ReaderActionBanner,
+  RowAvatar,
   AttachmentBandInner,
   AttachmentChipControlsRight,
   AttachmentChipActions,
@@ -405,6 +455,35 @@ export interface ThreadReaderProps {
   onReadMessage?: () => void
   /** How many notes the shown message already has in the reading room. */
   readNoteCount?: number
+  /** Snooze the selected thread until an ISO timestamp. */
+  onSnoozeThread?: (threadId: string, snoozedUntil: string) => void
+  /** Toggle pin via shell triage action (for undo/provider sync). */
+  onTogglePin?: (threadId: string) => void
+  /** Toggle mute via shell triage action (for undo/archive-on-mute). */
+  onToggleMute?: (threadId: string) => void
+  /** Screen sender via shell (for Screener effects + provider archive/trash). */
+  onScreenSender?: (
+    email: string,
+    destination: import('../types').ScreenerDestination,
+    name?: string,
+  ) => void
+  /** Send an inline quick reply directly, or fall back to opening compose. */
+  onQuickReplySend?: (
+    body: string,
+    event?: React.SyntheticEvent | Event,
+  ) => Promise<QuickReplySendResult> | QuickReplySendResult
+  /** Open another thread (e.g. from SenderDrawer recent threads). */
+  onOpenThread?: (threadId: string) => void
+  /** Open a new compose addressed to a specific contact (from SenderDrawer). */
+  onComposeTo?: (email: string, name?: string) => void
+  /** When true (split pane), hide Back button if desired or keep close behavior. */
+  isSplitPane?: boolean
+  /** When true, add bottom clearance so the minimized compose strip never covers QuickReplyBar. */
+  composeMinimized?: boolean
+  /** Batched decision-model insights (security, follow-up, triage hint, snippet match) for this thread. */
+  decisionInsight?: ThreadDecisionInsight | null
+  /** One-click follow-up reminder callback (used by decision-model follow-up radar hint). */
+  onSetFollowUpReminder?: (threadId: string, iso: string) => void
 }
 
 /**
@@ -437,15 +516,23 @@ function cachedMailHtmlHasRemoteImages(bodyHtml: string): boolean {
 export const SanitizedMessageBody = memo(function SanitizedMessageBody({
   bodyHtml,
   allowRemoteImages,
+  stripTrackers,
   onOpenMailto,
 }: {
   bodyHtml: string
   allowRemoteImages: boolean
+  stripTrackers?: boolean
   onOpenMailto?: (mailtoHref: string) => void
 }): ReactElement {
   const html = useMemo(
-    () => sanitizeMailHtml(bodyHtml, { allowRemoteImages }),
-    [bodyHtml, allowRemoteImages],
+    () =>
+      sanitizeMailHtml(
+        bodyHtml,
+        stripTrackers
+          ? { allowRemoteImages, stripTrackers: true }
+          : { allowRemoteImages },
+      ),
+    [bodyHtml, allowRemoteImages, stripTrackers],
   )
   // The sandboxed iframe cannot reliably open `target="_blank"` links, so
   // web links route through the shell to the system browser, and mailto:
@@ -526,6 +613,7 @@ export function ThreadReader({
   addSelectedThreadToCalendar,
   forwardSelectedThread,
   openDraftInComposeWindow,
+  replyWithBody,
   threadPosition,
   threadTotal,
   selectAdjacentThread,
@@ -545,9 +633,29 @@ export function ThreadReader({
   openCalendarInviteForMessage,
   onReadMessage,
   readNoteCount = 0,
+  onSnoozeThread,
+  onTogglePin,
+  onToggleMute,
+  onScreenSender,
+  onQuickReplySend,
+  onOpenThread,
+  onComposeTo,
+  isSplitPane = false,
+  composeMinimized = false,
+  decisionInsight = null,
+  onSetFollowUpReminder,
 }: ThreadReaderProps): React.ReactElement {
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [threadMenuOpen, setThreadMenuOpen] = useState(false)
+  const [snoozePopoverOpen, setSnoozePopoverOpen] = useState(false)
+  const [followUpPopoverOpen, setFollowUpPopoverOpen] = useState(false)
+  const [privacyModalOpen, setPrivacyModalOpen] = useState(false)
+  const [senderDrawerOpen, setSenderDrawerOpen] = useState(false)
+  const [filterSeedOverride, setFilterSeedOverride] = useState<string | null>(null)
+  const [expandedStackIds, setExpandedStackIds] = useState<string[]>([])
+  const [unsubscribedThreadIds, setUnsubscribedThreadIds] = useState<string[]>([])
+  const [unsubscribeBusy, setUnsubscribeBusy] = useState(false)
+  const [quickReplyBusy, setQuickReplyBusy] = useState(false)
 
   const [detailsOpen, setDetailsOpen] = useState(false)
   // 8b/9a: the pill's popover, its filter (shared with the thread view), and
@@ -577,6 +685,10 @@ export function ThreadReader({
     setHistoryOpen(false)
     setHistoryFilter('all')
     setInviteChangeOpen(false)
+    setSnoozePopoverOpen(false)
+    setFollowUpPopoverOpen(false)
+    setPrivacyModalOpen(false)
+    setExpandedStackIds([])
   }, [selectedThread.id])
   /**
    * The reading-height trigger: has the standalone subject row (the header
@@ -669,7 +781,11 @@ export function ThreadReader({
           } else if (mutation.kind === 'move') {
             // A box that IS a real account folder (IMAP): true server move.
             await provider.moveThread(mutation.threadId, mutation.mailboxId)
-          } else {
+          } else if (mutation.kind === 'trash') {
+            await provider.deleteThread(mutation.threadId)
+          } else if (mutation.kind === 'star') {
+            await provider.setThreadStarred?.(mutation.threadId, true)
+          } else if (mutation.kind === 'markRead') {
             await provider.markThreadRead(mutation.threadId, true)
           }
         } catch (error) {
@@ -1576,6 +1692,193 @@ export function ThreadReader({
    */
   const subjectInToolbar = subjectPassed && paneMode === 'message'
 
+  const selectedThreadPinned = (store.pinnedThreadIds ?? []).includes(
+    selectedThread.id,
+  )
+  const selectedThreadMuted = (store.mutedThreadIds ?? []).includes(
+    selectedThread.id,
+  )
+
+  const privacyReport = useMemo(
+    () =>
+      headerMessage
+        ? inspectMailPrivacy(headerMessage, headerMessage.bodyHtml)
+        : null,
+    [headerMessage],
+  )
+
+  const senderProfile = useMemo(() => {
+    const email = headerMessage?.from?.email?.trim()
+    if (!email) return null
+    return buildSenderProfile(
+      store,
+      email,
+      selectedAccount?.email,
+      selectedAccount?.id,
+    )
+  }, [store, headerMessage?.from?.email, selectedAccount?.email, selectedAccount?.id])
+
+  const inlineUnsubscribeTarget = useMemo(() => {
+    if (unsubscribedThreadIds.includes(selectedThread.id)) return null
+    for (const msg of [...selectedMessages].reverse()) {
+      if (msg.isDraft) continue
+      const parsed = parseListUnsubscribe(
+        msg.listUnsubscribe,
+        msg.listUnsubscribePost,
+      )
+      if (parsed.oneClick || parsed.https || parsed.mailto) return parsed
+      const bodyLink = unsubscribeLinkFromBody(msg.body, msg.bodyHtml)
+      if (bodyLink) return { https: bodyLink }
+    }
+    return null
+  }, [selectedMessages, selectedThread.id, unsubscribedThreadIds])
+
+  const handleInlineUnsubscribe = async (): Promise<void> => {
+    if (!inlineUnsubscribeTarget || unsubscribeBusy) return
+    setUnsubscribeBusy(true)
+    try {
+      if (inlineUnsubscribeTarget.oneClick && inlineUnsubscribeTarget.https) {
+        const result = await executeOneClickUnsubscribe(inlineUnsubscribeTarget)
+        if (result.ok) {
+          setUnsubscribedThreadIds(current => [...current, selectedThread.id])
+          setCommandNotice('Unsubscribed via RFC 8058 one-click request.')
+          return
+        }
+      }
+      if (inlineUnsubscribeTarget.https) {
+        await openExternalUrl(inlineUnsubscribeTarget.https)
+        setUnsubscribedThreadIds(current => [...current, selectedThread.id])
+        setCommandNotice('Opened sender unsubscribe link.')
+      } else if (inlineUnsubscribeTarget.mailto && onOpenMailto) {
+        const href = inlineUnsubscribeTarget.mailto.startsWith('mailto:')
+          ? inlineUnsubscribeTarget.mailto
+          : `mailto:${inlineUnsubscribeTarget.mailto}`
+        onOpenMailto(href)
+        setUnsubscribedThreadIds(current => [...current, selectedThread.id])
+        setCommandNotice('Opened unsubscribe email draft.')
+      }
+    } finally {
+      setUnsubscribeBusy(false)
+    }
+  }
+
+  const activeFollowUpReminder = useMemo(
+    () =>
+      (store.followUpReminders ?? []).find(
+        item => item.threadId === selectedThread.id && !item.dismissedAt,
+      ) ?? null,
+    [store.followUpReminders, selectedThread.id],
+  )
+  const isFollowUpDue = useMemo(
+    () =>
+      dueFollowUpReminders(store).some(
+        item => item.threadId === selectedThread.id,
+      ),
+    [store, selectedThread.id],
+  )
+
+  // Earlier non-draft messages in this thread for stacked collapsible conversation cards.
+  const earlierStackedMessages = useMemo(() => {
+    const nonDraft = selectedMessages
+      .filter(msg => !msg.isDraft)
+      .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+    if (nonDraft.length <= 1 || !activeMessageTab) return []
+    return nonDraft.filter(msg => msg.id !== activeMessageTab.id)
+  }, [selectedMessages, activeMessageTab])
+
+  const allEarlierExpanded =
+    earlierStackedMessages.length > 0 &&
+    earlierStackedMessages.every(msg => expandedStackIds.includes(msg.id))
+
+  const toggleAllEarlierExpanded = (): void => {
+    if (allEarlierExpanded) {
+      setExpandedStackIds([])
+    } else {
+      setExpandedStackIds(earlierStackedMessages.map(msg => msg.id))
+    }
+  }
+
+  const exportTextFile = async (
+    filename: string,
+    content: string,
+    mimeType: string,
+    label: string,
+  ): Promise<void> => {
+    try {
+      if (!isStandaloneDevMode()) {
+        const savedPath = await dialogSaveFile({ defaultName: filename })
+        if (!savedPath) return
+        const bytes = new TextEncoder().encode(content)
+        let binary = ''
+        for (const byte of bytes) binary += String.fromCharCode(byte)
+        await fsWriteBinary(savedPath, btoa(binary))
+        setCommandNotice(`Exported ${label} to ${filename}.`)
+        return
+      }
+      if (typeof document !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        const blob = new Blob([content], { type: mimeType })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = filename
+        document.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+        setCommandNotice(`Exported ${label} (${filename}).`)
+      }
+    } catch (error) {
+      setCommandNotice(
+        error instanceof Error
+          ? `Could not export ${label}: ${error.message}`
+          : `Could not export ${label}.`,
+      )
+    }
+  }
+
+  const quickReplyRecipientsSummary = useMemo(() => {
+    const source = latestInboundMessage(
+      selectedMessages.filter(
+        message => message.threadId === selectedThread.id && !message.isDraft,
+      ),
+      selectedAccount?.email ?? '',
+    )
+    const recipients = source
+      ? replyToContacts(source, [
+          selectedAccount?.email ?? '',
+          ...(store.settings.ownerIdentities?.emails ?? []),
+        ])
+      : []
+    return (
+      recipients.map(contact => contact.name || contact.email).join(', ') ||
+      headerSenderName ||
+      'this thread'
+    )
+  }, [
+    selectedMessages,
+    selectedThread.id,
+    selectedAccount?.email,
+    store.settings.ownerIdentities?.emails,
+    headerSenderName,
+  ])
+
+  const handleQuickReplySend = async (
+    body: string,
+    event?: React.SyntheticEvent | Event,
+  ): Promise<QuickReplySendResult> => {
+    if (!body.trim() || quickReplyBusy) return false
+    if (!onQuickReplySend) {
+      replyWithBody(body)
+      return true
+    }
+    setQuickReplyBusy(true)
+    try {
+      return await onQuickReplySend(body, event)
+    } finally {
+      setQuickReplyBusy(false)
+    }
+  }
+
   /* Region 3, part 1. One 38px row of actions, sticky at the top of the
      reader's scroll flow from the moment it loads. Its flexible middle
      crossfades: the reply cluster at load, the inline subject (plus label
@@ -1586,21 +1889,18 @@ export function ThreadReader({
       <ReaderToolbar role="toolbar" aria-label="Mail actions">
         {/* The way back to the index: the reader REPLACED the list, so the
             arrow (and Escape) is how the list returns. */}
-        <ReaderBackButton
-          type="button"
-          onClick={closeThread}
-          aria-label="Back to the thread list (Esc)"
-        >
-          <ArrowLeft aria-hidden="true" />
-        </ReaderBackButton>
+        {!isSplitPane && (
+          <ReaderBackButton
+            type="button"
+            onClick={closeThread}
+            aria-label="Back to the thread list (Esc)"
+          >
+            <ArrowLeft aria-hidden="true" />
+          </ReaderBackButton>
+        )}
         <ReaderToolbarSwap>
           <ReaderToolbarSwapLayer $shown={!subjectInToolbar}>
-            <ToolbarDivider aria-hidden="true" />
-            {/* Says what pressing it does. A thread can hold an unsent
-                draft — yours, an agent's, or one written in the account
-                elsewhere — and labelling that "Reply" gave the user no way
-                to know a draft was waiting, nor that this is how to get
-                back into it. */}
+            {!isSplitPane && <ToolbarDivider aria-hidden="true" />}
             <ReaderToolbarPrimary type="button" onClick={focusReply}>
               {replyPrimaryLabel}
             </ReaderToolbarPrimary>
@@ -1610,24 +1910,24 @@ export function ThreadReader({
               onClick={focusReplyAll}
               title={
                 replyAllAudience
-                  ? `Reply all (${replyAllAudience.toCount} To${
+                  ? `Reply All (${replyAllAudience.toCount} To${
                       replyAllAudience.ccCount
                         ? `, ${replyAllAudience.ccCount} Cc`
                         : ''
                     })`
-                  : 'Reply all'
+                  : 'Reply All'
               }
             >
               <ReplyAll aria-hidden="true" />
               <ReaderToolbarLabel>
                 {replyAllAudience && replyAllAudience.total > 1
-                  ? `all (${replyAllAudience.total})`
-                  : 'all'}
+                  ? `Reply All (${replyAllAudience.total})`
+                  : 'Reply All'}
               </ReaderToolbarLabel>
             </ReaderToolbarButton>
             <ReaderToolbarButton type="button" data-goes-next onClick={forwardSelectedThread}>
               <Forward aria-hidden="true" />
-              <ReaderToolbarLabel>fwd</ReaderToolbarLabel>
+              <ReaderToolbarLabel>Forward</ReaderToolbarLabel>
             </ReaderToolbarButton>
             <ReaderToolbarButton
               type="button"
@@ -1635,7 +1935,7 @@ export function ThreadReader({
               onClick={() => setAgentPanelOpen(open => !open)}
             >
               <Sparkles aria-hidden="true" />
-              <ReaderToolbarLabel>ask</ReaderToolbarLabel>
+              <ReaderToolbarLabel>Ask</ReaderToolbarLabel>
             </ReaderToolbarButton>
             {onReadMessage ? (
               <ReaderToolbarButton
@@ -1645,14 +1945,11 @@ export function ThreadReader({
                 title="Read this message like an article, and note it for your reply or for yourself"
               >
                 <BookOpen aria-hidden="true" />
-                <ReaderToolbarLabel>{readNoteCount ? `read · ${readNoteCount}` : 'read'}</ReaderToolbarLabel>
+                <ReaderToolbarLabel>{readNoteCount ? `Read · ${readNoteCount}` : 'Read'}</ReaderToolbarLabel>
               </ReaderToolbarButton>
             ) : null}
           </ReaderToolbarSwapLayer>
           <ReaderToolbarSwapLayer $shown={subjectInToolbar}>
-            {/* The subject's standalone row is off screen — this is now its
-                only statement, stated once. Reply here takes the same
-                reply-open path R takes; Forward is the existing action. */}
             <ReaderCondensedSubject title={selectedThread.subject}>
               {selectedThread.subject}
             </ReaderCondensedSubject>
@@ -1677,16 +1974,134 @@ export function ThreadReader({
             ) : null}
           </ReaderToolbarSwapLayer>
         </ReaderToolbarSwap>
+        <BulkMenuWrap>
+          <ReaderToolbarButton
+            type="button"
+            data-popover-trigger=""
+            aria-label="Snooze thread"
+            aria-expanded={snoozePopoverOpen}
+            onClick={() => {
+              setFollowUpPopoverOpen(false)
+              setSnoozePopoverOpen(open => !open)
+            }}
+          >
+            <Clock aria-hidden="true" />
+            <ReaderToolbarLabel>Snooze</ReaderToolbarLabel>
+          </ReaderToolbarButton>
+          {snoozePopoverOpen && (
+            <TimePickerPopover
+              mode="snooze"
+              align="right"
+              onSelect={(iso, label) => {
+                setSnoozePopoverOpen(false)
+                if (onSnoozeThread) {
+                  onSnoozeThread(selectedThread.id, iso)
+                } else {
+                  setCommandNotice(`Snoozed until ${label}.`)
+                }
+              }}
+              onClose={() => setSnoozePopoverOpen(false)}
+            />
+          )}
+        </BulkMenuWrap>
+        <ReaderToolbarButton
+          type="button"
+          data-goes-next
+          aria-pressed={selectedThreadStarred}
+          aria-label={selectedThreadStarred ? 'Unstar thread' : 'Star thread'}
+          onClick={() => toggleThreadStarred(selectedThread.id)}
+        >
+          <Star
+            aria-hidden="true"
+            fill={selectedThreadStarred ? 'currentColor' : 'none'}
+          />
+          <ReaderToolbarLabel>Star</ReaderToolbarLabel>
+        </ReaderToolbarButton>
+        <ReaderToolbarButton
+          type="button"
+          data-goes-first
+          aria-pressed={selectedThreadPinned}
+          aria-label={selectedThreadPinned ? 'Unpin thread' : 'Pin thread'}
+          onClick={() => {
+            if (onTogglePin) {
+              onTogglePin(selectedThread.id)
+            } else {
+              setStore(current => togglePinThread(current, selectedThread.id))
+              setCommandNotice(
+                selectedThreadPinned ? 'Thread unpinned.' : 'Thread pinned to top.',
+              )
+            }
+          }}
+        >
+          <Pin aria-hidden="true" />
+          <ReaderToolbarLabel>Pin</ReaderToolbarLabel>
+        </ReaderToolbarButton>
+        <ReaderToolbarButton
+          type="button"
+          data-goes-first
+          aria-pressed={selectedThreadMuted}
+          aria-label={selectedThreadMuted ? 'Unmute thread' : 'Mute thread'}
+          onClick={() => {
+            if (onToggleMute) {
+              onToggleMute(selectedThread.id)
+            } else {
+              setStore(current => toggleMuteThread(current, selectedThread.id))
+              setCommandNotice(
+                selectedThreadMuted
+                  ? 'Thread unmuted.'
+                  : 'Thread muted — future replies stay archived.',
+              )
+            }
+          }}
+        >
+          <BellOff aria-hidden="true" />
+          <ReaderToolbarLabel>Mute</ReaderToolbarLabel>
+        </ReaderToolbarButton>
+        <BulkMenuWrap data-goes-next>
+          <ReaderToolbarButton
+            type="button"
+            data-popover-trigger=""
+            aria-label="Follow Up reminder"
+            aria-expanded={followUpPopoverOpen}
+            onClick={() => {
+              setSnoozePopoverOpen(false)
+              setFollowUpPopoverOpen(open => !open)
+            }}
+          >
+            <Bell aria-hidden="true" />
+            <ReaderToolbarLabel>Follow Up</ReaderToolbarLabel>
+          </ReaderToolbarButton>
+          {followUpPopoverOpen && (
+            <TimePickerPopover
+              mode="followup"
+              align="right"
+              title="Remind if no reply"
+              onSelect={(iso, label) => {
+                setFollowUpPopoverOpen(false)
+                setStore(current =>
+                  scheduleFollowUpReminder(current, {
+                    threadId: selectedThread.id,
+                    accountId: selectedThread.accountId,
+                    remindAt: iso,
+                    cancelOnReply: true,
+                  }),
+                )
+                setCommandNotice(`Follow-up reminder set for ${label}.`)
+              }}
+              onClose={() => setFollowUpPopoverOpen(false)}
+            />
+          )}
+        </BulkMenuWrap>
         {selectedThread.status === 'archived' ||
         selectedMailbox?.role === 'archive' ? (
           <ReaderToolbarButton type="button" onClick={unarchiveSelectedThread}>
             <ArchiveRestore aria-hidden="true" />
-            <ReaderToolbarLabel>unarchive</ReaderToolbarLabel>
+            <ReaderToolbarLabel>Unarchive</ReaderToolbarLabel>
           </ReaderToolbarButton>
         ) : (
           <ReaderToolbarButton type="button" onClick={archiveSelectedThread}>
             <Archive aria-hidden="true" />
-            <ReaderToolbarLabel>archive</ReaderToolbarLabel>
+            <ReaderToolbarLabel>Archive</ReaderToolbarLabel>
           </ReaderToolbarButton>
         )}
         <ReaderToolbarButton
@@ -1695,7 +2110,7 @@ export function ThreadReader({
           onClick={deleteSelectedThread}
         >
           <Trash2 aria-hidden="true" />
-          <ReaderToolbarLabel>trash</ReaderToolbarLabel>
+          <ReaderToolbarLabel>Trash</ReaderToolbarLabel>
         </ReaderToolbarButton>
         <ReaderToolbarButton
           type="button"
@@ -1703,7 +2118,17 @@ export function ThreadReader({
           onClick={markSelectedUnread}
         >
           <MailOpen aria-hidden="true" />
-          <ReaderToolbarLabel>unread</ReaderToolbarLabel>
+          <ReaderToolbarLabel>Unread</ReaderToolbarLabel>
+        </ReaderToolbarButton>
+        <ReaderToolbarButton
+          type="button"
+          data-goes-first
+          aria-pressed={senderDrawerOpen}
+          aria-label="Toggle sender details drawer"
+          onClick={() => setSenderDrawerOpen(open => !open)}
+        >
+          <UserRound aria-hidden="true" />
+          <ReaderToolbarLabel>Sender</ReaderToolbarLabel>
         </ReaderToolbarButton>
         {/* Filing is a triage verb, not a rarity: it stays on the top line
             rather than folding into More. */}
@@ -1715,7 +2140,7 @@ export function ThreadReader({
             onClick={() => setFileMenuOpen(open => !open)}
           >
             <FolderInput aria-hidden="true" />
-            <ReaderToolbarLabel>file</ReaderToolbarLabel>
+            <ReaderToolbarLabel>File</ReaderToolbarLabel>
           </ReaderToolbarButton>
           {fileMenuOpen && (
             <ThreadActionsMenu role="menu" aria-label="File into a box">
@@ -1760,10 +2185,6 @@ export function ThreadReader({
             </ThreadActionsMenu>
           )}
         </BulkMenuWrap>
-        <ReaderToolbarButton type="button" onClick={addFollowUp}>
-          <Clock aria-hidden="true" />
-          <ReaderToolbarLabel>follow up</ReaderToolbarLabel>
-        </ReaderToolbarButton>
         {/*
           A small anchored menu, not a full-height sheet with a backdrop.
           Dimming the whole app to offer "Mark unread" was never
@@ -1802,6 +2223,15 @@ export function ThreadReader({
               <BulkMenuItem
                 role="menuitem"
                 onClick={() => {
+                  addFollowUp()
+                  setThreadMenuOpen(false)
+                }}
+              >
+                Create follow-up task
+              </BulkMenuItem>
+              <BulkMenuItem
+                role="menuitem"
+                onClick={() => {
                   void (selectedInvite
                     ? openCalendarInvite()
                     : addSelectedThreadToCalendar())
@@ -1813,6 +2243,7 @@ export function ThreadReader({
               <BulkMenuItem
                 role="menuitem"
                 onClick={() => {
+                  setFilterSeedOverride(null)
                   setFilterDialogOpen(true)
                   setThreadMenuOpen(false)
                 }}
@@ -1874,6 +2305,48 @@ export function ThreadReader({
                   Restore to Inbox
                 </BulkMenuItem>
               )}
+              {headerMessage && (
+                <BulkMenuItem
+                  role="menuitem"
+                  onClick={() => {
+                    setThreadMenuOpen(false)
+                    const eml = buildEmlFromMessage(headerMessage)
+                    const filename = safeExportFilename(
+                      selectedThread.subject || 'message',
+                      'eml',
+                    )
+                    void exportTextFile(filename, eml, 'message/rfc822', '.eml')
+                  }}
+                >
+                  Export as .eml…
+                </BulkMenuItem>
+              )}
+              <BulkMenuItem
+                role="menuitem"
+                onClick={() => {
+                  setThreadMenuOpen(false)
+                  const md = buildMarkdownFromThread(
+                    selectedThread,
+                    selectedMessages,
+                  )
+                  const filename = safeExportFilename(
+                    selectedThread.subject || 'thread',
+                    'md',
+                  )
+                  void exportTextFile(filename, md, 'text/markdown', 'Markdown')
+                }}
+              >
+                Export as Markdown (.md)…
+              </BulkMenuItem>
+              <BulkMenuItem
+                role="menuitem"
+                onClick={() => {
+                  setThreadMenuOpen(false)
+                  setPrivacyModalOpen(true)
+                }}
+              >
+                Inspect headers &amp; security…
+              </BulkMenuItem>
               <BulkMenuItem
                 role="menuitem"
                 onClick={() => {
@@ -1986,6 +2459,17 @@ export function ThreadReader({
         </>
       ) : (
         <>
+      <div
+        style={{
+          position: 'relative',
+          display: 'flex',
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
+      <div style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, flexDirection: 'column', overflow: 'hidden' }}>
       {/* The reader's one scroll container. The search band, the sticky
           toolbar, the header band and the slim sender line all live INSIDE
           it: disappearing chrome scrolls off like content, the toolbar
@@ -2004,6 +2488,47 @@ export function ThreadReader({
               {formatDate(headerMessage?.receivedAt ?? selectedThread.lastMessageAt)}
             </span>
             {readerViaSource && <span>· via {readerViaSource}</span>}
+            {privacyReport && (
+              <span data-security-shield="">
+                <SecurityShieldPill
+                  trackers={privacyReport.trackers}
+                  linkWarnings={privacyReport.linkWarnings}
+                  senderMismatch={privacyReport.senderMismatch}
+                  auth={privacyReport.auth}
+                  modelSecurity={
+                    decisionInsight?.messageId === headerMessage?.id
+                      ? decisionInsight?.security
+                      : null
+                  }
+                  onClick={() => setPrivacyModalOpen(true)}
+                />
+              </span>
+            )}
+            {decisionInsight?.threadId === selectedThread.id &&
+              decisionInsight.messageId === headerMessage?.id &&
+              decisionInsight.followUp?.expectsReply &&
+              decisionInsight.followUp.suggestedWindow !== 'none' &&
+              !(store.followUpReminders ?? []).some(
+                r => r.threadId === selectedThread.id && !r.dismissedAt,
+              ) &&
+              onSetFollowUpReminder && (
+                <ReaderTaskChip
+                  type="button"
+                  data-testid="decision-followup-chip"
+                  title="Suggested by decision model — set a follow-up reminder if no reply arrives"
+                  onClick={() => {
+                    const freshIso = computeFollowUpIso(
+                      decisionInsight.followUp!.suggestedWindow,
+                      Date.now(),
+                    )
+                    if (freshIso) {
+                      onSetFollowUpReminder(selectedThread.id, freshIso)
+                    }
+                  }}
+                >
+                  Remind in {decisionInsight.followUp.suggestedWindow}
+                </ReaderTaskChip>
+              )}
             {selectedThread.priority === 'high' && (
               <MailStateChip
                 $tone="priority"
@@ -2041,16 +2566,48 @@ export function ThreadReader({
                 onToggle={() => setHistoryOpen(open => !open)}
               />
             )}
+            {earlierStackedMessages.length > 0 && (
+              <ReaderDetailsButton
+                type="button"
+                data-expand-all-messages=""
+                style={{ marginLeft: 0 }}
+                onClick={toggleAllEarlierExpanded}
+              >
+                {allEarlierExpanded ? 'Collapse all' : 'Expand all'}
+              </ReaderDetailsButton>
+            )}
           </ReaderStateLine>
           <Title>{selectedThread.subject}</Title>
           <ReaderSenderRow>
             <ReaderSenderAvatar
-              aria-hidden="true"
-              style={{ background: headerAvatar.bg, color: headerAvatar.fg }}
+              as="button"
+              type="button"
+              aria-label={`Inspect sender ${headerSenderName}`}
+              title="Open sender intelligence drawer"
+              onClick={() => setSenderDrawerOpen(open => !open)}
+              style={{
+                background: headerAvatar.bg,
+                color: headerAvatar.fg,
+                border: 0,
+                cursor: 'pointer',
+              }}
             >
               {headerAvatar.initial}
             </ReaderSenderAvatar>
-            <ReaderSenderName>{headerSenderName}</ReaderSenderName>
+            <ReaderSenderName
+              as="button"
+              type="button"
+              onClick={() => setSenderDrawerOpen(open => !open)}
+              style={{
+                border: 0,
+                padding: 0,
+                background: 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              {headerSenderName}
+            </ReaderSenderName>
             {headerRecipients && (
               <ReaderSenderTo title={headerRecipients}>
                 to {headerRecipients}
@@ -2153,6 +2710,82 @@ export function ThreadReader({
         </MessageStickyAnchor>
       )}
       <ReaderScrollBody>
+        {inlineUnsubscribeTarget && (
+          <ReaderActionBanner
+            data-reader-action-banner=""
+            role="region"
+            aria-label="Mailing list unsubscribe"
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <MailMinus size={14} aria-hidden="true" />
+              <span>
+                This message is from a mailing list.
+                {inlineUnsubscribeTarget.oneClick
+                  ? ' One-click unsubscribe supported.'
+                  : ''}
+              </span>
+            </span>
+            <Button
+              size="sm"
+              variant="subtle"
+              disabled={unsubscribeBusy}
+              onClick={() => void handleInlineUnsubscribe()}
+            >
+              {unsubscribeBusy ? 'Unsubscribing…' : 'Unsubscribe'}
+            </Button>
+          </ReaderActionBanner>
+        )}
+        {activeFollowUpReminder && (
+          <ReaderActionBanner
+            data-reader-action-banner=""
+            $tone={isFollowUpDue ? 'warn' : 'info'}
+            role="status"
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <Bell size={14} aria-hidden="true" />
+              <span>
+                {isFollowUpDue
+                  ? `Follow-up reminder due (${formatDate(activeFollowUpReminder.remindAt)}) — no reply received yet.`
+                  : `Follow-up reminder scheduled for ${formatDate(activeFollowUpReminder.remindAt)}.`}
+              </span>
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' }}>
+              {isFollowUpDue && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => {
+                    const lastSent = [...selectedMessages]
+                      .reverse()
+                      .find(
+                        msg =>
+                          !msg.isDraft &&
+                          msg.from.email.trim().toLowerCase() ===
+                            (selectedAccount?.email ?? '').trim().toLowerCase(),
+                      )
+                    replyWithBody(
+                      buildFollowUpNudgeText(selectedThread, lastSent),
+                    )
+                  }}
+                >
+                  Draft follow-up nudge
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="subtle"
+                onClick={() => {
+                  setStore(current =>
+                    dismissFollowUpReminder(current, selectedThread.id),
+                  )
+                  setCommandNotice('Follow-up reminder dismissed.')
+                }}
+              >
+                Dismiss
+              </Button>
+            </span>
+          </ReaderActionBanner>
+        )}
         {(selectedThread.syncState === 'failed' ||
           selectedThread.syncState === 'conflict') && (
           <FiledLine>
@@ -2426,6 +3059,89 @@ export function ThreadReader({
               )}
             </InviteCard>
           )}
+          {earlierStackedMessages.length > 0 &&
+            earlierStackedMessages.map(msg => {
+              const isOpen = expandedStackIds.includes(msg.id)
+              const av = senderAvatar(msg.from.name || msg.from.email)
+              const snippetText = (msg.body || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 120)
+              return (
+                <CollapsedMessageCard
+                  key={`stack-${msg.id}`}
+                  aria-label={`Earlier message from ${msg.from.name || msg.from.email}`}
+                >
+                  <CollapsedMessageBar
+                    type="button"
+                    aria-expanded={isOpen}
+                    onClick={() =>
+                      setExpandedStackIds(current =>
+                        current.includes(msg.id)
+                          ? current.filter(id => id !== msg.id)
+                          : [...current, msg.id],
+                      )
+                    }
+                  >
+                    {isOpen ? (
+                      <ChevronDown size={13} aria-hidden="true" />
+                    ) : (
+                      <ChevronRight size={13} aria-hidden="true" />
+                    )}
+                    <RowAvatar
+                      $size="sm"
+                      aria-hidden="true"
+                      style={{ background: av.bg, color: av.fg }}
+                    >
+                      {av.initial}
+                    </RowAvatar>
+                    <CollapsedMessageSender>
+                      {msg.from.name || msg.from.email}
+                    </CollapsedMessageSender>
+                    {!isOpen && (
+                      <CollapsedMessageSnippet>
+                        {snippetText || '(no preview)'}
+                      </CollapsedMessageSnippet>
+                    )}
+                    <CollapsedMessageMeta>
+                      {(msg.attachments?.length ?? 0) > 0 && (
+                        <span
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}
+                          title={`${msg.attachments.length} attachment${msg.attachments.length === 1 ? '' : 's'}`}
+                        >
+                          <Paperclip size={11} aria-hidden="true" />
+                          {msg.attachments.length}
+                        </span>
+                      )}
+                      <span>{formatThreadListTime(msg.receivedAt)}</span>
+                    </CollapsedMessageMeta>
+                  </CollapsedMessageBar>
+                  {isOpen && (
+                    <CollapsedMessageBody>
+                      {msg.bodyHtml ? (
+                        <SanitizedMessageBody
+                          bodyHtml={msg.bodyHtml}
+                          allowRemoteImages={
+                            remoteImageDecision({
+                              settings: store.settings,
+                              senderEmail: msg.from?.email ?? '',
+                              messageId: msg.id,
+                              onceLoadedIds: remoteImagesLoadedIds,
+                            }).load
+                          }
+                          stripTrackers
+                          onOpenMailto={onOpenMailto}
+                        />
+                      ) : (
+                        <MessageBody data-follows-theme="">
+                          {plainTextParagraphs(msg.body, `stack-${msg.id}`)}
+                        </MessageBody>
+                      )}
+                    </CollapsedMessageBody>
+                  )}
+                </CollapsedMessageCard>
+              )
+            })}
           {activeMessageTab ? (
             (() => {
               const message = activeMessageTab
@@ -2594,6 +3310,7 @@ export function ThreadReader({
                           <SanitizedMessageBody
                             bodyHtml={visibleHtml}
                             allowRemoteImages={decision.load}
+                            stripTrackers
                             onOpenMailto={onOpenMailto}
                           />
                           {collapsibleQuotedHtml &&
@@ -2614,22 +3331,22 @@ export function ThreadReader({
                                 <SanitizedMessageBody
                                   bodyHtml={collapsibleQuotedHtml}
                                   allowRemoteImages={decision.load}
+                                  stripTrackers
                                   onOpenMailto={onOpenMailto}
                                 />
                               </ExpandedQuoteBlock>
                             ) : (
-                              <CollapsedQuoteBoundary>
-                                <span>Quoted history hidden</span>
-                                <TextLinkButton
-                                  type="button"
-                                  aria-expanded={false}
-                                  onClick={() =>
-                                    setQuotedHistoryOpen(message.id, true)
-                                  }
-                                >
-                                  Open
-                                </TextLinkButton>
-                              </CollapsedQuoteBoundary>
+                              <QuoteTrimPill
+                                type="button"
+                                aria-expanded={false}
+                                aria-label="Show quoted history"
+                                title="Show quoted history"
+                                onClick={() =>
+                                  setQuotedHistoryOpen(message.id, true)
+                                }
+                              >
+                                ···
+                              </QuoteTrimPill>
                             ))}
                         </>
                       )
@@ -2668,20 +3385,18 @@ export function ThreadReader({
                                 ))}
                             </ExpandedQuoteBlock>
                           ) : (
-                            <CollapsedQuoteBoundary
+                            <QuoteTrimPill
                               key={`${message.id}-quote-${segmentIndex}`}
+                              type="button"
+                              aria-expanded={false}
+                              aria-label={`Show ${segment.label}`}
+                              title={`Show ${segment.label}`}
+                              onClick={() =>
+                                setQuotedHistoryOpen(message.id, true)
+                              }
                             >
-                              <span>{segment.label} hidden</span>
-                              <TextLinkButton
-                                type="button"
-                                aria-expanded={false}
-                                onClick={() =>
-                                  setQuotedHistoryOpen(message.id, true)
-                                }
-                              >
-                                Open
-                              </TextLinkButton>
-                            </CollapsedQuoteBoundary>
+                              ···
+                            </QuoteTrimPill>
                           )
                         }
                         return plainTextParagraphs(
@@ -2712,62 +3427,30 @@ export function ThreadReader({
               the strip previews the draft in progress (agent-drafted or
               saved) or offers a fresh reply, and clicking it opens the
               window seeded with that draft. ONE composer surface. */}
-          {(launcherDraft || activeMessageTab) && (
+          {launcherDraft && (
             <ReplyLaunchStrip
-              {...(launcherDraft ? draftAgentRefs(launcherDraft) : {})}
+              {...draftAgentRefs(launcherDraft)}
               type="button"
-              aria-label={
-                launcherDraft
-                  ? 'Open the draft reply in the compose window'
-                  : 'Reply in the compose window'
-              }
-              onClick={() =>
-                launcherDraft
-                  ? openDraftInComposeWindow(launcherDraft)
-                  : focusReply()
-              }
+              aria-label="Open the draft reply in the compose window"
+              onClick={() => openDraftInComposeWindow(launcherDraft)}
             >
               <ReplyIcon aria-hidden="true" />
-              {launcherDraft ? (
-                <>
-                  <ReplyLaunchKicker>
-                    {draftKindForDraft(launcherDraft) === 'manual'
-                      ? launcherDraft.id.startsWith('draft_forward')
-                        ? 'Draft forward'
-                        : 'Draft reply'
-                      : 'Drafted for you'}
-                  </ReplyLaunchKicker>
-                  <ReplyLaunchPreview>
-                    {draftLaunchPreview(launcherDraft.body) || 'Empty draft'}
-                    {launcherDraft.attachments.length > 0
-                      ? ` · ${launcherDraft.attachments.length} attachment${
-                          launcherDraft.attachments.length === 1 ? '' : 's'
-                        }`
-                      : ''}
-                  </ReplyLaunchPreview>
-                  <ReplyLaunchOpen>Open draft</ReplyLaunchOpen>
-                </>
-              ) : (
-                <>
-                  <ReplyLaunchPreview>
-                    Reply to{' '}
-                    {(() => {
-                      // Match the source and recipient rules used by Reply.
-                      const source = latestInboundMessage(
-                        selectedMessages.filter(message => message.threadId === selectedThread.id && !message.isDraft),
-                        selectedAccount?.email ?? '',
-                      )
-                      const recipients = source ? replyToContacts(source, [
-                        selectedAccount?.email ?? '',
-                        ...(store.settings.ownerIdentities?.emails ?? []),
-                      ]) : []
-                      return recipients.map(contact => contact.name || contact.email).join(', ') || 'this thread'
-                    })()}
-                    …
-                  </ReplyLaunchPreview>
-                  <ReplyLaunchOpen>Opens the compose window</ReplyLaunchOpen>
-                </>
-              )}
+              <ReplyLaunchKicker>
+                {draftKindForDraft(launcherDraft) === 'manual'
+                  ? launcherDraft.id.startsWith('draft_forward')
+                    ? 'Draft forward'
+                    : 'Draft reply'
+                  : 'Drafted for you'}
+              </ReplyLaunchKicker>
+              <ReplyLaunchPreview>
+                {draftLaunchPreview(launcherDraft.body) || 'Empty draft'}
+                {launcherDraft.attachments.length > 0
+                  ? ` · ${launcherDraft.attachments.length} attachment${
+                      launcherDraft.attachments.length === 1 ? '' : 's'
+                    }`
+                  : ''}
+              </ReplyLaunchPreview>
+              <ReplyLaunchOpen>Open draft</ReplyLaunchOpen>
             </ReplyLaunchStrip>
           )}
         </>
@@ -2872,6 +3555,28 @@ export function ThreadReader({
       )}
       </ReaderScrollBody>
       </ReaderScroll>
+      {readerMode === 'email' && activeMessageTab && !launcherDraft && (
+        <div style={composeMinimized ? { paddingBottom: 44 } : undefined}>
+          <QuickReplyBar
+            key={selectedThread.id}
+            threadId={selectedThread.id}
+            recipientSummary={quickReplyRecipientsSummary}
+            busy={quickReplyBusy}
+            suggestedSnippet={
+              decisionInsight?.threadId === selectedThread.id &&
+              decisionInsight.messageId === headerMessage?.id
+                ? decisionInsight.suggestedSnippet
+                : null
+            }
+            onSend={handleQuickReplySend}
+            onExpandToCompose={draftBody =>
+              draftBody.trim() ? replyWithBody(draftBody) : focusReply()
+            }
+            onReplyAll={focusReplyAll}
+            onForward={forwardSelectedThread}
+          />
+        </div>
+      )}
       {/* Band 3. The pane's bottom edge. A short message used to trail off
           into white with nothing closing the column. */}
       {readerAttachments.length > 0 && attachmentMessage && (
@@ -3095,6 +3800,65 @@ export function ThreadReader({
           </AttachmentBandInner>
         </ReaderAttachmentBand>
       )}
+      </div>
+      {senderDrawerOpen && (
+        <div
+          data-sender-drawer=""
+          style={
+            isSplitPane
+              ? {
+                  position: 'absolute',
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  zIndex: 25,
+                  display: 'flex',
+                  boxShadow: '-8px 0 24px rgb(0 0 0 / 0.18)',
+                }
+              : { display: 'flex', flex: 'none' }
+          }
+        >
+        <SenderDrawer
+          open={senderDrawerOpen}
+          profile={senderProfile}
+          onClose={() => setSenderDrawerOpen(false)}
+          onToggleVip={email => {
+            setStore(current => toggleVipSender(current, email))
+            setCommandNotice(`Updated VIP status for ${email}.`)
+          }}
+          onScreenDecision={(email, destination, name) => {
+            if (onScreenSender) {
+              onScreenSender(email, destination, name)
+            } else {
+              setStore(current =>
+                applyScreenerDecision(current, email, destination, name),
+              )
+              setCommandNotice(`Routed ${email} to ${destination.replace('_', ' ')}.`)
+            }
+          }}
+          onComposeTo={(email, name) => {
+            if (onComposeTo) {
+              onComposeTo(email, name)
+            } else if (onOpenMailto) {
+              onOpenMailto(`mailto:${email}`)
+            }
+          }}
+          onCreateFilter={email => {
+            setFilterSeedOverride(email)
+            setFilterDialogOpen(true)
+          }}
+          onOpenThread={threadId => {
+            onOpenThread?.(threadId)
+          }}
+          onPreviewAttachment={(_threadId, messageId, attachmentId) => {
+            const msg = store.messages.find(m => m.id === messageId)
+            const att = msg?.attachments.find(a => a.id === attachmentId)
+            if (msg && att) void previewAttachment(msg, att)
+          }}
+        />
+        </div>
+      )}
+      </div>
         </>
       )}
       {filterDialogOpen && (
@@ -3102,11 +3866,30 @@ export function ThreadReader({
           store={store}
           accountId={selectedThread.accountId}
           seed={{
-            senderEmail: filterSeedSender,
+            senderEmail: filterSeedOverride ?? filterSeedSender,
             subject: selectedThread.subject,
           }}
-          onClose={() => setFilterDialogOpen(false)}
+          onClose={() => {
+            setFilterDialogOpen(false)
+            setFilterSeedOverride(null)
+          }}
           onSubmit={handleCreateFilter}
+        />
+      )}
+      {privacyModalOpen && headerMessage && privacyReport && (
+        <PrivacyInspectorModal
+          open={privacyModalOpen}
+          onClose={() => setPrivacyModalOpen(false)}
+          message={headerMessage}
+          trackers={privacyReport.trackers}
+          linkWarnings={privacyReport.linkWarnings}
+          senderMismatch={privacyReport.senderMismatch}
+          auth={privacyReport.auth}
+          modelSecurity={
+            decisionInsight?.messageId === headerMessage.id
+              ? decisionInsight.security
+              : null
+          }
         />
       )}
       {historyOpen && paneMode === 'message' && (

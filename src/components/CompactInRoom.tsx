@@ -184,7 +184,12 @@ export const CompactInRoomStyle = createGlobalStyle`
   [data-compact-in-room] ${ReaderToolbarSwapLayer} > ${MailStateChip},
   [data-compact-in-room] ${ReaderTaskChip},
   [data-compact-in-room] ${AskPanel},
-  [data-compact-in-room] ${ReaderStateLine} > div:has([aria-label='Triage verdict']) {
+  [data-compact-in-room] ${ReaderStateLine} > div:has([aria-label='Triage verdict']),
+  [data-compact-in-room] [data-quick-reply-bar],
+  [data-compact-in-room] [data-security-shield],
+  [data-compact-in-room] [data-sender-drawer],
+  [data-compact-in-room] [data-reader-action-banner],
+  [data-compact-in-room] [data-expand-all-messages] {
     display: none !important;
   }
   /* The arrow says its word. The button's tooltip is that same ::after, made plain here. */
@@ -292,23 +297,23 @@ const Pager = styled.nav`
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
-  border-top: 1px solid #e3e5e9;
-  background: #ffffff;
+  border-top: 1px solid var(--n-line);
+  background: var(--n-sheet);
   font-size: 12px;
-  color: #4f5661;
+  color: var(--n-soft);
   span { margin-right: auto; }
 `
 const PagerButton = styled.button`
   height: 26px;
   padding: 0 10px;
-  border: 1px solid #cdd1d7;
+  border: 1px solid var(--n-line);
   border-radius: 3px;
-  background: #ffffff;
-  color: #1f2328;
+  background: var(--n-sheet);
+  color: var(--n-ink);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-  &:hover:not(:disabled) { background: #f3f4f6; }
+  &:hover:not(:disabled) { background: var(--n-hover); }
   &:disabled { opacity: .4; cursor: default; }
 `
 

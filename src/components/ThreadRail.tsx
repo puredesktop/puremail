@@ -1,13 +1,18 @@
 import type { TeamReadStatuses } from '../lib/teamMailReview'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Archive,
+  BellOff,
   Check,
+  ChevronDown,
   Clock,
   FolderInput,
   Mail,
   MailOpen,
   MoreHorizontal,
+  Paperclip,
+  Pin,
   RefreshCw,
   Star,
   Tag,
@@ -39,14 +44,24 @@ import {
   MailStateChip,
   PriorityDot,
   RowActionButton,
+  RowAttachmentChip,
+  RowAvatar,
+  RowBottomLine,
   RowChip,
   RowHoverActions,
+  RowInlineBody,
   RowLabels,
   RowMark,
+  RowPinIcon,
   RowSender,
   RowStar,
   RowSubject,
+  RowThreadCount,
   RowTime,
+  RowTopLine,
+  RowTwoLineBody,
+  RowUnreadDot,
+  RowVipBadge,
   SelectField,
   SettingToggle,
   SquareCheck,
@@ -60,6 +75,7 @@ import {
   conversationKeyForThread,
   displayThreadLabels,
   formatThreadListTime,
+  senderAvatar,
   threadStatusExplanation,
   threadStatusLabel,
   threadStatusTone,
@@ -72,6 +88,12 @@ import {
   visibleRowRange,
   type MailDensity,
 } from './mailShellLayout'
+import {
+  ThreadListEmptyState,
+  ThreadListSkeleton,
+  type ThreadListEmptyVariant,
+} from './ThreadListStates'
+import { TimePickerPopover } from './TimePickerPopover'
 
 /**
  * The rail's offset inside its scroller.
@@ -90,27 +112,12 @@ function railOffsetWithin(rail: HTMLElement, scroller: HTMLElement): number {
   )
 }
 
-/** Snooze presets shared by the bulk toolbar and the row hover action. */
-function snoozePresets(now = new Date()): Array<{ label: string; at: string }> {
-  const laterToday = new Date(now.getTime() + 4 * 60 * 60 * 1000)
-  const tomorrow = new Date(now)
-  tomorrow.setDate(tomorrow.getDate() + 1)
-  tomorrow.setHours(9, 0, 0, 0)
-  const nextWeek = new Date(now)
-  nextWeek.setDate(nextWeek.getDate() + ((8 - nextWeek.getDay()) % 7 || 7))
-  nextWeek.setHours(9, 0, 0, 0)
-  return [
-    { label: 'Later today', at: laterToday.toISOString() },
-    { label: 'Tomorrow morning', at: tomorrow.toISOString() },
-    { label: 'Next week', at: nextWeek.toISOString() },
-  ]
-}
-
 export interface ThreadListToolbarProps {
   store: MailStore
   filteredThreads: MailThread[]
   checkedThreadIds: string[]
   selectAllThreads: () => void
+  selectThreadsByIds?: (threadIds: string[]) => void
   clearThreadSelection: () => void
   runTriageAction: (threadIds: string[], action: BulkTriageAction) => void
   canSnoozeThreads: boolean
@@ -147,6 +154,7 @@ export function ThreadListToolbar({
   filteredThreads,
   checkedThreadIds,
   selectAllThreads,
+  selectThreadsByIds,
   clearThreadSelection,
   runTriageAction,
   canSnoozeThreads,
@@ -163,12 +171,41 @@ export function ThreadListToolbar({
   setStore,
 }: ThreadListToolbarProps): React.ReactElement {
   const [newLabelName, setNewLabelName] = useState('')
-  const [customSnoozeAt, setCustomSnoozeAt] = useState('')
   const [openMenu, setOpenMenu] = useState<
-    'label' | 'move' | 'snooze' | 'more' | null
+    'select' | 'label' | 'move' | 'snooze' | 'more' | null
   >(null)
   const barRef = useRef<HTMLDivElement>(null)
   useOutsideClose(barRef, openMenu !== null, () => setOpenMenu(null))
+
+  const unreadThreadIds = useMemo(() => {
+    const unread = new Set<string>()
+    for (const message of store.messages) {
+      if (!message.read) unread.add(message.threadId)
+    }
+    return unread
+  }, [store.messages])
+
+  const selectSubset = (kind: 'all' | 'none' | 'unread' | 'read' | 'starred' | 'unstarred'): void => {
+    setOpenMenu(null)
+    if (kind === 'none') {
+      clearThreadSelection()
+      return
+    }
+    if (kind === 'all') {
+      selectAllThreads()
+      return
+    }
+    if (!selectThreadsByIds) return
+    const ids = filteredThreads
+      .filter(thread => {
+        if (kind === 'unread') return unreadThreadIds.has(thread.id)
+        if (kind === 'read') return !unreadThreadIds.has(thread.id)
+        if (kind === 'starred') return threadIsStarred(store, thread.id)
+        return !threadIsStarred(store, thread.id)
+      })
+      .map(thread => thread.id)
+    selectThreadsByIds(ids)
+  }
 
   const selectionCount = checkedThreadIds.length
   const checkedSet = useMemo(
@@ -226,18 +263,59 @@ export function ThreadListToolbar({
         selectionCount > 0 ? 'Selected thread actions' : 'Thread list'
       }
     >
-      <SquareCheck
-        type="button"
-        role="checkbox"
-        aria-checked={allChecked ? true : selectionCount > 0 ? 'mixed' : false}
-        aria-label={selectionCount > 0 ? 'Clear selection' : 'Select all threads'}
-        $checked={selectionCount > 0}
-        onClick={() =>
-          selectionCount > 0 ? clearThreadSelection() : selectAllThreads()
-        }
-      >
-        {selectionCount > 0 && <Check aria-hidden="true" />}
-      </SquareCheck>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+        <SquareCheck
+          type="button"
+          role="checkbox"
+          aria-checked={allChecked ? true : selectionCount > 0 ? 'mixed' : false}
+          aria-label={selectionCount > 0 ? 'Clear selection' : 'Select all threads'}
+          $checked={selectionCount > 0}
+          onClick={() =>
+            selectionCount > 0 ? clearThreadSelection() : selectAllThreads()
+          }
+        >
+          {selectionCount > 0 && <Check aria-hidden="true" />}
+        </SquareCheck>
+        {selectThreadsByIds && (
+          <BulkMenuWrap>
+            <ListIconButton
+              type="button"
+              aria-label="Select threads menu"
+              aria-expanded={openMenu === 'select'}
+              aria-haspopup="menu"
+              style={{ width: 18, padding: 0 }}
+              onClick={() =>
+                setOpenMenu(current => (current === 'select' ? null : 'select'))
+              }
+            >
+              <ChevronDown size={12} aria-hidden="true" />
+            </ListIconButton>
+            {openMenu === 'select' && (
+              <BulkMenu role="menu" aria-label="Select threads">
+                {(
+                  [
+                    ['all', 'All'],
+                    ['none', 'None'],
+                    ['unread', 'Unread'],
+                    ['read', 'Read'],
+                    ['starred', 'Starred'],
+                    ['unstarred', 'Unstarred'],
+                  ] as const
+                ).map(([kind, label]) => (
+                  <BulkMenuItem
+                    key={kind}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => selectSubset(kind)}
+                  >
+                    {label}
+                  </BulkMenuItem>
+                ))}
+              </BulkMenu>
+            )}
+          </BulkMenuWrap>
+        )}
+      </div>
       {selectionCount > 0 ? (
         <>
           <ListHeaderSelectedCount aria-live="polite">
@@ -270,6 +348,20 @@ export function ThreadListToolbar({
             onClick={() => act({ type: 'read', read: false })}
           >
             <Mail aria-hidden="true" />
+          </ListIconButton>
+          <ListIconButton
+            type="button"
+            aria-label="Star selected"
+            onClick={() => act({ type: 'star', starred: true })}
+          >
+            <Star aria-hidden="true" />
+          </ListIconButton>
+          <ListIconButton
+            type="button"
+            aria-label="Mute selected"
+            onClick={() => act({ type: 'mute', muted: true })}
+          >
+            <BellOff aria-hidden="true" />
           </ListIconButton>
           <BulkMenuWrap>
             <ListIconButton
@@ -372,6 +464,7 @@ export function ThreadListToolbar({
             <BulkMenuWrap>
               <ListIconButton
                 type="button"
+                data-popover-trigger=""
                 aria-label="Snooze selected"
                 aria-expanded={openMenu === 'snooze'}
                 aria-haspopup="menu"
@@ -384,76 +477,11 @@ export function ThreadListToolbar({
                 <Clock aria-hidden="true" />
               </ListIconButton>
               {openMenu === 'snooze' && (
-                <BulkMenu role="menu" aria-label="Hide until">
-                  <BulkMenuItem
-                    as="div"
-                    role="none"
-                    style={{ cursor: 'default' }}
-                  >
-                    Hides these threads until they return. To chase a reply
-                    instead, use Follow-up.
-                  </BulkMenuItem>
-                  {snoozePresets().map(preset => (
-                    <BulkMenuItem
-                      key={preset.label}
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        act({ type: 'snooze', snoozedUntil: preset.at })
-                      }
-                    >
-                      <Clock aria-hidden="true" />
-                      {preset.label}
-                    </BulkMenuItem>
-                  ))}
-                  <BulkMenuItem
-                    as="div"
-                    role="none"
-                    style={{
-                      cursor: 'default',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                  >
-                    <input
-                      type="datetime-local"
-                      value={customSnoozeAt}
-                      aria-label="Custom snooze time"
-                      style={{
-                        border: 0,
-                        outline: 'none',
-                        background: 'transparent',
-                        color: 'inherit',
-                        font: 'inherit',
-                        fontSize: 12,
-                      }}
-                      onClick={event => event.stopPropagation()}
-                      onChange={event =>
-                        setCustomSnoozeAt(event.currentTarget.value)
-                      }
-                    />
-                    <Button
-                      size="sm"
-                      disabled={
-                        !customSnoozeAt ||
-                        !Number.isFinite(Date.parse(customSnoozeAt)) ||
-                        Date.parse(customSnoozeAt) <= Date.now()
-                      }
-                      onClick={() => {
-                        const ms = Date.parse(customSnoozeAt)
-                        if (!Number.isFinite(ms) || ms <= Date.now()) return
-                        act({
-                          type: 'snooze',
-                          snoozedUntil: new Date(ms).toISOString(),
-                        })
-                        setCustomSnoozeAt('')
-                      }}
-                    >
-                      Hide
-                    </Button>
-                  </BulkMenuItem>
-                </BulkMenu>
+                <TimePickerPopover
+                  mode="snooze"
+                  onSelect={iso => act({ type: 'snooze', snoozedUntil: iso })}
+                  onClose={() => setOpenMenu(null)}
+                />
               )}
             </BulkMenuWrap>
           )}
@@ -571,6 +599,12 @@ export interface ThreadRailProps {
   density: MailDensity
   /** The box in the Executive room lists the Inbox itself; this stays mounted, out of sight. */
   hiddenInRoom?: boolean
+  mailFetching?: boolean
+  emptyVariant?: ThreadListEmptyVariant
+  currentQuery?: string
+  onClearSearch?: () => void
+  onSearchServer?: () => void
+  onCompose?: () => void
 }
 
 /**
@@ -594,8 +628,25 @@ export function ThreadRail({
   toggleThreadStarred,
   density,
   hiddenInRoom,
+  mailFetching = false,
+  emptyVariant = 'inbox-zero',
+  currentQuery,
+  onClearSearch,
+  onSearchServer,
+  onCompose,
 }: ThreadRailProps): React.ReactElement {
-  const rowHeight = THREAD_ROW_HEIGHTS[density]
+  const [isNarrowPane, setIsNarrowPane] = useState(false)
+  const effectiveDensity: MailDensity = isNarrowPane ? 'comfortable' : density
+  const rowHeight = THREAD_ROW_HEIGHTS[effectiveDensity]
+  const [snoozeRow, setSnoozeRow] = useState<{
+    threadId: string
+    top: number
+    right: number
+    flipUp: boolean
+  } | null>(null)
+  useEffect(() => {
+    setSnoozeRow(null)
+  }, [currentQuery, store.accounts.length, filteredThreads.length])
   const filteredThreadSortTimes = useMemo(
     () =>
       new Map(
@@ -607,13 +658,44 @@ export function ThreadRail({
    * One pass over messages rather than a scan per rendered row, so this stays
    * flat as the mailbox grows.
    */
-  const unreadThreadIds = useMemo(() => {
-    const unread = new Set<string>()
-    for (const message of store.messages) {
-      if (!message.read) unread.add(message.threadId)
-    }
-    return unread
-  }, [store.messages])
+  const { unreadThreadIds, messageCountByThread, attachmentCountByThread } =
+    useMemo(() => {
+      const unread = new Set<string>()
+      const msgCounts = new Map<string, number>()
+      const attCounts = new Map<string, number>()
+      for (const message of store.messages) {
+        if (!message.read) unread.add(message.threadId)
+        if (!message.isDraft) {
+          msgCounts.set(
+            message.threadId,
+            (msgCounts.get(message.threadId) ?? 0) + 1,
+          )
+        }
+        const attLen = message.attachments?.length ?? 0
+        if (attLen > 0) {
+          attCounts.set(
+            message.threadId,
+            (attCounts.get(message.threadId) ?? 0) + attLen,
+          )
+        }
+      }
+      return {
+        unreadThreadIds: unread,
+        messageCountByThread: msgCounts,
+        attachmentCountByThread: attCounts,
+      }
+    }, [store.messages])
+  const vipEmailSet = useMemo(
+    () =>
+      new Set(
+        (store.vipSenders ?? []).map(email => email.trim().toLowerCase()),
+      ),
+    [store.vipSenders],
+  )
+  const pinnedIdSet = useMemo(
+    () => new Set(store.pinnedThreadIds ?? []),
+    [store.pinnedThreadIds],
+  )
   const checkedSet = useMemo(
     () => new Set(checkedThreadIds),
     [checkedThreadIds],
@@ -662,13 +744,16 @@ export function ThreadRail({
     const scroller = rail?.closest<HTMLElement>('[data-mail-scroll]')
     if (!rail || !scroller) return
     const update = (): void => {
+      const narrow = scroller.clientWidth > 0 && scroller.clientWidth <= 560
+      setIsNarrowPane(prev => (prev === narrow ? prev : narrow))
+      const effectiveRowHeight = THREAD_ROW_HEIGHTS[narrow ? 'comfortable' : density]
       const railTop = railOffsetWithin(rail, scroller)
       setVisibleRange(
         visibleRowRange({
           scrollTop: scroller.scrollTop,
           railTop,
           viewportHeight: scroller.clientHeight,
-          rowHeight,
+          rowHeight: effectiveRowHeight,
           overscan: THREAD_ROW_OVERSCAN,
           total: filteredThreads.length,
         }),
@@ -677,7 +762,7 @@ export function ThreadRail({
         firstVisibleRow({
           scrollTop: scroller.scrollTop,
           railTop,
-          rowHeight,
+          rowHeight: effectiveRowHeight,
           total: filteredThreads.length,
         }),
       )
@@ -690,7 +775,7 @@ export function ThreadRail({
       scroller.removeEventListener('scroll', update)
       observer.disconnect()
     }
-  }, [filteredThreads.length, rowHeight])
+  }, [filteredThreads.length, rowHeight, density])
 
   const jumpTo = (position: number): void => {
     const rail = railRef.current
@@ -812,6 +897,21 @@ export function ThreadRail({
     return null
   }
 
+  if (!hiddenInRoom && filteredThreads.length === 0) {
+    if (mailFetching) {
+      return <ThreadListSkeleton rows={8} density={density} />
+    }
+    return (
+      <ThreadListEmptyState
+        variant={emptyVariant}
+        query={currentQuery}
+        onClearSearch={onClearSearch}
+        onSearchServer={onSearchServer}
+        onCompose={onCompose}
+      />
+    )
+  }
+
   return (
     <>
     <div ref={railRef} style={{ paddingTop: padTop, paddingBottom: padBottom, display: hiddenInRoom ? 'none' : undefined }}>
@@ -819,7 +919,29 @@ export function ThreadRail({
         const unread = unreadThreadIds.has(thread.id)
         const checked = checkedSet.has(thread.id)
         const starred = threadIsStarred(store, thread.id)
+        const pinned = pinnedIdSet.has(thread.id)
+        const primaryParticipant = thread.participants[0]
+        const senderDisplay =
+          primaryParticipant?.name || primaryParticipant?.email || 'Unknown sender'
+        const isVip = thread.participants.some(p =>
+          vipEmailSet.has(p.email.trim().toLowerCase()),
+        )
+        const msgCount = messageCountByThread.get(thread.id) ?? 0
+        const attCount = attachmentCountByThread.get(thread.id) ?? 0
+        const avatar = senderAvatar(senderDisplay)
         const snippet = thread.summary?.trim() ?? ''
+        const sortIso =
+          filteredThreadSortTimes.get(thread.id) ?? thread.lastMessageAt
+        const chipEl = rowChip(thread)
+        const teamReadEl = teamReads[thread.id] ? (
+          <MailStateChip
+            $tone="label"
+            title={teamReads[thread.id]!.description}
+          >
+            {teamReads[thread.id]!.label}
+          </MailStateChip>
+        ) : null
+
         return (
           <MailListRow
             key={thread.id}
@@ -827,7 +949,7 @@ export function ThreadRail({
             role="button"
             tabIndex={0}
             aria-label={`Open conversation: ${thread.subject}`}
-            $density={density}
+            $density={effectiveDensity}
             $unread={unread}
             $checked={checked}
             $active={
@@ -886,32 +1008,147 @@ export function ThreadRail({
             >
               <Star aria-hidden="true" />
             </RowStar>
-            <RowMark>{thread.priority === 'high' && <PriorityDot />}</RowMark>
-            <RowSender $unread={unread}>
-              {thread.participants[0]?.name ?? 'Unknown sender'}
-            </RowSender>
-            <RowLabels>
-              {rowChip(thread)}
-              {teamReads[thread.id] && <MailStateChip $tone="label" title={teamReads[thread.id]!.description}>{teamReads[thread.id]!.label}</MailStateChip>}
-            </RowLabels>
-            <RowSubject $unread={unread}>
-              <strong>{thread.subject}</strong>
-              {snippet ? ` — ${snippet}` : ''}
-            </RowSubject>
-            {(() => {
-              const sortIso =
-                filteredThreadSortTimes.get(thread.id) ?? thread.lastMessageAt
-              return (
-                <RowTime as="time" dateTime={sortIso} title={formatExactDateTime(sortIso)}>
+            <RowMark>
+              {unread ? (
+                <RowUnreadDot aria-hidden="true" />
+              ) : thread.priority === 'high' ? (
+                <PriorityDot />
+              ) : null}
+            </RowMark>
+            <RowAvatar
+              $size={effectiveDensity === 'comfortable' ? 'md' : 'sm'}
+              aria-hidden="true"
+              style={{ background: avatar.bg, color: avatar.fg }}
+            >
+              {avatar.initial}
+            </RowAvatar>
+            {effectiveDensity === 'comfortable' ? (
+              <RowTwoLineBody>
+                <RowTopLine>
+                  <RowSender
+                    $unread={unread}
+                    style={{ width: 'auto', flex: '0 1 auto' }}
+                  >
+                    <span
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {senderDisplay}
+                    </span>
+                    {msgCount > 1 && (
+                      <RowThreadCount aria-label={`${msgCount} messages`}>
+                        ({msgCount})
+                      </RowThreadCount>
+                    )}
+                    {isVip && <RowVipBadge>VIP</RowVipBadge>}
+                    {pinned && (
+                      <RowPinIcon title="Pinned" aria-label="Pinned">
+                        <Pin aria-hidden="true" />
+                      </RowPinIcon>
+                    )}
+                  </RowSender>
+                  <span style={{ flex: 1 }} />
+                  {attCount > 0 && (
+                    <RowAttachmentChip
+                      title={`${attCount} attachment${attCount === 1 ? '' : 's'}`}
+                      aria-label={`${attCount} attachment${attCount === 1 ? '' : 's'}`}
+                    >
+                      <Paperclip aria-hidden="true" />
+                    </RowAttachmentChip>
+                  )}
+                  <RowTime
+                    as="time"
+                    dateTime={sortIso}
+                    title={formatExactDateTime(sortIso)}
+                  >
+                    {formatThreadListTime(sortIso)}
+                  </RowTime>
+                </RowTopLine>
+                <RowBottomLine>
+                  <RowSubject $unread={unread}>
+                    <strong>{thread.subject}</strong>
+                    {snippet ? ` — ${snippet}` : ''}
+                  </RowSubject>
+                  {(chipEl || teamReadEl) && (
+                    <RowLabels>
+                      {chipEl}
+                      {teamReadEl}
+                    </RowLabels>
+                  )}
+                </RowBottomLine>
+              </RowTwoLineBody>
+            ) : (
+              <>
+                <RowInlineBody>
+                  <RowSender
+                    $unread={unread}
+                    data-row-sender-cluster=""
+                  >
+                    <span
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {senderDisplay}
+                    </span>
+                    {msgCount > 1 && (
+                      <RowThreadCount aria-label={`${msgCount} messages`}>
+                        ({msgCount})
+                      </RowThreadCount>
+                    )}
+                    {isVip && <RowVipBadge>VIP</RowVipBadge>}
+                    {pinned && (
+                      <RowPinIcon title="Pinned" aria-label="Pinned">
+                        <Pin aria-hidden="true" />
+                      </RowPinIcon>
+                    )}
+                  </RowSender>
+                  {(chipEl || teamReadEl) && (
+                    <RowLabels>
+                      {chipEl}
+                      {teamReadEl}
+                    </RowLabels>
+                  )}
+                  <RowSubject $unread={unread}>
+                    <strong>{thread.subject}</strong>
+                    {snippet ? ` — ${snippet}` : ''}
+                  </RowSubject>
+                </RowInlineBody>
+                {attCount > 0 && (
+                  <RowAttachmentChip
+                    title={`${attCount} attachment${attCount === 1 ? '' : 's'}`}
+                    aria-label={`${attCount} attachment${attCount === 1 ? '' : 's'}`}
+                  >
+                    <Paperclip aria-hidden="true" />
+                  </RowAttachmentChip>
+                )}
+                <RowTime
+                  as="time"
+                  dateTime={sortIso}
+                  title={formatExactDateTime(sortIso)}
+                >
                   {formatThreadListTime(sortIso)}
                 </RowTime>
-              )
-            })()}
-            <RowHoverActions aria-hidden={false}>
+              </>
+            )}
+            <RowHoverActions
+              $topAligned={effectiveDensity === 'comfortable'}
+              aria-hidden={false}
+              style={
+                snoozeRow?.threadId === thread.id
+                  ? { opacity: 1, pointerEvents: 'auto' }
+                  : undefined
+              }
+            >
               <RowActionButton
-                role="button"
-                tabIndex={-1}
-                aria-label={`Archive: ${thread.subject}`}
+                type="button"
+                aria-label="Archive"
+                title="Archive"
                 onClick={event => {
                   event.stopPropagation()
                   runTriageAction([thread.id], { type: 'archive' })
@@ -920,9 +1157,9 @@ export function ThreadRail({
                 <Archive aria-hidden="true" />
               </RowActionButton>
               <RowActionButton
-                role="button"
-                tabIndex={-1}
-                aria-label={`Trash: ${thread.subject}`}
+                type="button"
+                aria-label="Trash"
+                title="Trash"
                 onClick={event => {
                   event.stopPropagation()
                   runTriageAction([thread.id], { type: 'trash' })
@@ -931,9 +1168,9 @@ export function ThreadRail({
                 <Trash2 aria-hidden="true" />
               </RowActionButton>
               <RowActionButton
-                role="button"
-                tabIndex={-1}
-                aria-label={`${unread ? 'Mark read' : 'Mark unread'}: ${thread.subject}`}
+                type="button"
+                aria-label={unread ? 'Mark read' : 'Mark unread'}
+                title={unread ? 'Mark read' : 'Mark unread'}
                 onClick={event => {
                   event.stopPropagation()
                   runTriageAction([thread.id], { type: 'read', read: unread })
@@ -947,14 +1184,27 @@ export function ThreadRail({
               </RowActionButton>
               {canSnoozeThreads && (
                 <RowActionButton
-                  role="button"
-                  tabIndex={-1}
-                  aria-label={`Snooze until tomorrow morning: ${thread.subject}`}
+                  type="button"
+                  data-popover-trigger=""
+                  aria-label="Snooze"
+                  title="Snooze"
                   onClick={event => {
                     event.stopPropagation()
-                    runTriageAction([thread.id], {
-                      type: 'snooze',
-                      snoozedUntil: snoozePresets()[1].at,
+                    if (snoozeRow?.threadId === thread.id) {
+                      setSnoozeRow(null)
+                      return
+                    }
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    const viewportH =
+                      typeof window !== 'undefined' ? window.innerHeight : 800
+                    const viewportW =
+                      typeof window !== 'undefined' ? window.innerWidth : 1200
+                    const flipUp = viewportH - rect.bottom < 340
+                    setSnoozeRow({
+                      threadId: thread.id,
+                      top: flipUp ? rect.top - 6 : rect.bottom + 6,
+                      right: Math.max(12, viewportW - rect.right),
+                      flipUp,
                     })
                   }}
                 >
@@ -966,6 +1216,35 @@ export function ThreadRail({
         )
       })}
     </div>
+    {snoozeRow &&
+      typeof document !== 'undefined' &&
+      createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            right: snoozeRow.right,
+            ...(snoozeRow.flipUp
+              ? { bottom: Math.max(12, window.innerHeight - snoozeRow.top) }
+              : { top: snoozeRow.top }),
+            zIndex: 350,
+          }}
+        >
+          <TimePickerPopover
+            mode="snooze"
+            staticPosition
+            onSelect={iso => {
+              const targetId = snoozeRow.threadId
+              setSnoozeRow(null)
+              runTriageAction([targetId], {
+                type: 'snooze',
+                snoozedUntil: iso,
+              })
+            }}
+            onClose={() => setSnoozeRow(null)}
+          />
+        </div>,
+        document.body,
+      )}
     {positionLabel && filteredThreads.length > 20 ? (
       <ListPositionBar>
         {jumpOpen ? (

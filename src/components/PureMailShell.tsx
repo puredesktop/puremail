@@ -20,7 +20,34 @@ import {
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, ChevronRight, X } from 'lucide-react'
+import {
+  Archive,
+  BellOff,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Columns2,
+  File,
+  Folder,
+  Hourglass,
+  Inbox,
+  Keyboard,
+  List,
+  Newspaper,
+  PanelBottom,
+  PenLine,
+  Pin,
+  Receipt,
+  RefreshCw,
+  Send,
+  Settings,
+  Shield,
+  Star,
+  Tag,
+  Trash2,
+  X,
+  Zap,
+} from 'lucide-react'
 import { assignHandoff, buildThreadHandoff } from '../lib/assignHandoff'
 import {
   MAIL_LIST_FILTERS,
@@ -44,10 +71,33 @@ import {
   type CalendarInviteResponse,
 } from '@purescience/platform-ui/bridge/calendarInviteIntent'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
+import { isPersonGesture } from '@purescience/platform-ui/release/gesture'
 import {
+  mailGChordDestinationForKey,
   mailShortcutCommandForEvent,
   type MailCommandId,
 } from '../lib/mailCommands'
+import {
+  clearRepliedFollowUpReminders,
+  scheduleFollowUpReminder,
+} from '../lib/followUpRadar'
+import { ownAddresses } from '../lib/mailReplyState'
+import {
+  getDecisionModelSettings,
+  onDecisionModelSettingsChange,
+} from '../lib/decisionModels'
+import {
+  analyzeThreadWithDecisionModel,
+  classifyScreenerSenderWithDecisionModel,
+  decisionModelOperations,
+  decisionModelOpsActive,
+  type ScreenerDecisionResult,
+  type ThreadDecisionInsight,
+} from '../lib/mailDecisionOps'
+import {
+  applyScreenerDecisionWithEffects,
+  unscreenedSendersInStore,
+} from '../lib/mailScreener'
 import type { OAuthCredentialStatus } from '@purescience/platform-ui/bridge/credentials.mjs'
 import { isImapMailboxId } from '../lib/imapMailProvider'
 import {
@@ -180,6 +230,7 @@ import {
 } from '../lib/mailUnsubscribe'
 import {
   applyBulkTriageAction,
+  archiveMutedRepliedThreadsWithIds,
   bulkSnoozeThreads,
   bulkTriageActionSummary,
   queuedActionForBulkTriage,
@@ -200,7 +251,9 @@ import {
   withQueryTerm,
 } from '../lib/mailQuery'
 import {
+  addMailFilter,
   clearFilterRunMarkers,
+  ensureMailLabel,
   runMailFilters,
   type MailFilterMutation,
 } from '../lib/mailFilters'
@@ -256,6 +309,7 @@ import type {
   MailStore,
   MailTask,
   MailThread,
+  ScreenerDestination,
 } from '../types'
 import {
   AgentSearchChip,
@@ -273,10 +327,14 @@ import {
   MailToast,
   MailToastAction,
   Section,
+  SplitListPane,
+  SplitReaderPane,
+  SplitWorkspace,
 } from './mailShellStyles'
 import {
   MAIL_LAYOUT_STORAGE_KEY,
   type MailDensity,
+  type ReadingPaneLayout,
   readLayoutState,
   type TaskMode,
 } from './mailShellLayout'
@@ -302,6 +360,19 @@ import { MailTopBar } from './MailTopBar'
 import { ThreadListToolbar, ThreadRail } from './ThreadRail'
 import { UnsubscribeDrawer } from './UnsubscribeDrawer'
 import { ThreadReader } from './ThreadReader'
+import { CommandPalette, type CommandPaletteItem } from './CommandPalette'
+import { ShortcutsModal } from './ShortcutsModal'
+import { ScreenerQueue } from './ScreenerQueue'
+import { TriageFocusMode } from './TriageFocusMode'
+import {
+  ThreadListEmptyState,
+  type ThreadListEmptyVariant,
+} from './ThreadListStates'
+import { TimePickerPopover } from './TimePickerPopover'
+import {
+  MailFilterDialog,
+  type MailFilterDialogSubmit,
+} from './MailFilterDialog'
 import {
   RunScreen,
 } from './RunScreen'
@@ -468,7 +539,11 @@ export function PureMailShell({
           } else if (mutation.kind === 'move') {
             // A box that IS a real account folder (IMAP): true server move.
             await provider.moveThread(mutation.threadId, mutation.mailboxId)
-          } else {
+          } else if (mutation.kind === 'trash') {
+            await provider.deleteThread(mutation.threadId)
+          } else if (mutation.kind === 'star') {
+            await provider.setThreadStarred?.(mutation.threadId, true)
+          } else if (mutation.kind === 'markRead') {
             await provider.markThreadRead(mutation.threadId, true)
           }
         } catch (error) {
@@ -567,6 +642,34 @@ export function PureMailShell({
   const [taskMode, setTaskMode] = useState<TaskMode>(initialLayout.taskMode)
   const [listFilter, setListFilter] = useRoomSlot<MailListFilterId>(compactInRoom, 'all', 'all')
   const [density, setDensity] = useState<MailDensity>(initialLayout.density)
+  const [readingPaneLayout, setReadingPaneLayout] = useState<ReadingPaneLayout>(
+    initialLayout.readingPaneLayout ?? 'list-only',
+  )
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState('')
+  const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false)
+  const [focusTriageOpen, setFocusTriageOpen] = useState(false)
+  const [decisionModelState, setDecisionModelState] = useState<{
+    configured: boolean
+    effectiveModelId: string
+  }>({ configured: false, effectiveModelId: '' })
+  const [activeThreadDecisionInsight, setActiveThreadDecisionInsight] =
+    useState<ThreadDecisionInsight | null>(null)
+  const [screenerModelSuggestions, setScreenerModelSuggestions] = useState<
+    Record<string, ScreenerDecisionResult>
+  >({})
+  const [focusTriageIndex, setFocusTriageIndex] = useState(0)
+  const [focusTriageCount, setFocusTriageCount] = useState(0)
+  const [pendingFocusReplyThreadId, setPendingFocusReplyThreadId] = useState<string | null>(null)
+  const [snoozeShortcutOpen, setSnoozeShortcutOpen] = useState(false)
+  const [searchFilterSeedQuery, setSearchFilterSeedQuery] = useState<string | null>(null)
+  const [hasUndo, setHasUndo] = useState(false)
+  const lastUndoRef = useRef<(() => void) | null>(null)
+  const gChordArmedAtRef = useRef<number>(0)
+  useEffect(() => {
+    setSnoozeShortcutOpen(false)
+    setFocusTriageOpen(false)
+  }, [selectedAccountId])
   const taskDrawerBodyRef = useRef<HTMLDivElement | null>(null)
   /**
    * Checked tasks stay in the drawer, struck through, for as long as the undo
@@ -845,20 +948,42 @@ export function PureMailShell({
       ? { kind: 'snoozed' }
       : queryHasFlag(parsedQuery, 'is', 'scheduled')
         ? { kind: 'scheduled' }
-        : queryTermValue(parsedQuery, 'label')
-          ? {
-              kind: 'label',
-              labelId:
-                store.labels.find(
-                  label =>
-                    label.name.toLowerCase() ===
-                      queryTermValue(parsedQuery, 'label')?.toLowerCase() ||
-                    label.id === queryTermValue(parsedQuery, 'label'),
-                )?.id ??
-                queryTermValue(parsedQuery, 'label') ??
-                '',
-            }
-          : null
+        : queryHasFlag(parsedQuery, 'is', 'awaiting')
+          ? { kind: 'waiting' }
+          : queryHasFlag(parsedQuery, 'is', 'screener')
+            ? { kind: 'screener' }
+            : queryHasFlag(parsedQuery, 'is', 'newsletter')
+              ? { kind: 'feed' }
+              : queryHasFlag(parsedQuery, 'is', 'receipt')
+                ? { kind: 'paper_trail' }
+                : queryTermValue(parsedQuery, 'label')
+                  ? {
+                      kind: 'label',
+                      labelId:
+                        store.labels.find(
+                          label =>
+                            label.name.toLowerCase() ===
+                              queryTermValue(parsedQuery, 'label')?.toLowerCase() ||
+                            label.id === queryTermValue(parsedQuery, 'label'),
+                        )?.id ??
+                        queryTermValue(parsedQuery, 'label') ??
+                        '',
+                    }
+                  : null
+
+  const unscreenedSenders = useMemo(
+    () =>
+      store.settings.screenerEnabled === false
+        ? []
+        : unscreenedSendersInStore(store, selectedAccount?.id),
+    [store, selectedAccount?.id],
+  )
+
+  // Auto-clear follow-up reminders when an inbound reply arrives on the thread.
+  useEffect(() => {
+    if (!(store.followUpReminders?.length)) return
+    setStore(current => clearRepliedFollowUpReminders(current))
+  }, [store.messages.length, store.followUpReminders?.length])
 
   const resolveSetter = <T,>(value: React.SetStateAction<T>, current: T): T =>
     typeof value === 'function'
@@ -1095,13 +1220,38 @@ export function PureMailShell({
    * here also replaces six full store scans per render.
    */
   const listFilterCounts = useMemo(() => {
-    const counts = { all: 0, unread: 0, priority: 0, followups: 0 }
+    const counts: Record<MailListFilterId, number> = {
+      all: 0,
+      unread: 0,
+      priority: 0,
+      followups: 0,
+      vip: 0,
+      attachments: 0,
+    }
+    const vipSet = new Set(
+      (store.vipSenders ?? []).map(email => email.trim().toLowerCase()),
+    )
+    const threadsWithAttachments = new Set<string>()
+    for (const msg of store.messages) {
+      if ((msg.attachments?.length ?? 0) > 0) {
+        threadsWithAttachments.add(msg.threadId)
+      }
+    }
     for (const thread of queryResult.threads) {
       counts.all += 1
       if (unreadIds.has(thread.id)) counts.unread += 1
       if (thread.priority === 'high') counts.priority += 1
       const reply = replyStateInStore(store, thread)
       if (reply.kind === 'awaiting' && reply.overdue) counts.followups += 1
+      if (
+        vipSet.size > 0 &&
+        thread.participants.some(p => vipSet.has(p.email.trim().toLowerCase()))
+      ) {
+        counts.vip += 1
+      }
+      if (threadsWithAttachments.has(thread.id)) {
+        counts.attachments += 1
+      }
     }
     return counts
   }, [queryResult.threads, unreadIds, store])
@@ -1124,6 +1274,279 @@ export function PureMailShell({
         ? unsubscribeCandidatesForStore(store, selectedAccount.id)
         : [],
     [selectedAccount, store],
+  )
+
+  // Check whether the desktop's shared decision models service (Jex / OpenAI / Local) is configured,
+  // and immediately refresh when the user switches models in Settings.
+  useEffect(() => {
+    let live = true
+    const apply = (next: { configured?: boolean; effectiveModelId?: string } | null) => {
+      if (!live) return
+      setDecisionModelState(prev => {
+        const configured = Boolean(next?.configured)
+        const effectiveModelId = next?.effectiveModelId ?? ''
+        if (prev.configured === configured && prev.effectiveModelId === effectiveModelId) {
+          return prev
+        }
+        return { configured, effectiveModelId }
+      })
+    }
+    const check = () => {
+      void getDecisionModelSettings()
+        .then(apply)
+        .catch(() => apply(null))
+    }
+    check()
+    const unsubscribe = onDecisionModelSettingsChange(next => {
+      setActiveThreadDecisionInsight(null)
+      setScreenerModelSuggestions({})
+      apply(next)
+    })
+    window.addEventListener('focus', check)
+    return () => {
+      live = false
+      unsubscribe()
+      window.removeEventListener('focus', check)
+    }
+  }, [store.settings.typedTriage?.mode])
+
+  const decisionOpsEnabled = decisionModelOpsActive(store)
+
+  const decisionTargetThread = useMemo(() => {
+    if (focusTriageOpen) {
+      const idx = Math.min(
+        focusTriageIndex,
+        Math.max(0, filteredThreads.length - 1),
+      )
+      return filteredThreads[idx] ?? null
+    }
+    const splitOpen = !compactInRoom && readingPaneLayout !== 'list-only'
+    return splitOpen || reading ? selectedThread : null
+  }, [
+    focusTriageOpen,
+    focusTriageIndex,
+    filteredThreads,
+    compactInRoom,
+    readingPaneLayout,
+    reading,
+    selectedThread,
+  ])
+
+  const decisionTargetMessage = useMemo(() => {
+    if (!decisionTargetThread) return null
+    return (
+      store.messages
+        .filter(
+          m =>
+            m.threadId === decisionTargetThread.id &&
+            !m.isDraft &&
+            !m.optimistic,
+        )
+        .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0] ?? null
+    )
+  }, [decisionTargetThread, store.messages])
+
+  const decisionOpsKey = useMemo(() => {
+    const ops = decisionModelOperations(store)
+    const snippetSig = (store.snippets ?? [])
+      .slice(0, 10)
+      .map(s => `${s.id}:${s.updatedAt}:${s.body.length}`)
+      .join(',')
+    return [
+      decisionOpsEnabled ? '1' : '0',
+      ops.securityShield ? '1' : '0',
+      ops.followUpRadar ? '1' : '0',
+      ops.triageActionHints ? '1' : '0',
+      ops.snippetSuggestions ? '1' : '0',
+      ops.screenerRouting ? '1' : '0',
+      store.settings.typedTriage?.confidence ?? '',
+      store.settings.typedTriage?.dailyCap ?? '',
+      snippetSig,
+    ].join(':')
+  }, [decisionOpsEnabled, store.settings.typedTriage, store.snippets])
+
+  // On-demand single batched decision-model call for the currently opened thread,
+  // debounced (350ms) so rapid J/K navigation never creates a request storm.
+  useEffect(() => {
+    setActiveThreadDecisionInsight(null)
+    if (
+      !decisionOpsEnabled ||
+      !decisionModelState.configured ||
+      !decisionTargetThread ||
+      !decisionTargetMessage
+    ) {
+      return
+    }
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      if (cancelled) return
+      const account = storeRef.current.accounts.find(
+        a => a.id === decisionTargetThread.accountId,
+      )
+      const own = ownAddresses({
+        email: account?.email ?? '',
+        emails: [
+          ...storeRef.current.accounts.map(a => a.email),
+          ...(storeRef.current.settings.ownerIdentities?.emails ?? []),
+        ],
+      })
+      const isOutgoing = own.has(
+        (decisionTargetMessage.from?.email ?? '').trim().toLowerCase(),
+      )
+
+      void analyzeThreadWithDecisionModel({
+        store: storeRef.current,
+        thread: decisionTargetThread,
+        message: decisionTargetMessage,
+        isOutgoing,
+        modelFingerprint: decisionModelState.effectiveModelId,
+      }).then(insight => {
+        if (!cancelled) {
+          setActiveThreadDecisionInsight(insight)
+        }
+      })
+    }, 350)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [
+    decisionOpsEnabled,
+    decisionModelState.configured,
+    decisionModelState.effectiveModelId,
+    decisionTargetThread?.id,
+    decisionTargetMessage?.id,
+    decisionOpsKey,
+  ])
+
+  // On-demand decision-model suggestions for the first 5 visible Screener senders when viewing Screener.
+  const screenerLatestMessageBySender = useMemo(() => {
+    const map = new Map<string, (typeof store.messages)[number]>()
+    if (selectedSpecialView?.kind !== 'screener') return map
+    for (const sender of unscreenedSenders.slice(0, 5)) {
+      const normalized = sender.email.trim().toLowerCase()
+      const threadMsgs = store.messages
+        .filter(
+          m =>
+            m.threadId === sender.latestThreadId &&
+            !m.isDraft &&
+            !m.optimistic,
+        )
+        .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+      const fromSender =
+        threadMsgs.find(
+          m => (m.from?.email ?? '').trim().toLowerCase() === normalized,
+        ) ?? threadMsgs[0]
+      if (fromSender) map.set(sender.email, fromSender)
+    }
+    return map
+  }, [selectedSpecialView?.kind, unscreenedSenders, store.messages])
+
+  const screenerVisibleKey = useMemo(
+    () =>
+      selectedSpecialView?.kind === 'screener'
+        ? unscreenedSenders
+            .slice(0, 5)
+            .map(
+              s =>
+                `${s.email}:${s.latestThreadId}:${
+                  screenerLatestMessageBySender.get(s.email)?.id ?? ''
+                }`,
+            )
+            .join('|')
+        : '',
+    [
+      selectedSpecialView?.kind,
+      unscreenedSenders,
+      screenerLatestMessageBySender,
+    ],
+  )
+
+  useEffect(() => {
+    setScreenerModelSuggestions({})
+  }, [
+    selectedAccountId,
+    decisionOpsEnabled,
+    decisionModelState.configured,
+    decisionModelState.effectiveModelId,
+    store.settings.typedTriage?.confidence,
+    store.settings.typedTriage?.operations?.screenerRouting,
+  ])
+
+  useEffect(() => {
+    if (
+      !decisionOpsEnabled ||
+      !decisionModelState.configured ||
+      selectedSpecialView?.kind !== 'screener' ||
+      !screenerVisibleKey
+    ) {
+      return
+    }
+    const ops = decisionModelOperations(storeRef.current)
+    if (!ops.screenerRouting) {
+      setScreenerModelSuggestions({})
+      return
+    }
+
+    let cancelled = false
+    const targets = unscreenedSenders.slice(0, 5)
+    void (async () => {
+      for (const sender of targets) {
+        if (cancelled) return
+        const latestMsg = screenerLatestMessageBySender.get(sender.email)
+        if (!latestMsg) continue
+        const res = await classifyScreenerSenderWithDecisionModel({
+          store: storeRef.current,
+          senderEmail: sender.email,
+          senderName: sender.name,
+          latestMessage: latestMsg,
+          threadCount: sender.count,
+          modelFingerprint: decisionModelState.effectiveModelId,
+        })
+        if (cancelled) return
+        setScreenerModelSuggestions(prev => {
+          const existing = prev[sender.email]
+          if (!res) {
+            if (!existing) return prev
+            const next = { ...prev }
+            delete next[sender.email]
+            return next
+          }
+          if (
+            existing &&
+            existing.messageId === res.messageId &&
+            existing.destination === res.destination &&
+            existing.confidence === res.confidence &&
+            existing.model === res.model &&
+            existing.provider === res.provider
+          ) {
+            return prev
+          }
+          return { ...prev, [sender.email]: res }
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    selectedAccountId,
+    decisionOpsEnabled,
+    decisionModelState.configured,
+    decisionModelState.effectiveModelId,
+    selectedSpecialView?.kind,
+    screenerVisibleKey,
+    decisionOpsKey,
+  ])
+
+  const unscreenedSendersWithModel = useMemo(
+    () =>
+      unscreenedSenders.map(sender => ({
+        ...sender,
+        modelSuggestion: screenerModelSuggestions[sender.email] ?? null,
+      })),
+    [unscreenedSenders, screenerModelSuggestions],
   )
 
   // Multi-select is scoped to one thread list: switching account, view, or
@@ -1163,6 +1586,7 @@ export function PureMailShell({
         taskMode,
         taskDrawerOpen: taskDrawerOpenByAccount,
         density,
+        readingPaneLayout,
       }),
     )
   }, [
@@ -1173,6 +1597,7 @@ export function PureMailShell({
     taskMode,
     taskDrawerOpenByAccount,
     density,
+    readingPaneLayout,
     compactInRoom,
   ])
 
@@ -1623,13 +2048,24 @@ export function PureMailShell({
           // pass the engine exactly once (run markers), and remote-facing
           // actions fire the same mutations manual actions would.
           const filtered = runMailFilters(next, selectedAccountIdRef.current)
-          if (filtered.mutations.length > 0) {
+          const mutedArchived = archiveMutedRepliedThreadsWithIds(
+            filtered.store,
+            selectedAccountIdRef.current,
+          )
+          const combinedMutations: MailFilterMutation[] = [
+            ...filtered.mutations,
+            ...mutedArchived.archivedThreadIds.map(threadId => ({
+              kind: 'archive' as const,
+              threadId,
+            })),
+          ]
+          if (combinedMutations.length > 0) {
             window.setTimeout(
-              () => fireShellFilterMutationsRef.current(filtered.mutations),
+              () => fireShellFilterMutationsRef.current(combinedMutations),
               0,
             )
           }
-          return { ...filtered.store, lastSyncedAt: new Date().toISOString() }
+          return { ...mutedArchived.store, lastSyncedAt: new Date().toISOString() }
         })
         if (!isHeldCopy()) {
           // The executive team's digest reads the merged store, after the merge.
@@ -1750,6 +2186,36 @@ export function PureMailShell({
       if (roomScreen?.kind === 'reading') return
 
       // Topmost shell-owned overlays that rely on this listener close first.
+      if (commandPaletteOpen) {
+        event.preventDefault()
+        event.stopPropagation()
+        setCommandPaletteOpen(false)
+        return
+      }
+      if (shortcutsModalOpen) {
+        event.preventDefault()
+        event.stopPropagation()
+        setShortcutsModalOpen(false)
+        return
+      }
+      if (focusTriageOpen) {
+        event.preventDefault()
+        event.stopPropagation()
+        setFocusTriageOpen(false)
+        return
+      }
+      if (snoozeShortcutOpen) {
+        event.preventDefault()
+        event.stopPropagation()
+        setSnoozeShortcutOpen(false)
+        return
+      }
+      if (searchFilterSeedQuery !== null) {
+        event.preventDefault()
+        event.stopPropagation()
+        setSearchFilterSeedQuery(null)
+        return
+      }
       if (attachmentPreview !== null) {
         event.preventDefault()
         event.stopPropagation()
@@ -2755,7 +3221,7 @@ export function PureMailShell({
     if (!toast) return
     const timeout = window.setTimeout(
       () => setToast(current => (current?.id === toast.id ? null : current)),
-      toast.error ? 10000 : toast.actionLabel ? 6000 : 4000,
+      toast.error ? 10000 : toast.actionLabel === 'Undo' ? 5000 : toast.actionLabel ? 6000 : 4000,
     )
     return () => window.clearTimeout(timeout)
   }, [toast])
@@ -3337,9 +3803,41 @@ export function PureMailShell({
           },
         }
       }
+      if (action.type === 'mute' || action.type === 'unmute') {
+        const nextMuted = action.type === 'mute' ? (action.muted ?? true) : false
+        return {
+          label: 'Undo',
+          run: () => {
+            if (undone) return
+            undone = true
+            setStore(current =>
+              applyBulkTriageAction(current, threadIds, {
+                type: nextMuted ? 'unmute' : 'mute',
+              }),
+            )
+            setCommandNotice(
+              nextMuted ? 'Mute undone.' : 'Thread muted again.',
+            )
+          },
+        }
+      }
       return undefined
     }
-    const undoToastAction = buildUndoAction()
+    const rawUndoAction = buildUndoAction()
+    const undoToastAction = rawUndoAction
+      ? {
+          label: rawUndoAction.label,
+          run: () => {
+            lastUndoRef.current = null
+            setHasUndo(false)
+            rawUndoAction.run()
+          },
+        }
+      : undefined
+    if (undoToastAction) {
+      lastUndoRef.current = undoToastAction.run
+      setHasUndo(true)
+    }
     // OPTIMISTIC: the click answers immediately — local store applies, the
     // selection clears, and the notice shows before any provider round-trip.
     // Provider calls settle in the background; failures enqueue for replay
@@ -3356,13 +3854,27 @@ export function PureMailShell({
     }
     clearThreadSelection()
     recordTriageOperation(`mail.triage.${action.type}`, summary)
+    const encodedForQueue = queuedActionForBulkTriage(action)
+    if (!encodedForQueue) {
+      // Local-only action (pin/unpin/mute/unmute): no remote sync required.
+      if (undoToastAction) {
+        showToast(summary, undoToastAction)
+      } else {
+        setCommandNotice(summary)
+      }
+      return
+    }
     if (!providerBacked) {
       if (activeProvider !== 'demo') {
-        const encoded = queuedActionForBulkTriage(action)
         setStore(current =>
           threadIds.reduce(
             (next, threadId) =>
-              enqueueMailAction(next, encoded.type, threadId, encoded.payload),
+              enqueueMailAction(
+                next,
+                encodedForQueue.type,
+                threadId,
+                encodedForQueue.payload,
+              ),
             current,
           ),
         )
@@ -3382,6 +3894,7 @@ export function PureMailShell({
     const enqueueForReplay = (failedThreadIds: string[]): void => {
       if (undone) return
       const encoded = queuedActionForBulkTriage(action)
+      if (!encoded) return
       setStore(current =>
         failedThreadIds.reduce(
           (next, threadId) =>
@@ -3400,6 +3913,7 @@ export function PureMailShell({
       providerBacked.bulkModifyThreads
     ) {
       const encoded = queuedActionForBulkTriage(action)
+      if (!encoded) return
       const bulkPromise = providerBacked.bulkModifyThreads(
         threadIds,
         encoded.type,
@@ -3434,6 +3948,10 @@ export function PureMailShell({
           // Same remote path as the UI's star toggle (Gmail: STARRED label).
           return providerBacked.setThreadStarred
             ? providerBacked.setThreadStarred(threadId, action.starred)
+            : null
+        case 'unstar':
+          return providerBacked.setThreadStarred
+            ? providerBacked.setThreadStarred(threadId, false)
             : null
         case 'label':
           // Provider labels apply remotely for Gmail (M3); app-local labels
@@ -3838,19 +4356,21 @@ export function PureMailShell({
     )
   }
 
-  // ⌘K focuses the permanent top-bar search from anywhere — including while
-  // typing, which the plain-key shortcut path deliberately never does.
+  // ⌘K / Ctrl+K opens the Command Palette from anywhere; `/` focuses inline search.
   useEffect(() => {
+    if (compactInRoom) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey)) return
       if (event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== 'k') return
       event.preventDefault()
-      focusMailSearch()
+      setMailSearchDrawerOpen(false)
+      setCommandPaletteInitialQuery('')
+      setCommandPaletteOpen(open => !open)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  })
+  }, [compactInRoom])
 
   // ── Phase M4: notifications, snooze wake, scheduler, offline queue ──
   const notifiedKeysRef = useRef<Set<string>>(new Set())
@@ -4440,6 +4960,18 @@ export function PureMailShell({
     },
   })
 
+  const navigateToQuery = (query: string): void => {
+    const first = selectedAccount
+      ? resolveThreadQuery(storeRef.current, selectedAccount.id, query).threads[0] ?? null
+      : null
+    setCurrentQuery(query)
+    setSelectedThreadId(first?.id ?? '')
+    setFocusedMessageId(null)
+    setReading(false)
+    setRunScreen(null)
+    setRoomScreen(null)
+  }
+
   const runMailCommand = (command: MailCommandId): void => {
     if (command === 'reply') focusReply()
     if (command === 'reply-all') focusReplyAll()
@@ -4456,6 +4988,44 @@ export function PureMailShell({
     }
     if (command === 'focus-search') focusMailSearch()
     if (command === 'snooze-follow-up') addFollowUp()
+    if (command === 'snooze' && selectedThread) {
+      setSnoozeShortcutOpen(true)
+    }
+    if (command === 'mute' && selectedThread) {
+      const isMuted = (storeRef.current.mutedThreadIds ?? []).includes(selectedThread.id)
+      runTriageAction([selectedThread.id], { type: isMuted ? 'unmute' : 'mute' })
+    }
+    if (command === 'pin' && selectedThread) {
+      const isPinned = (storeRef.current.pinnedThreadIds ?? []).includes(selectedThread.id)
+      runTriageAction([selectedThread.id], { type: isPinned ? 'unpin' : 'pin' })
+    }
+    if (command === 'select' && selectedThread) {
+      toggleThreadChecked(selectedThread.id, false)
+    }
+    if (command === 'undo') {
+      if (lastUndoRef.current) {
+        const run = lastUndoRef.current
+        lastUndoRef.current = null
+        setHasUndo(false)
+        setToast(null)
+        run()
+      }
+    }
+    if (command === 'label') {
+      if (selectedThread || checkedThreadIds.length > 0) {
+        setCommandPaletteInitialQuery('Apply label: ')
+        setCommandPaletteOpen(true)
+      }
+    }
+    if (command === 'move') {
+      if (selectedThread || checkedThreadIds.length > 0) {
+        setCommandPaletteInitialQuery('Move to: ')
+        setCommandPaletteOpen(true)
+      }
+    }
+    if (command === 'shortcuts-help') {
+      setShortcutsModalOpen(open => !open)
+    }
     if (command === 'create-task') addTask()
     if (command === 'thread-tasks') {
       setTaskMode('thread')
@@ -4472,28 +5042,125 @@ export function PureMailShell({
   }
 
   useEffect(() => {
+    if (!pendingFocusReplyThreadId) return
+    if (selectedThread?.id !== pendingFocusReplyThreadId) return
+    setPendingFocusReplyThreadId(null)
+    focusReply()
+  }, [pendingFocusReplyThreadId, selectedThread?.id])
+
+  const handleScreenerDecision = (
+    email: string,
+    destination: ScreenerDestination,
+    name?: string,
+  ): void => {
+    const accountId = selectedAccount?.id
+    setStore(current => {
+      const result = applyScreenerDecisionWithEffects(
+        current,
+        email,
+        destination,
+        name,
+        new Date().toISOString(),
+        accountId,
+      )
+      if (destination === 'blocked' && result.affectedThreadIds.length > 0) {
+        const hasTrash = current.mailboxes.some(
+          m => (!accountId || m.accountId === accountId) && m.role === 'trash',
+        )
+        const mutations: MailFilterMutation[] = result.affectedThreadIds.map(
+          threadId => ({
+            kind: hasTrash ? 'trash' : 'archive',
+            threadId,
+          }),
+        )
+        window.setTimeout(
+          () => fireShellFilterMutationsRef.current(mutations),
+          0,
+        )
+      }
+      return result.store
+    })
+    setScreenerModelSuggestions(prev => {
+      const key = email.trim().toLowerCase()
+      if (!prev[email] && !prev[key]) return prev
+      const next = { ...prev }
+      delete next[email]
+      delete next[key]
+      return next
+    })
+    setCommandNotice(
+      `Screened ${email} → ${destination.replace('_', ' ')}.`,
+    )
+  }
+
+  useEffect(() => {
+    if (compactInRoom) return
     const onKeyDown = (event: KeyboardEvent): void => {
       // Gmail-style single-key shortcuts: plain keys only, never while
-      // typing. The decision logic lives in mailCommands so it is testable.
-      //
-      // And never while composing. The typing guard only covers focus in a
-      // text field; after clicking a composer button, focus sits on a BUTTON
-      // and a stray 'e' would archive the thread hidden behind the composer.
-      // While a compose surface is open, nothing may act on the original
-      // message — that includes the keyboard.
+      // typing or while any modal/dialog is open. The decision logic lives
+      // in mailCommands so it is testable.
       if (
         composeVisible ||
         mailSettingsOpen ||
         providerDrawerOpen ||
         unsubscribeDrawerOpen ||
+        commandPaletteOpen ||
+        shortcutsModalOpen ||
+        focusTriageOpen ||
+        snoozeShortcutOpen ||
+        searchFilterSeedQuery !== null ||
         attachmentPreview !== null ||
         runScreen !== null ||
         roomScreen !== null ||
         (readerMode === 'reply' && activeReplyDraft && !activeReplyDraft.sentAt) ||
+        Boolean(document.querySelector('[role="dialog"][aria-modal="true"]')) ||
         (event.target instanceof Element &&
           Boolean(event.target.closest('[role="dialog"], [role="alertdialog"]')))
       ) {
         return
+      }
+      const target = event.target as HTMLElement | null
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (
+          event.key === 'Shift' ||
+          event.key === 'Control' ||
+          event.key === 'Alt' ||
+          event.key === 'Meta'
+        ) {
+          return
+        }
+        const now = Date.now()
+        if (gChordArmedAtRef.current > 0 && now - gChordArmedAtRef.current <= 1000) {
+          gChordArmedAtRef.current = 0
+          const dest = mailGChordDestinationForKey(event.key)
+          if (dest) {
+            event.preventDefault()
+            const destQuery: Record<typeof dest, string> = {
+              inbox: 'in:inbox',
+              starred: 'is:starred',
+              snoozed: 'is:snoozed',
+              sent: 'in:sent',
+              drafts: 'in:drafts',
+              archive: 'in:archive',
+              waiting: 'is:awaiting',
+              feed: 'is:newsletter',
+              paper_trail: 'is:receipt',
+              screener: 'is:screener',
+            }
+            navigateToQuery(destQuery[dest])
+            return
+          }
+        }
+        if (event.key.toLowerCase() === 'g' && !event.shiftKey) {
+          gChordArmedAtRef.current = now
+          return
+        }
       }
       const command = mailShortcutCommandForEvent(event)
       if (!command) return
@@ -4533,12 +5200,376 @@ export function PureMailShell({
         ? 'Snoozed'
         : selectedSpecialView.kind === 'scheduled'
           ? 'Scheduled'
-          : store.labels.find(
-              label => label.id === selectedSpecialView.labelId,
-            )?.name ?? 'Label'
+          : selectedSpecialView.kind === 'waiting'
+            ? 'Waiting On'
+            : selectedSpecialView.kind === 'screener'
+              ? 'Screener'
+              : selectedSpecialView.kind === 'feed'
+                ? 'Feed'
+                : selectedSpecialView.kind === 'paper_trail'
+                  ? 'Paper Trail'
+                  : store.labels.find(
+                      label => label.id === selectedSpecialView.labelId,
+                    )?.name ?? 'Label'
     : savedViewForQuery
       ? savedViewForQuery.name
       : mailboxViewName ?? 'Mail'
+
+  const emptyVariant: ThreadListEmptyVariant = useMemo(() => {
+    if (selectedSpecialView?.kind === 'snoozed') return 'snoozed'
+    if (selectedSpecialView?.kind === 'waiting') return 'waiting'
+    if (selectedSpecialView?.kind === 'feed') return 'feed'
+    if (selectedSpecialView?.kind === 'paper_trail') return 'paper-trail'
+    if (selectedSpecialView?.kind === 'screener') return 'screener'
+    if (selectedMailbox?.role === 'drafts') return 'drafts'
+    if (selectedSpecialView?.kind === 'label' || selectedMailbox?.role === 'custom') {
+      return 'folder'
+    }
+    const trimmed = currentQuery.trim().toLowerCase()
+    if (trimmed && trimmed !== 'in:inbox' && !trimmed.startsWith('in:')) {
+      return 'search'
+    }
+    return 'inbox-zero'
+  }, [selectedSpecialView, selectedMailbox?.role, currentQuery])
+
+  const selectThreadsByIds = (ids: string[]): void => {
+    selectionAnchorRef.current = null
+    setCheckedThreadIds(ids)
+  }
+
+  const handleCreateFilterFromSearch = (input: MailFilterDialogSubmit): void => {
+    setSearchFilterSeedQuery(null)
+    setStore(current => {
+      let nextStore = current
+      let labelName = input.labelName.trim()
+      if (labelName) {
+        const ensured = ensureMailLabel(nextStore, labelName)
+        nextStore = ensured.store
+        labelName = ensured.label.name
+      }
+      const added = addMailFilter(nextStore, {
+        name: input.name,
+        query: input.query,
+        actions: {
+          ...(labelName ? { labelName } : {}),
+          skipInbox: input.fileIntoBox,
+          markRead: input.markRead,
+        },
+      })
+      if (input.applyToExisting) {
+        const run = runMailFilters(added.store, selectedAccount?.id, {
+          ruleIds: [added.rule.id],
+        })
+        if (run.mutations.length > 0) {
+          window.setTimeout(
+            () => fireShellFilterMutationsRef.current(run.mutations),
+            0,
+          )
+        }
+        return run.store
+      }
+      return added.store
+    })
+    setCommandNotice(`Created filter “${input.name}”.`)
+  }
+
+  const openFocusTriage = (): void => {
+    setFocusTriageIndex(0)
+    setFocusTriageCount(0)
+    setFocusTriageOpen(true)
+  }
+
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const items: CommandPaletteItem[] = [
+      {
+        id: 'action-compose',
+        label: 'Compose new message',
+        group: 'Actions',
+        shortcut: ['C'],
+        icon: <PenLine size={14} />,
+        onSelect: () => startNewCompose(),
+      },
+      {
+        id: 'action-focus-triage',
+        label: 'Open Focus Triage mode',
+        subtitle: `${filteredThreads.length} threads in current view`,
+        group: 'Actions',
+        icon: <Zap size={14} />,
+        onSelect: openFocusTriage,
+      },
+      {
+        id: 'action-refresh',
+        label: 'Refresh mail now',
+        group: 'Actions',
+        icon: <RefreshCw size={14} />,
+        onSelect: () => void refreshMail('manual'),
+      },
+      {
+        id: 'action-layout-list',
+        label: 'Layout: List only',
+        group: 'Actions',
+        icon: <List size={14} />,
+        onSelect: () => setReadingPaneLayout('list-only'),
+      },
+      {
+        id: 'action-layout-right',
+        label: 'Layout: Split right reading pane',
+        group: 'Actions',
+        icon: <Columns2 size={14} />,
+        onSelect: () => setReadingPaneLayout('split-right'),
+      },
+      {
+        id: 'action-layout-bottom',
+        label: 'Layout: Split bottom reading pane',
+        group: 'Actions',
+        icon: <PanelBottom size={14} />,
+        onSelect: () => setReadingPaneLayout('split-bottom'),
+      },
+      {
+        id: 'action-shortcuts',
+        label: 'Keyboard shortcuts',
+        group: 'Actions',
+        shortcut: ['?'],
+        icon: <Keyboard size={14} />,
+        onSelect: () => setShortcutsModalOpen(true),
+      },
+      {
+        id: 'action-settings',
+        label: 'Open Mail settings',
+        group: 'Actions',
+        icon: <Settings size={14} />,
+        onSelect: () => setMailSettingsOpen(true),
+      },
+    ]
+    if (selectedThread) {
+      items.push(
+        {
+          id: 'thread-archive',
+          label: 'Archive selected thread',
+          subtitle: selectedThread.subject,
+          group: 'Actions',
+          shortcut: ['E'],
+          icon: <Archive size={14} />,
+          onSelect: () => runTriageAction([selectedThread.id], { type: 'archive' }),
+        },
+        {
+          id: 'thread-snooze',
+          label: 'Snooze selected thread…',
+          subtitle: selectedThread.subject,
+          group: 'Actions',
+          shortcut: ['H'],
+          icon: <Clock size={14} />,
+          onSelect: () => setSnoozeShortcutOpen(true),
+        },
+        {
+          id: 'thread-pin',
+          label: (store.pinnedThreadIds ?? []).includes(selectedThread.id)
+            ? 'Unpin selected thread'
+            : 'Pin selected thread',
+          subtitle: selectedThread.subject,
+          group: 'Actions',
+          shortcut: ['P'],
+          icon: <Pin size={14} />,
+          onSelect: () => runMailCommand('pin'),
+        },
+        {
+          id: 'thread-mute',
+          label: (store.mutedThreadIds ?? []).includes(selectedThread.id)
+            ? 'Unmute selected thread'
+            : 'Mute selected thread',
+          subtitle: selectedThread.subject,
+          group: 'Actions',
+          shortcut: ['M'],
+          icon: <BellOff size={14} />,
+          onSelect: () => runMailCommand('mute'),
+        },
+        {
+          id: 'thread-trash',
+          label: 'Move selected thread to Trash',
+          subtitle: selectedThread.subject,
+          group: 'Actions',
+          shortcut: ['#'],
+          danger: true,
+          icon: <Trash2 size={14} />,
+          onSelect: () => runTriageAction([selectedThread.id], { type: 'trash' }),
+        },
+      )
+    }
+    const actionTargetIds =
+      checkedThreadIds.length > 0
+        ? checkedThreadIds
+        : selectedThread
+          ? [selectedThread.id]
+          : []
+    if (actionTargetIds.length > 0) {
+      const targetSubtitle =
+        actionTargetIds.length === 1 && selectedThread && actionTargetIds[0] === selectedThread.id
+          ? selectedThread.subject
+          : `${actionTargetIds.length} selected thread${actionTargetIds.length === 1 ? '' : 's'}`
+      for (const label of store.labels) {
+        items.push({
+          id: `apply-label-${label.id}`,
+          label: `Apply label: ${label.name}`,
+          subtitle: targetSubtitle,
+          group: 'Actions',
+          icon: <Tag size={14} />,
+          onSelect: () =>
+            runTriageAction(actionTargetIds, { type: 'label', labelId: label.id }),
+        })
+      }
+      for (const box of accountMailboxes.filter(
+        m =>
+          m.role === 'inbox' ||
+          m.role === 'archive' ||
+          m.role === 'trash' ||
+          m.role === 'custom',
+      )) {
+        items.push({
+          id: `move-to-${box.id}`,
+          label: `Move to: ${box.name}`,
+          subtitle: targetSubtitle,
+          group: 'Actions',
+          icon: <Folder size={14} />,
+          onSelect: () =>
+            runTriageAction(actionTargetIds, { type: 'move', mailboxId: box.id }),
+        })
+      }
+    }
+    // Navigation destinations
+    items.push(
+      {
+        id: 'nav-inbox',
+        label: 'Go to Inbox',
+        group: 'Navigation',
+        shortcut: ['G', 'I'],
+        icon: <Inbox size={14} />,
+        onSelect: () => navigateToQuery('in:inbox'),
+      },
+      {
+        id: 'nav-starred',
+        label: 'Go to Starred',
+        group: 'Navigation',
+        shortcut: ['G', 'S'],
+        icon: <Star size={14} />,
+        onSelect: () => navigateToQuery('is:starred'),
+      },
+      {
+        id: 'nav-snoozed',
+        label: 'Go to Snoozed',
+        group: 'Navigation',
+        shortcut: ['G', 'H'],
+        icon: <Clock size={14} />,
+        onSelect: () => navigateToQuery('is:snoozed'),
+      },
+      {
+        id: 'nav-waiting',
+        label: 'Go to Waiting On',
+        group: 'Navigation',
+        shortcut: ['G', 'W'],
+        icon: <Hourglass size={14} />,
+        onSelect: () => navigateToQuery('is:awaiting'),
+      },
+      {
+        id: 'nav-screener',
+        label: 'Go to Screener',
+        group: 'Navigation',
+        shortcut: ['G', 'C'],
+        icon: <Shield size={14} />,
+        onSelect: () => navigateToQuery('is:screener'),
+      },
+      {
+        id: 'nav-feed',
+        label: 'Go to Feed (Newsletters)',
+        group: 'Navigation',
+        shortcut: ['G', 'F'],
+        icon: <Newspaper size={14} />,
+        onSelect: () => navigateToQuery('is:newsletter'),
+      },
+      {
+        id: 'nav-paper-trail',
+        label: 'Go to Paper Trail (Receipts)',
+        group: 'Navigation',
+        shortcut: ['G', 'P'],
+        icon: <Receipt size={14} />,
+        onSelect: () => navigateToQuery('is:receipt'),
+      },
+      {
+        id: 'nav-sent',
+        label: 'Go to Sent',
+        group: 'Navigation',
+        shortcut: ['G', 'T'],
+        icon: <Send size={14} />,
+        onSelect: () => navigateToQuery('in:sent'),
+      },
+      {
+        id: 'nav-drafts',
+        label: 'Go to Drafts',
+        group: 'Navigation',
+        shortcut: ['G', 'D'],
+        icon: <File size={14} />,
+        onSelect: () => navigateToQuery('in:drafts'),
+      },
+      {
+        id: 'nav-archive',
+        label: 'Go to Archive',
+        group: 'Navigation',
+        shortcut: ['G', 'A'],
+        icon: <Archive size={14} />,
+        onSelect: () => navigateToQuery('in:archive'),
+      },
+    )
+    // Labels, folders & saved views
+    for (const label of store.labels) {
+      items.push({
+        id: `label-${label.id}`,
+        label: `Label: ${label.name}`,
+        group: 'Views',
+        icon: <Tag size={14} />,
+        onSelect: () => navigateToQuery(`label:"${label.name}"`),
+      })
+    }
+    for (const box of accountMailboxes.filter(m => m.role === 'custom')) {
+      items.push({
+        id: `folder-${box.id}`,
+        label: `Folder: ${box.name}`,
+        group: 'Views',
+        icon: <Folder size={14} />,
+        onSelect: () => navigateToQuery(`in:"${box.name}"`),
+      })
+    }
+    for (const view of store.savedViews ?? []) {
+      items.push({
+        id: `view-${view.id}`,
+        label: view.name,
+        subtitle: view.query,
+        group: 'Views',
+        onSelect: () => navigateToQuery(view.query),
+      })
+    }
+    // Top threads for instant jump
+    for (const thread of filteredThreads.slice(0, 25)) {
+      const sender =
+        thread.participants[0]?.name || thread.participants[0]?.email || ''
+      items.push({
+        id: `thread-${thread.id}`,
+        label: thread.subject || '(no subject)',
+        subtitle: sender,
+        group: 'Threads',
+        keywords: [sender, thread.summary ?? ''],
+        onSelect: () => openThread(thread.id),
+      })
+    }
+    return items
+  }, [
+    filteredThreads,
+    selectedThread,
+    checkedThreadIds,
+    store.labels,
+    store.savedViews,
+    store.pinnedThreadIds,
+    store.mutedThreadIds,
+    accountMailboxes,
+  ])
 
   // The switch mirrors what the account menu always did: land in the
   // account's inbox on its newest thread — and on the index.
@@ -4616,6 +5647,18 @@ export function PureMailShell({
       mailFetchDisabled={!providerBacked}
       density={density}
       setDensity={setDensity}
+      readingPaneLayout={compactInRoom ? undefined : readingPaneLayout}
+      setReadingPaneLayout={compactInRoom ? undefined : setReadingPaneLayout}
+      onOpenFocusTriage={compactInRoom ? undefined : openFocusTriage}
+      onOpenCommandPalette={
+        compactInRoom
+          ? undefined
+          : () => {
+              setCommandPaletteInitialQuery('')
+              setCommandPaletteOpen(true)
+            }
+      }
+      onCreateFilterFromSearch={query => setSearchFilterSeedQuery(query)}
       connectionControl={activeProvider !== 'demo' && <MailConnectionControl
         state={!networkOnline ? 'offline' : testingConnection ? 'checking' : connectionError || !mailProvider ? 'error' : mailConnectionsVerified(connectionTest) ? 'healthy' : connectionTest ? 'error' : 'unknown'}
         onTest={() => void testMailConnection()}
@@ -4627,9 +5670,24 @@ export function PureMailShell({
       openRecovery={openMailRecovery}
     />
   )
-  /* Exactly when ThreadReader renders (only FULL compose replaces it —
-     the docked window floats over whatever is showing). */
-  const readerHoldsTopBar = readingActive && composeMode !== 'full'
+  const isSplitLayout = !compactInRoom && readingPaneLayout !== 'list-only'
+  /* In split layout the top bar stays permanently docked above both panes. */
+  const readerHoldsTopBar = !isSplitLayout && readingActive && composeMode !== 'full'
+
+  const openSnippetsSettings = (): void => {
+    setMailSettingsOpen(true)
+    window.requestAnimationFrame(() => {
+      const composeTab = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('button'),
+      ).find(btn => btn.textContent?.trim() === 'Reply assistance')
+      composeTab?.click()
+      window.requestAnimationFrame(() => {
+        document
+          .getElementById('settings-compose')
+          ?.scrollIntoView({ block: 'start' })
+      })
+    })
+  }
 
   // ONE ComposeEditor, two chromes: the full-screen surface and the docked
   // small window share every handler and all state — only `variant` and the
@@ -4676,6 +5734,8 @@ export function PureMailShell({
     setSelectedMailboxId,
     setSelectedThreadId,
     setCommandNotice,
+    onSwitchAccount: switchAccount,
+    onManageSnippets: openSnippetsSettings,
   }
 
   /** What every run card (item or template) needs from the shell. */
@@ -4694,6 +5754,8 @@ export function PureMailShell({
     setSelectedMailboxId,
     setSelectedThreadId,
     setCommandNotice,
+    onSwitchAccount: switchAccount,
+    onManageSnippets: openSnippetsSettings,
   }
 
   useEffect(() => { connectionTestGeneration.current += 1; setConnectionTest(null); setTestingConnection(false); setSyncReviewOpen(false); notifiedMailIssues.current.clear() }, [selectedAccountId])
@@ -4752,133 +5814,97 @@ export function PureMailShell({
     setToast({ id: Date.now(), error: true, message: fresh.length === 1 ? fresh[0].message : `${fresh.length} mail items need attention. Your drafts are saved; nothing will be resent automatically.`, actionLabel: 'Review', onAction: openMailRecovery })
   }, [store.drafts, store.messages, store.threads, store.tasks, selectedAccountId, sendingDraftIds, connectionError, networkOnline, activeProvider, persistFailure])
 
-  return (
-    <MailFrame data-app="mail" data-compact-in-room={compactInRoom ? '' : undefined}>
-      {compactInRoom && <CompactInRoomStyle />}
-      {!readerHoldsTopBar && mailTopBar}
-
-      <MailBodyRow>
-        {/* Region 2. The 232px nav rail: Compose, boxes, labels, views, and
-            the bottom-docked sync line. */}
-        <MailSidebar
+  const listPaneContent = (
+    <>
+      {compactInRoom && (
+        <CompactInbox
           store={store}
-          selectedAccount={selectedAccount}
-          accountMailboxes={accountMailboxes}
-          selectedMailboxId={selectedMailboxId}
-          selectedSpecialView={selectedSpecialView}
-          currentQuery={currentQuery}
-          setCurrentQuery={setCurrentQuery}
-          setSelectedThreadId={setSelectedThreadId}
-          setFocusedMessageId={setFocusedMessageId}
-          setStore={setStore}
-          exitReading={() => {
-            setReading(false)
-            setRunScreen(null)
-            setRoomScreen(null)
-          }}
-          openCompose={startNewCompose}
-          unsubscribeCount={unsubscribeCandidates.length}
-          openUnsubscribeDrawer={() => setUnsubscribeDrawerOpen(true)}
-          runs={activeRuns(store).filter(
-            run => run.accountId === (selectedAccount?.id ?? run.accountId),
-          )}
-          activeRunId={
-            runScreen && runScreen.kind !== 'index' ? runScreen.runId : null
-          }
-          runsIndexActive={runScreen?.kind === 'index'}
-          openRunsIndex={openRunsIndex}
-          openRun={openRun}
-          notesCount={Object.values(readingRoom.file.byMessageId).filter(record => record.notes.length).length}
-          contextCount={Object.values(readingRoom.file.byMessageId).filter(record => record.context).length}
-          sweepsActive={roomScreen?.kind === 'sweeps'}
-          openSweeps={sweepProvider && !compactInRoom ? () => {
-            setReading(false)
-            setRunScreen(null)
-            setRoomScreen({ kind: 'sweeps' })
-          } : undefined}
-          notesActive={roomScreen?.kind === 'notes' || (roomScreen?.kind === 'reading' && roomScreen.back === 'notes')}
-          contextActive={roomScreen?.kind === 'context' || (roomScreen?.kind === 'reading' && roomScreen.back === 'context')}
-          openNotes={() => openRoomBox('notes')}
-          openContext={() => openRoomBox('context')}
+          accountId={selectedAccount?.id}
+          onOpen={threadId => openThread(threadId)}
+          onNewMessage={startNewCompose}
+          search={roomSearch}
+          onShowInbox={() => setRoomSearch('')}
         />
-
-        {/* Region 3. The list and the reader are mutually exclusive
-            full-width surfaces; compose replaces both while open. */}
-        <ContentColumn>
-          {composeMode === 'full' || runScreen || roomScreen ? null : readingActive && selectedThread ? null : (
-            <>
-        {compactInRoom && (
-          <CompactInbox
-            store={store}
-            accountId={selectedAccount?.id}
-            onOpen={threadId => openThread(threadId)}
-            onNewMessage={startNewCompose}
-            search={roomSearch}
-            onShowInbox={() => setRoomSearch('')}
+      )}
+      <ThreadListToolbar
+        store={store}
+        filteredThreads={filteredThreads}
+        checkedThreadIds={checkedThreadIds}
+        selectAllThreads={selectAllThreads}
+        selectThreadsByIds={selectThreadsByIds}
+        clearThreadSelection={clearThreadSelection}
+        runTriageAction={runTriageAction}
+        canSnoozeThreads={canSnoozeThreads}
+        createMailLabel={createMailLabel}
+        cancelScheduledSendsForThreads={cancelScheduledSendsForThreads}
+        reviewSelectionAsRun={
+          checkedThreadsAllHoldDrafts ? reviewSelectionAsRun : undefined
+        }
+        refreshMail={refreshMail}
+        mailFetching={mailFetching}
+        mailFetchDisabled={!providerBacked}
+        viewName={activeViewName}
+        unreadInView={unreadInView}
+        autoFetchEnabled={autoFetchEnabled}
+        mailFetchIntervalMinutes={mailFetchIntervalMinutes}
+        setStore={setStore}
+      />
+      {/* Always visible: these are the views people switch between
+          constantly, so they do not belong inside a menu. */}
+      <FilterChipRow aria-label="Thread filters">
+        {MAIL_LIST_FILTERS.map(filter => (
+          <FilterChip
+            key={filter.id}
+            type="button"
+            $active={listFilter === filter.id}
+            aria-pressed={listFilter === filter.id}
+            onClick={() => setListFilter(filter.id)}
+          >
+            {filter.label}
+            {filter.id !== 'all' && listFilterCounts[filter.id] > 0
+              ? ` ${listFilterCounts[filter.id]}`
+              : ''}
+          </FilterChip>
+        ))}
+      </FilterChipRow>
+      {!compactInRoom &&
+        store.settings.screenerEnabled !== false &&
+        unscreenedSenders.length > 0 &&
+        selectedSpecialView === null &&
+        selectedMailbox?.role === 'inbox' && (
+          <ScreenerQueue
+            compactBanner
+            senders={unscreenedSenders}
+            onDecide={handleScreenerDecision}
+            onOpenThread={threadId => openThread(threadId)}
+            onOpenFullScreener={() => navigateToQuery('is:screener')}
           />
         )}
-        <ThreadListToolbar
-          store={store}
-          filteredThreads={filteredThreads}
-          checkedThreadIds={checkedThreadIds}
-          selectAllThreads={selectAllThreads}
-          clearThreadSelection={clearThreadSelection}
-          runTriageAction={runTriageAction}
-          canSnoozeThreads={canSnoozeThreads}
-          createMailLabel={createMailLabel}
-          cancelScheduledSendsForThreads={cancelScheduledSendsForThreads}
-          reviewSelectionAsRun={
-            checkedThreadsAllHoldDrafts ? reviewSelectionAsRun : undefined
-          }
-          refreshMail={refreshMail}
-          mailFetching={mailFetching}
-          mailFetchDisabled={!providerBacked}
-          viewName={activeViewName}
-          unreadInView={unreadInView}
-          autoFetchEnabled={autoFetchEnabled}
-          mailFetchIntervalMinutes={mailFetchIntervalMinutes}
-          setStore={setStore}
-        />
-        {/* Always visible: these are the views people switch between
-            constantly, so they do not belong inside a menu. */}
-        <FilterChipRow aria-label="Thread filters">
-          {MAIL_LIST_FILTERS.map(filter => (
-            <FilterChip
-              key={filter.id}
+      {agentSearches.length > 0 && (
+        <AgentSearchRow aria-label="Searches the assistant ran">
+          {agentSearches.map(search => (
+            <AgentSearchChip
+              key={search.id}
               type="button"
-              $active={listFilter === filter.id}
-              aria-pressed={listFilter === filter.id}
-              onClick={() => setListFilter(filter.id)}
+              title={`The assistant searched ${search.query} — click to show those threads`}
+              onClick={() => showSearchChipQuery(search.query)}
             >
-              {filter.label}
-              {filter.id !== 'all' && listFilterCounts[filter.id] > 0
-                ? ` ${listFilterCounts[filter.id]}`
-                : ''}
-            </FilterChip>
+              <span>{search.query}</span> {search.total}
+            </AgentSearchChip>
           ))}
-        </FilterChipRow>
-        {agentSearches.length > 0 && (
-          <AgentSearchRow aria-label="Searches the assistant ran">
-            {agentSearches.map(search => (
-              <AgentSearchChip
-                key={search.id}
-                type="button"
-                title={`The assistant searched ${search.query} — click to show those threads`}
-                onClick={() => showSearchChipQuery(search.query)}
-              >
-                <span>{search.query}</span> {search.total}
-              </AgentSearchChip>
-            ))}
-            <AgentSearchDismiss
-              type="button"
-              aria-label="Clear assistant searches"
-              onClick={() => setAgentSearches([])}
-            >
-              clear
-            </AgentSearchDismiss>
-          </AgentSearchRow>
-        )}
-        <PaneScroll data-mail-scroll data-compact-keep={compactInRoom && syncReviewOpen ? '' : undefined}>
+          <AgentSearchDismiss
+            type="button"
+            aria-label="Clear assistant searches"
+            onClick={() => setAgentSearches([])}
+          >
+            clear
+          </AgentSearchDismiss>
+        </AgentSearchRow>
+      )}
+      <PaneScroll
+        data-mail-scroll
+        data-compact-keep={compactInRoom && syncReviewOpen ? '' : undefined}
+      >
         {syncReviewOpen && (
           <Section aria-live="polite">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -4896,7 +5922,7 @@ export function PureMailShell({
             <div id="mail-recovery-details" hidden={!syncReviewExpanded}>
             <Meta>Review each item below. Retrying draft sync saves a draft; it does not send mail.</Meta>
             {store.drafts.filter(draft => (draft.sendUncertainties?.some(item => !item.checkedAt) || draft.sendError || draft.providerSaveWarning || draft.syncState === 'failed' || draft.syncState === 'conflict') && store.threads.some(thread => thread.id === draft.threadId && thread.accountId === selectedAccountId)).map(draft => (
-              <div key={draft.id} style={{ padding: '12px 0', borderTop: '1px solid var(--platform-colors-border, #ddd)' }}>
+              <div key={draft.id} style={{ padding: '12px 0', borderTop: '1px solid var(--n-line)' }}>
                 <strong>{draft.subject || '(No subject)'}</strong>
                 <Meta>Draft · {draft.syncState === 'conflict' ? 'Conflicting versions' : 'Save failed'}</Meta>
                 <Meta>{draftDelivery(store, draft.id).reason || draft.sendError || draft.providerSaveWarning || (draft.providerSaveError ? mailErrorToastText(draft.providerSaveError) : undefined) || (draft.providerConflict
@@ -4966,8 +5992,15 @@ export function PureMailShell({
             </Meta>
           </Section>
         )}
+        {selectedSpecialView?.kind === 'screener' && !compactInRoom ? (
+          <ScreenerQueue
+            senders={unscreenedSendersWithModel}
+            onDecide={handleScreenerDecision}
+            onOpenThread={threadId => openThread(threadId)}
+          />
+        ) : (
           <ThreadRail
-              teamReads={executiveShare.teamReads}
+            teamReads={executiveShare.teamReads}
             store={store}
             density={density}
             hiddenInRoom={compactInRoom}
@@ -4981,10 +6014,95 @@ export function PureMailShell({
             runTriageAction={runTriageAction}
             canSnoozeThreads={canSnoozeThreads}
             toggleThreadStarred={toggleThreadStarred}
+            mailFetching={mailFetching}
+            emptyVariant={emptyVariant}
+            currentQuery={currentQuery}
+            onClearSearch={
+              emptyVariant === 'search' || listFilter !== 'all'
+                ? () => {
+                    setListFilter('all')
+                    navigateToQuery('in:inbox')
+                  }
+                : undefined
+            }
+            onSearchServer={
+              emptyVariant === 'search' && searchAllMail
+                ? () => {
+                    setMailSearchDrawerOpen(true)
+                    focusMailSearch()
+                  }
+                : undefined
+            }
+            onCompose={
+              emptyVariant === 'inbox-zero' || emptyVariant === 'drafts'
+                ? startNewCompose
+                : undefined
+            }
           />
-        </PaneScroll>
-            </>
+        )}
+      </PaneScroll>
+    </>
+  )
+  const fullSurfaceActive =
+    composeMode === 'full' || Boolean(runScreen) || Boolean(roomScreen)
+
+  return (
+    <MailFrame data-app="mail" data-compact-in-room={compactInRoom ? '' : undefined}>
+      {compactInRoom && <CompactInRoomStyle />}
+      {!readerHoldsTopBar && mailTopBar}
+
+      <MailBodyRow>
+        {/* Region 2. The 232px nav rail: Compose, boxes, labels, views, and
+            the bottom-docked sync line. */}
+        <MailSidebar
+          store={store}
+          selectedAccount={selectedAccount}
+          accountMailboxes={accountMailboxes}
+          selectedMailboxId={selectedMailboxId}
+          selectedSpecialView={selectedSpecialView}
+          currentQuery={currentQuery}
+          setCurrentQuery={setCurrentQuery}
+          setSelectedThreadId={setSelectedThreadId}
+          setFocusedMessageId={setFocusedMessageId}
+          setStore={setStore}
+          exitReading={() => {
+            setReading(false)
+            setRunScreen(null)
+            setRoomScreen(null)
+          }}
+          openCompose={startNewCompose}
+          unsubscribeCount={unsubscribeCandidates.length}
+          openUnsubscribeDrawer={() => setUnsubscribeDrawerOpen(true)}
+          runs={activeRuns(store).filter(
+            run => run.accountId === (selectedAccount?.id ?? run.accountId),
           )}
+          activeRunId={
+            runScreen && runScreen.kind !== 'index' ? runScreen.runId : null
+          }
+          runsIndexActive={runScreen?.kind === 'index'}
+          openRunsIndex={openRunsIndex}
+          openRun={openRun}
+          notesCount={Object.values(readingRoom.file.byMessageId).filter(record => record.notes.length).length}
+          contextCount={Object.values(readingRoom.file.byMessageId).filter(record => record.context).length}
+          sweepsActive={roomScreen?.kind === 'sweeps'}
+          openSweeps={sweepProvider && !compactInRoom ? () => {
+            setReading(false)
+            setRunScreen(null)
+            setRoomScreen({ kind: 'sweeps' })
+          } : undefined}
+          notesActive={roomScreen?.kind === 'notes' || (roomScreen?.kind === 'reading' && roomScreen.back === 'notes')}
+          contextActive={roomScreen?.kind === 'context' || (roomScreen?.kind === 'reading' && roomScreen.back === 'context')}
+          openNotes={() => openRoomBox('notes')}
+          openContext={() => openRoomBox('context')}
+          createMailLabel={createMailLabel}
+          screenerCount={unscreenedSenders.length}
+        />
+
+        {/* Region 3. List, Reader, or Split-Pane Workspace; compose/runs/room replace while active. */}
+        <ContentColumn>
+          {!fullSurfaceActive && !isSplitLayout && !(readingActive && selectedThread)
+            ? listPaneContent
+            : null}
         {composeMode === 'full' ? (
           <ComposeEditor
             key={`compose-${composeSession}`}
@@ -5095,7 +6213,9 @@ export function PureMailShell({
               />
             )
           })()
-        ) : readingActive && selectedThread ? (
+        ) : (isSplitLayout || (readingActive && selectedThread)) ? (
+          (() => {
+            const readerEl = selectedThread ? (
           <ThreadReader
               teamReads={executiveShare.teamReads}
             mailSaveFolder={async () => {
@@ -5166,7 +6286,109 @@ export function PureMailShell({
             threadTotal={filteredThreads.length}
             selectAdjacentThread={selectAdjacentThread}
             closeThread={() => setReading(false)}
-            topBar={mailTopBar}
+            topBar={isSplitLayout ? undefined : mailTopBar}
+            isSplitPane={isSplitLayout}
+            composeMinimized={composeMode === 'minimized'}
+            decisionInsight={activeThreadDecisionInsight}
+            onSetFollowUpReminder={(threadId, iso) => {
+              const target = storeRef.current.threads.find(t => t.id === threadId)
+              if (!target) return
+              setStore(current =>
+                scheduleFollowUpReminder(current, {
+                  threadId,
+                  accountId: target.accountId,
+                  remindAt: iso,
+                  cancelOnReply: true,
+                }),
+              )
+              setCommandNotice('Follow-up reminder scheduled.')
+            }}
+            onSnoozeThread={(threadId, snoozedUntil) =>
+              runTriageAction([threadId], { type: 'snooze', snoozedUntil })
+            }
+            onTogglePin={threadId => {
+              const isPinned = (storeRef.current.pinnedThreadIds ?? []).includes(
+                threadId,
+              )
+              runTriageAction([threadId], {
+                type: isPinned ? 'unpin' : 'pin',
+              })
+            }}
+            onToggleMute={threadId => {
+              const isMuted = (storeRef.current.mutedThreadIds ?? []).includes(
+                threadId,
+              )
+              runTriageAction([threadId], {
+                type: isMuted ? 'unmute' : 'mute',
+              })
+            }}
+            onScreenSender={handleScreenerDecision}
+            onQuickReplySend={(body, event) => {
+              if (
+                !event ||
+                !isPersonGesture(
+                  event as Parameters<typeof isPersonGesture>[0],
+                )
+              ) {
+                return {
+                  ok: false,
+                  error: 'Use the Send button or Cmd+Enter to send.',
+                }
+              }
+              const ownerEmails = [
+                selectedAccount?.email ?? '',
+                ...(storeRef.current.settings.ownerIdentities?.emails ?? []),
+              ].filter(Boolean)
+              const inbound = latestInboundMessage(
+                selectedMessages.filter(m => !m.isDraft),
+                selectedAccount?.email ?? '',
+              )
+              const fields = deriveReplyComposeFields(
+                selectedThread,
+                selectedMessages,
+                inbound,
+                'reply',
+                ownerEmails,
+              )
+              const created = upsertReplyDraft(storeRef.current, {
+                context: {
+                  threadId: selectedThread.id,
+                  messageId: inbound?.id ?? null,
+                  kind: 'reply',
+                  draftId: null,
+                },
+                to: parseComposeRecipients(fields.to),
+                cc: parseComposeRecipients(fields.cc),
+                bcc: [],
+                subject: fields.subject,
+                body,
+                bodyHtml: plainTextToComposeHtml(body),
+                attachments: [],
+              })
+              storeRef.current = created.store
+              setStore(() => created.store)
+              const draftToSend = created.store.drafts.find(
+                item => item.id === created.draftId,
+              )
+              if (!draftToSend) {
+                return {
+                  ok: false,
+                  error: 'Could not prepare quick reply draft.',
+                }
+              }
+              const res = sendStoreDraft(draftToSend, { label: 'Quick reply' })
+              if (!res.ok) {
+                setCommandNotice(res.reason)
+                return { ok: false, error: res.reason }
+              }
+              return { ok: true }
+            }}
+            onOpenThread={threadId => openThread(threadId)}
+            onComposeTo={(email, name) => {
+              const target = name && name !== email ? `${name} <${email}>` : email
+              startNewCompose()
+              setComposeTo(target)
+            }}
             focusReply={focusReply}
             focusReplyAll={focusReplyAll}
             onOpenMailto={href => {
@@ -5239,6 +6461,21 @@ export function PureMailShell({
             openCalendarInvite={openCalendarInvite}
             openCalendarInviteForMessage={openCalendarInviteForMessage}
           />
+            ) : (
+              <ThreadListEmptyState variant="split-placeholder" />
+            )
+            if (!isSplitLayout) {
+              return readerEl
+            }
+            return (
+              <SplitWorkspace $layout={readingPaneLayout}>
+                <SplitListPane $layout={readingPaneLayout}>
+                  {listPaneContent}
+                </SplitListPane>
+                <SplitReaderPane>{readerEl}</SplitReaderPane>
+              </SplitWorkspace>
+            )
+          })()
         ) : null}
         </ContentColumn>
 
@@ -5306,8 +6543,146 @@ export function PureMailShell({
           archiveSenderThreads={archiveSenderThreads}
         />
       )}
+      {!compactInRoom && (
+        <CommandPalette
+          open={commandPaletteOpen}
+          initialQuery={commandPaletteInitialQuery}
+          onClose={() => {
+            setCommandPaletteOpen(false)
+            setCommandPaletteInitialQuery('')
+          }}
+          items={commandPaletteItems}
+        />
+      )}
+      {!compactInRoom && (
+        <ShortcutsModal
+          open={shortcutsModalOpen}
+          onClose={() => setShortcutsModalOpen(false)}
+        />
+      )}
+      {!compactInRoom && (
+        <TriageFocusMode
+          open={focusTriageOpen}
+          threads={filteredThreads}
+          currentIndex={Math.min(focusTriageIndex, Math.max(0, filteredThreads.length - 1))}
+          triagedCount={focusTriageCount}
+          totalCount={filteredThreads.length + focusTriageCount}
+          decisionHint={
+            activeThreadDecisionInsight?.threadId === decisionTargetThread?.id
+              ? activeThreadDecisionInsight?.triageAction ?? null
+              : null
+          }
+          onClose={() => setFocusTriageOpen(false)}
+          onArchive={threadId => {
+            runTriageAction([threadId], { type: 'archive' })
+            setFocusTriageCount(c => c + 1)
+          }}
+          onTrash={threadId => {
+            runTriageAction([threadId], { type: 'trash' })
+            setFocusTriageCount(c => c + 1)
+          }}
+          onSnooze={(threadId, iso) => {
+            runTriageAction([threadId], { type: 'snooze', snoozedUntil: iso })
+            setFocusTriageCount(c => c + 1)
+          }}
+          onStar={threadId => toggleThreadStarred(threadId)}
+          onMute={threadId => {
+            runTriageAction([threadId], { type: 'mute', muted: true })
+            setFocusTriageCount(c => c + 1)
+            setFocusTriageIndex(i =>
+              filteredThreads.length > 1 ? (i + 1) % filteredThreads.length : 0,
+            )
+          }}
+          onReply={threadId => {
+            setFocusTriageOpen(false)
+            openThread(threadId)
+            setPendingFocusReplyThreadId(threadId)
+          }}
+          onSkip={() =>
+            setFocusTriageIndex(i =>
+              filteredThreads.length > 0 ? (i + 1) % filteredThreads.length : 0,
+            )
+          }
+          onUndo={() => {
+            runMailCommand('undo')
+            setFocusTriageCount(c => Math.max(0, c - 1))
+          }}
+          canUndo={hasUndo}
+          renderPreview={thread => {
+            const latestMsg = [...store.messages]
+              .filter(m => m.threadId === thread.id && !m.isDraft)
+              .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))[0]
+            return (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ fontSize: 12, color: 'var(--n-soft)' }}>
+                  {latestMsg?.from.name || thread.participants[0]?.name || 'Unknown'}{' '}
+                  &lt;{latestMsg?.from.email || thread.participants[0]?.email || ''}&gt;
+                </div>
+                <div style={{ fontSize: 13.5, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                  {latestMsg?.body?.slice(0, 1200) || thread.summary || '(no preview)'}
+                </div>
+              </div>
+            )
+          }}
+        />
+      )}
+      {searchFilterSeedQuery !== null && selectedAccount && (
+        <MailFilterDialog
+          store={store}
+          accountId={selectedAccount.id}
+          seed={{
+            senderEmail: '',
+            subject: '',
+            initialQuery: searchFilterSeedQuery,
+          }}
+          onClose={() => setSearchFilterSeedQuery(null)}
+          onSubmit={handleCreateFilterFromSearch}
+        />
+      )}
+      {!compactInRoom && snoozeShortcutOpen && selectedThread && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Snooze thread"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgb(0 0 0 / 0.35)',
+          }}
+          onClick={() => setSnoozeShortcutOpen(false)}
+        >
+          <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+            <TimePickerPopover
+              mode="snooze"
+              staticPosition
+              onSelect={iso => {
+                setSnoozeShortcutOpen(false)
+                runTriageAction([selectedThread.id], {
+                  type: 'snooze',
+                  snoozedUntil: iso,
+                })
+              }}
+              onClose={() => setSnoozeShortcutOpen(false)}
+            />
+          </div>
+        </div>
+      )}
       {toast && createPortal(
-        <MailToast role={toast.error ? 'alert' : 'status'} aria-live={toast.error ? 'assertive' : 'polite'}>
+        <MailToast
+          $tone={
+            toast.error
+              ? 'error'
+              : toast.actionLabel === 'Undo'
+                ? 'undo'
+                : 'info'
+          }
+          role={toast.error ? 'alert' : 'status'}
+          aria-live={toast.error ? 'assertive' : 'polite'}
+        >
           <span>{toast.message}</span>
           {toast.actionLabel && (
             <MailToastAction

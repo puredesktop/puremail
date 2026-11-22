@@ -6,8 +6,16 @@ import type {
   MailStore,
 } from '../types'
 import { isImapMailboxId } from './imapMailProvider'
-import { archiveThread, labelThread, markThreadRead } from './mailModel'
+import {
+  archiveThread,
+  createTaskFromThread,
+  deleteThread,
+  getThreadTasks,
+  labelThread,
+  markThreadRead,
+} from './mailModel'
 import { quoteQueryValue, resolveThreadQuery } from './mailQuery'
+import { setThreadMuted, setThreadStarred } from './mailTriage'
 
 /**
  * The filter engine. Filters are named queries (the same language as
@@ -19,7 +27,7 @@ import { quoteQueryValue, resolveThreadQuery } from './mailQuery'
  */
 
 export type MailFilterMutation =
-  | { kind: 'archive' | 'markRead'; threadId: string }
+  | { kind: 'archive' | 'markRead' | 'trash' | 'star'; threadId: string }
   /** TRUE server-side folder move — the box named a real IMAP folder. */
   | { kind: 'move'; threadId: string; mailboxId: string }
 
@@ -236,6 +244,30 @@ export function setMailFilterEnabled(
   }
 }
 
+export function updateMailFilter(
+  store: MailStore,
+  filterId: string,
+  patch: Partial<Pick<MailFilterRule, 'name' | 'query' | 'actions' | 'enabled'>>,
+): MailStore {
+  const filters = store.filters ?? []
+  if (!filters.some(rule => rule.id === filterId)) return store
+  if (patch.name !== undefined && !patch.name.trim()) return store
+  if (patch.query !== undefined && !patch.query.trim()) return store
+  return {
+    ...store,
+    filters: filters.map(rule => {
+      if (rule.id !== filterId) return rule
+      return {
+        ...rule,
+        ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+        ...(patch.query !== undefined ? { query: patch.query.trim() } : {}),
+        ...(patch.actions !== undefined ? { actions: patch.actions } : {}),
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+      }
+    }),
+  }
+}
+
 /**
  * Void the run markers on these threads so the next engine pass looks at
  * them again. Called when a remote filter mutation FAILS: the marker was
@@ -297,7 +329,9 @@ export function runMailFilters(
   )
   const rules = (store.filters ?? []).filter(
     rule =>
-      rule.enabled && (!options.ruleIds || options.ruleIds.includes(rule.id)),
+      rule.enabled &&
+      rule.query.trim().length > 0 &&
+      (!options.ruleIds || options.ruleIds.includes(rule.id)),
   )
 
   // Match every rule against the INPUT store before applying anything, so
@@ -318,6 +352,28 @@ export function runMailFilters(
   let totalHits = 0
 
   const pushMutation = (mutation: MailFilterMutation): void => {
+    if (mutation.kind === 'trash') {
+      // Trash supersedes any prior archive/move mutation for the same thread.
+      for (let i = mutations.length - 1; i >= 0; i -= 1) {
+        const prev = mutations[i]!
+        if (
+          prev.threadId === mutation.threadId &&
+          (prev.kind === 'move' || prev.kind === 'archive' || prev.kind === 'trash')
+        ) {
+          mutations.splice(i, 1)
+          mutationKeys.delete(`${prev.kind}:${prev.threadId}`)
+        }
+      }
+      mutationKeys.add(`trash:${mutation.threadId}`)
+      mutations.push(mutation)
+      return
+    }
+    if (
+      (mutation.kind === 'move' || mutation.kind === 'archive') &&
+      mutationKeys.has(`trash:${mutation.threadId}`)
+    ) {
+      return
+    }
     if (mutation.kind === 'move') {
       // Final move destination wins when multiple rules file the same thread,
       // and supersedes any prior archive mutation for that thread.
@@ -341,6 +397,18 @@ export function runMailFilters(
     mutations.push(mutation)
   }
 
+  const trashMailboxIds = new Set(
+    working.mailboxes
+      .filter(m => m.accountId === accountId && m.role === 'trash')
+      .map(m => m.id),
+  )
+  const accountArchiveId = working.mailboxes.find(
+    m => m.accountId === accountId && m.role === 'archive',
+  )?.id
+  const accountTrashId = working.mailboxes.find(
+    m => m.accountId === accountId && m.role === 'trash',
+  )?.id
+
   for (const { rule, threadIds } of matchesByRule) {
     if (threadIds.length === 0) continue
     hitCountByRule.set(rule.id, threadIds.length)
@@ -350,15 +418,35 @@ export function runMailFilters(
       names.push(rule.name)
       hitNamesByThread.set(threadId, names)
       const actions = rule.actions
+
+      if (actions.trash) {
+        const beforeMailbox = working.threads.find(t => t.id === threadId)?.mailboxId
+        working = deleteThread(working, threadId, accountTrashId)
+        const afterMailbox = working.threads.find(t => t.id === threadId)?.mailboxId
+        if (beforeMailbox !== afterMailbox) {
+          pushMutation({ kind: 'trash', threadId })
+        }
+        if (actions.markRead) {
+          working = markThreadRead(working, threadId, true)
+          pushMutation({ kind: 'markRead', threadId })
+        }
+        continue
+      }
+
+      const currentThread = working.threads.find(t => t.id === threadId)
+      const isTrashed = Boolean(
+        currentThread && trashMailboxIds.has(currentThread.mailboxId),
+      )
+
       const realFolder =
-        actions.skipInbox && actions.labelName
+        actions.skipInbox && actions.labelName && !isTrashed
           ? accountFolderForBoxName(working, accountId, actions.labelName)
           : undefined
       if (actions.labelName && !realFolder) {
         const ensured = ensureMailLabel(working, actions.labelName)
         working = labelThread(ensured.store, threadId, ensured.label.id)
       }
-      if (actions.skipInbox) {
+      if (actions.skipInbox && !isTrashed) {
         const before = working.threads.find(t => t.id === threadId)
         if (realFolder) {
           // The box IS a real folder on the mail server (IMAP): move the
@@ -379,7 +467,7 @@ export function runMailFilters(
           const boxed = ensureMailBox(working, accountId, actions.labelName)
           working = fileThreadIntoBox(boxed.store, threadId, boxed.mailbox.id)
         } else {
-          working = archiveThread(working, threadId)
+          working = archiveThread(working, threadId, accountArchiveId)
         }
         const after = working.threads.find(t => t.id === threadId)
         if (!realFolder && before?.status !== after?.status) {
@@ -390,6 +478,47 @@ export function runMailFilters(
         working = markThreadRead(working, threadId, true)
         pushMutation({ kind: 'markRead', threadId })
       }
+      if (actions.star) {
+        const alreadyStarred = (working.starredThreadIds ?? []).includes(threadId)
+        working = setThreadStarred(working, threadId, true)
+        if (!alreadyStarred) {
+          pushMutation({ kind: 'star', threadId })
+        }
+      }
+      if (actions.priority) {
+        const nextPriority = actions.priority === 'high' ? 'high' : 'none'
+        working = {
+          ...working,
+          threads: working.threads.map(thread =>
+            thread.id === threadId
+              ? { ...thread, priority: nextPriority }
+              : thread,
+          ),
+        }
+      }
+      if (actions.mute && !isTrashed) {
+        working = setThreadMuted(working, threadId, true)
+        const beforeMute = working.threads.find(t => t.id === threadId)
+        if (beforeMute && beforeMute.status !== 'archived') {
+          working = archiveThread(working, threadId, accountArchiveId)
+          const afterMute = working.threads.find(t => t.id === threadId)
+          if (beforeMute.status !== afterMute?.status) {
+            pushMutation({ kind: 'archive', threadId })
+          }
+        }
+      }
+      if (actions.createTask && !isTrashed) {
+        if (getThreadTasks(working, threadId).length === 0) {
+          const targetThread = working.threads.find(t => t.id === threadId)
+          if (targetThread) {
+            const task = createTaskFromThread(targetThread, undefined, nowIso)
+            working = {
+              ...working,
+              tasks: [...working.tasks, task],
+            }
+          }
+        }
+      }
     }
   }
 
@@ -398,7 +527,9 @@ export function runMailFilters(
   // mailbox belongs in the box. Idempotent, local-only, no new mutations.
   const archiveRoleIds = new Set(
     working.mailboxes
-      .filter(mailbox => mailbox.role === 'archive')
+      .filter(
+        mailbox => mailbox.accountId === accountId && mailbox.role === 'archive',
+      )
       .map(mailbox => mailbox.id),
   )
   for (const rule of rules) {

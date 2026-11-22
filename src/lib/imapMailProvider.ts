@@ -10,6 +10,11 @@ import {
 } from './mailAttachments'
 import { parseCalendarInvite } from './mailCalendarInvite'
 import {
+  parseAuthenticationResults,
+  parseMessageImportance,
+  sanitizeRawHeaders,
+} from './mailPrivacyShield'
+import {
   assignConversationKeys,
   normalizeMessageId,
   threadIdForKey,
@@ -72,6 +77,14 @@ export interface ImapEnvelope {
   /** Root-first, as RFC 5322 sends them; the first entry is the conversation. */
   references?: string[]
   listUnsubscribe?: string
+  listUnsubscribePost?: string
+  authenticationResults?: string
+  receivedSpf?: string
+  dkimSignature?: string
+  returnPath?: string
+  importance?: 'low' | 'normal' | 'high' | string
+  xPriority?: string
+  rawHeaders?: Array<{ name: string; value: string }>
   subject: string
   from: MailContact
   to: MailContact[]
@@ -248,7 +261,15 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
         messageId?: string
         inReplyTo?: string
         references?: string[]
-  listUnsubscribe?: string
+        listUnsubscribe?: string
+        listUnsubscribePost?: string
+        authenticationResults?: string
+        receivedSpf?: string
+        dkimSignature?: string
+        returnPath?: string
+        importance?: string
+        xPriority?: string
+        rawHeaders?: Array<{ name: string; value: string }>
         subject: string
         from: { name: string; email: string } | null
         to: Array<{ name: string; email: string }>
@@ -271,7 +292,15 @@ export function bridgeImapTransport(config: BridgeTransportConfig): ImapTranspor
         ...(message.inReplyTo ? { inReplyTo: message.inReplyTo } : {}),
         ...(message.references?.length ? { references: message.references } : {}),
         subject: message.subject,
-        ...(message.listUnsubscribe ? {listUnsubscribe:message.listUnsubscribe} : {}),
+        ...(message.listUnsubscribe ? { listUnsubscribe: message.listUnsubscribe } : {}),
+        ...(message.listUnsubscribePost ? { listUnsubscribePost: message.listUnsubscribePost } : {}),
+        ...(message.authenticationResults ? { authenticationResults: message.authenticationResults } : {}),
+        ...(message.receivedSpf ? { receivedSpf: message.receivedSpf } : {}),
+        ...(message.dkimSignature ? { dkimSignature: message.dkimSignature } : {}),
+        ...(message.returnPath ? { returnPath: message.returnPath } : {}),
+        ...(message.importance ? { importance: message.importance } : {}),
+        ...(message.xPriority ? { xPriority: message.xPriority } : {}),
+        ...(message.rawHeaders?.length ? { rawHeaders: message.rawHeaders } : {}),
         from: message.from ?? { name: '', email: '' },
         to: message.to,
         ...(message.cc.length ? { cc: message.cc } : {}),
@@ -534,6 +563,78 @@ function attachmentsOfEnvelope(folderPath: string, envelope: ImapEnvelope): Atta
   }))
 }
 
+function indexEnvelopeHeaders(
+  headers: ReadonlyArray<{ name: string; value: string }> | undefined,
+): Map<string, string[]> {
+  const map = new Map<string, string[]>()
+  if (!headers?.length) return map
+  for (const entry of headers) {
+    const key = entry.name.toLowerCase()
+    const list = map.get(key)
+    if (list) list.push(entry.value)
+    else map.set(key, [entry.value])
+  }
+  return map
+}
+
+function envelopeMetadataFields(
+  envelope: ImapEnvelope,
+): Pick<
+  MailMessage,
+  | 'listUnsubscribePost'
+  | 'authResults'
+  | 'returnPath'
+  | 'rawHeaders'
+  | 'importance'
+> {
+  const headerMap = indexEnvelopeHeaders(envelope.rawHeaders)
+  const firstHeader = (name: string): string | undefined =>
+    headerMap.get(name)?.[0]
+
+  const listUnsubscribePost = (
+    envelope.listUnsubscribePost ??
+    firstHeader('list-unsubscribe-post') ??
+    ''
+  ).trim()
+  // Strictly topmost Authentication-Results header.
+  const authHeader = (
+    envelope.authenticationResults ??
+    firstHeader('authentication-results') ??
+    ''
+  ).trim()
+  const spfHeader = (
+    envelope.receivedSpf ??
+    firstHeader('received-spf') ??
+    ''
+  ).trim()
+  const dkimHeader = (
+    envelope.dkimSignature ??
+    firstHeader('dkim-signature') ??
+    ''
+  ).trim()
+  const authResults =
+    authHeader || spfHeader || dkimHeader
+      ? parseAuthenticationResults(authHeader, spfHeader, dkimHeader)
+      : undefined
+  const returnPath = (
+    envelope.returnPath ??
+    firstHeader('return-path') ??
+    ''
+  ).trim()
+  const rawHeaders = sanitizeRawHeaders(envelope.rawHeaders)
+  const importance = parseMessageImportance(
+    envelope.importance ?? firstHeader('importance'),
+    envelope.xPriority ?? firstHeader('x-priority'),
+  )
+  return {
+    ...(listUnsubscribePost ? { listUnsubscribePost } : {}),
+    ...(authResults ? { authResults } : {}),
+    ...(returnPath ? { returnPath } : {}),
+    ...(rawHeaders.length ? { rawHeaders } : {}),
+    ...(importance ? { importance } : {}),
+  }
+}
+
 /** One message read on a walk: a message of its own, in no local thread. */
 function walkedMessage(folder: ImapFolder, envelope: ImapEnvelope): MailMessage {
   const id = walkId(folder.path, envelope.uid)
@@ -546,6 +647,7 @@ function walkedMessage(folder: ImapFolder, envelope: ImapEnvelope): MailMessage 
     ...(envelope.cc?.length ? { cc: envelope.cc } : {}),
     subject: envelope.subject || '(no subject)',
     ...(envelope.listUnsubscribe ? { listUnsubscribe: envelope.listUnsubscribe } : {}),
+    ...envelopeMetadataFields(envelope),
     body: envelope.body,
     ...(envelope.bodyHtml ? { bodyHtml: envelope.bodyHtml } : {}),
     receivedAt: envelope.date,
@@ -810,7 +912,8 @@ export class ImapMailProvider implements MailProvider {
           ...(envelope.replyTo?.length ? { replyTo: envelope.replyTo } : {}),
           ...(envelope.deliveredTo?.length ? { deliveredTo: envelope.deliveredTo } : {}),
           subject: envelope.subject || '(no subject)',
-          ...(envelope.listUnsubscribe ? {listUnsubscribe:envelope.listUnsubscribe} : {}),
+          ...(envelope.listUnsubscribe ? { listUnsubscribe: envelope.listUnsubscribe } : {}),
+          ...envelopeMetadataFields(envelope),
           body: envelope.body,
           ...(envelope.bodyHtml ? { bodyHtml: envelope.bodyHtml } : {}),
           receivedAt: envelope.date,
@@ -1235,6 +1338,8 @@ export class ImapMailProvider implements MailProvider {
       body: draft.body,
       ...(draft.bodyHtml ? { bodyHtml: draft.bodyHtml } : {}),
       attachments,
+      ...(draft.importance ? { importance: draft.importance } : {}),
+      ...(draft.requestReadReceipt ? { requestReadReceipt: true } : {}),
     })
   }
 

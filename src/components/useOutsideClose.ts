@@ -9,6 +9,7 @@ export function useOutsideClose(
   ref: RefObject<HTMLElement | null>,
   active: boolean,
   close: () => void,
+  ignoreRef?: RefObject<HTMLElement | null>,
 ): void {
   const closeRef = useRef(close)
   closeRef.current = close
@@ -16,15 +17,19 @@ export function useOutsideClose(
     if (!active) return
     const onPointerDown = (event: MouseEvent): void => {
       const node = ref.current
+      if (!(event.target instanceof Node)) return
+      if (ignoreRef?.current?.contains(event.target)) return
       if (
-        node &&
-        event.target instanceof Node &&
-        !node.contains(event.target)
+        event.target instanceof Element &&
+        event.target.closest('[data-popover-trigger]')
       ) {
+        return
+      }
+      if (node && !node.contains(event.target)) {
         closeRef.current()
       }
     }
     document.addEventListener('mousedown', onPointerDown)
     return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [active, ref])
+  }, [active, ref, ignoreRef])
 }

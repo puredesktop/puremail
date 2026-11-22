@@ -46,23 +46,22 @@ export function compactPersistedMessage(message: MailMessage): MailMessage {
     ? message.attachments.map(strippedPersistedAttachment)
     : message.attachments
 
-  if (!message.bodyHtml) {
+  if (!message.bodyHtml && !message.rawHeaders) {
     return attachments === message.attachments
       ? message
       : { ...message, attachments }
   }
 
-  // Provider HTML is a re-fetchable rendering alternative, and frequently
-  // carries megabytes of email-template CSS per message. Keeping every copy
-  // made the persisted mailbox exceed 100 MB and trapped startup behind the
-  // iframe bridge while that object was parsed and cloned. Plain text keeps
-  // the cached conversation readable; the next sync restores rich HTML in
-  // memory. For HTML-only mail, derive text before dropping the alternative.
-  const { bodyHtml: _bodyHtml, ...withoutHtml } = message
-  const body = message.body.trim()
-    ? message.body
-    : compactMailText(stripHtmlToText(message.bodyHtml))
-  return { ...withoutHtml, body, attachments }
+  // Provider HTML and rawHeaders are re-fetchable rendering/inspection data
+  // that can bloat persisted mail-store.json. Plain text and parsed authResults
+  // keep the cached conversation readable; the next sync restores full HTML and
+  // rawHeaders in memory. For HTML-only mail, derive text before dropping HTML.
+  const { bodyHtml, rawHeaders: _rawHeaders, ...withoutEphemeral } = message
+  const body =
+    message.body.trim() || !bodyHtml
+      ? message.body
+      : compactMailText(stripHtmlToText(bodyHtml))
+  return { ...withoutEphemeral, body, attachments }
 }
 
 /**
@@ -398,6 +397,8 @@ export function emptyMailStore(): MailStore {
       followUp: { ...DEFAULT_FOLLOW_UP_SETTINGS }, connectionProfiles: [],
     },
     threadContextSummaries: [], learningRules: [], starredThreadIds: [], pinnedThreadIds: [],
+    vipSenders: [], mutedThreadIds: [], screenerDecisions: {}, followUpReminders: [],
+    snippets: [], contactGroups: [],
     snoozes: [], providerLabels: [], queuedActions: [], scheduledSends: [],
     notificationPreferences: defaultMailNotificationPreferences(),
   }

@@ -6,9 +6,10 @@ import { Badge } from '@purescience/platform-ui/components/common/feedback/Badge
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { SelectField } from '@purescience/platform-ui/components/common/inputs/SelectField'
 import { typedTriageSettings, shadowComparison, triageCandidates } from '../lib/typedTriage'
+import { clearDecisionOpsCache, decisionModelOperations, resetDecisionOpsCircuit } from '../lib/mailDecisionOps'
 import { connectionTestMessage, testTypedTriageConnection } from '../lib/typedTriageConnection'
 import { readTriageFile } from '../lib/triagePersistence'
-import type { MailStore } from '../types'
+import type { DecisionModelOperationsSettings, MailStore } from '../types'
 import { ConnectionResultTitle, ConnectionTestResultBox, Meta, SettingsActions, SettingsCard, SettingsCardHeader, SettingsOptionGrid, Subject, TaskField, type ConnectionResultTone } from './mailShellStyles'
 import { MailConnectionControl, type MailConnectionState } from './MailDeliveryStatus'
 
@@ -35,12 +36,25 @@ const MODE_WORDS: Record<Mode, { badge: string; tone: 'neutral' | 'accent'; help
 export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: MailStore; setStore: React.Dispatch<React.SetStateAction<MailStore>>; onRunTriage: (ids?: string[], options?: RunOptions) => Promise<RunSummary> }) {
   const [status, setStatus] = useState<DecisionSettings | null>(null)
   const prefs = typedTriageSettings(store)
+  const ops = decisionModelOperations(store)
   const selection = status?.effectiveModelId ?? ''
   const selectionRef = useRef(selection); selectionRef.current = selection
   // Whatever the desktop's Models choice is: local or hosted, never assumed from the model id.
   const local = effectiveDecisionModel(status)?.local ?? false
   const threshold = prefs.confidence
   function patch(update: Partial<Prefs>) { setStore(current => ({ ...current, settings: { ...current.settings, typedTriage: { ...typedTriageSettings(current), ...update } } })) }
+  function toggleOp(key: keyof DecisionModelOperationsSettings, checked: boolean) {
+    setStore(current => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        typedTriage: {
+          ...typedTriageSettings(current),
+          operations: { ...decisionModelOperations(current), [key]: checked },
+        },
+      },
+    }))
+  }
 
   // The two numbers as typed, so each can be cleared and typed afresh; saved once valid.
   const [confidenceText, setConfidenceText] = useState(String(threshold))
@@ -103,7 +117,7 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
       <Badge tone={mode.tone}>{mode.badge}</Badge>
     </SettingsCardHeader>
 
-    <h3>Decision models</h3><DecisionModelSettings onSettingsChange={setStatus} />
+    <h3>Decision models</h3><DecisionModelSettings onSettingsChange={next => { clearDecisionOpsCache(); setStatus(next) }} />
     <SettingsOptionGrid>
       <TaskField>Used as
         <SelectField aria-label="Automatic triage mode" value={prefs.mode} options={[{ value: 'off', label: 'Off' }, { value: 'shadow', label: 'Shadow trial' }, { value: 'suggest', label: 'Suggestions in the inbox' }]} onValueChange={m => patch({ mode: m as Mode })} />
@@ -111,10 +125,41 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
     </SettingsOptionGrid>
     <Meta>{mode.help} Try a shadow trial before enabling suggestions.</Meta>
 
+    <OpsSection aria-label="Decision-model assisted operations">
+      <OpsTitle>Decision-model assisted operations</OpsTitle>
+      <Meta>
+        {prefs.mode === 'off'
+          ? 'Turn on Shadow trial or Suggestions above to activate these on-demand decision-model helpers (Jex, OpenAI, or Local). When Off, no email content is sent.'
+          : 'Runs fast, low-cost typed judgments on demand using the selected decision model above (Jex, OpenAI, or Local). Never moves, deletes, or sends mail automatically.'}
+      </Meta>
+      <OpsList style={prefs.mode === 'off' ? { opacity: 0.6 } : undefined}>
+        <OpToggle>
+          <input type="checkbox" disabled={prefs.mode === 'off'} checked={ops.screenerRouting} onChange={e => toggleOp('screenerRouting', e.target.checked)} />
+          <span><strong>Screener routing</strong> — Suggest Inbox, Feed, Paper Trail, or Block for unknown senders.</span>
+        </OpToggle>
+        <OpToggle>
+          <input type="checkbox" disabled={prefs.mode === 'off'} checked={ops.securityShield} onChange={e => toggleOp('securityShield', e.target.checked)} />
+          <span><strong>Phishing &amp; deception shield</strong> — Detect credential asks, impersonation, and pressure urgency in Security Shield.</span>
+        </OpToggle>
+        <OpToggle>
+          <input type="checkbox" disabled={prefs.mode === 'off'} checked={ops.followUpRadar} onChange={e => toggleOp('followUpRadar', e.target.checked)} />
+          <span><strong>Follow-up radar</strong> — Spot messages that expect a reply and suggest smart reminder timing.</span>
+        </OpToggle>
+        <OpToggle>
+          <input type="checkbox" disabled={prefs.mode === 'off'} checked={ops.triageActionHints} onChange={e => toggleOp('triageActionHints', e.target.checked)} />
+          <span><strong>Triage focus hints</strong> — Highlight the recommended next action and deadline urgency in Triage Focus Mode.</span>
+        </OpToggle>
+        <OpToggle>
+          <input type="checkbox" disabled={prefs.mode === 'off'} checked={ops.snippetSuggestions} onChange={e => toggleOp('snippetSuggestions', e.target.checked)} />
+          <span><strong>Quick reply snippet matching</strong> — Offer a one-click chip when a saved snippet fits an incoming email.</span>
+        </OpToggle>
+      </OpsList>
+    </OpsSection>
+
     <SettingsOptionGrid>
       <TaskField>Requests a day, at most
         <NumberField aria-label="Triage daily cap" type="number" inputMode="numeric" min={1} max={1000} step={1} value={capText} aria-invalid={!validCap}
-          onChange={e => { const v = e.target.value; setCapText(v); if (/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= 1000) patch({ dailyCap: Number(v) }) }} />
+          onChange={e => { const v = e.target.value; setCapText(v); if (/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= 1000) { resetDecisionOpsCircuit(); patch({ dailyCap: Number(v) }) } }} />
         <Meta>{validCap ? 'Failed attempts and connection tests count too.' : 'A whole number from 1 to 1,000.'}</Meta>
       </TaskField>
       <TaskField>Confidence a suggestion needs
@@ -134,7 +179,7 @@ export function TypedTriageSettings({ store, setStore, onRunTriage }: { store: M
     <SettingsActions>
       <MailConnectionControl state={testState} words={TEST_WORDS} disabled={testing || running || !ready} onTest={() => void testConnection()} />
       <Button size="sm" disabled={!canRun} title={prefs.mode === 'off' ? 'Turn triage on first' : !candidates.length ? 'No recent messages to classify' : `Classifies the ${candidates.length} newest candidate messages now, reclassifying earlier results`} onClick={() => void runPending()}>{running ? 'Running triage…' : 'Run triage now'}</Button>
-      <Button size="sm" variant="text" disabled={testing || running} onClick={() => void refresh()}>Refresh status</Button>
+      <Button size="sm" variant="text" disabled={testing || running} onClick={() => { resetDecisionOpsCircuit(); void refresh() }}>Refresh status</Button>
     </SettingsActions>
     {result && <ConnectionTestResultBox $tone={result.tone} role="status" aria-live="polite">
       <ConnectionResultTitle>{result.title}</ConnectionResultTitle>
@@ -202,4 +247,31 @@ const Requests = styled.ul`
   display: grid;
   gap: 4px;
   li { display: grid; grid-template-columns: 90px 90px 70px minmax(0, 1fr); gap: 12px; font-size: 12px; color: var(--platform-colors-text-secondary); font-variant-numeric: tabular-nums; }
+`
+const OpsSection = styled.section`
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--platform-colors-border-subtle);
+  border-radius: var(--platform-radius-sm);
+  background: var(--platform-colors-surface);
+`
+const OpsTitle = styled.h4`
+  margin: 0;
+  font-size: var(--pure-chrome-ui-size);
+  font-weight: 700;
+`
+const OpsList = styled.div`
+  display: grid;
+  gap: 6px;
+`
+const OpToggle = styled.label`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--platform-colors-text);
+  cursor: pointer;
+  input { margin-top: 2px; flex: none; }
 `

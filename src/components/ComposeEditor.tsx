@@ -12,26 +12,35 @@ import {
   type KeyboardEvent,
 } from 'react'
 import {
+  AlertCircle,
+  Bell,
   Bold,
   Braces,
   ChevronDown,
   Clock,
+  Code,
   FileText,
   Forward,
+  Image as ImageIcon,
   Italic,
   Link2,
   List,
   ListOrdered,
   ChevronUp,
+  MailCheck,
   Maximize2,
   Minus,
   MoreHorizontal,
   Paperclip,
   PenLine,
+  Quote,
+  RemoveFormatting,
   Reply,
   ReplyAll,
   Send,
   SkipForward,
+  Sparkles,
+  Strikethrough,
   Trash2,
   Underline,
   X,
@@ -44,6 +53,10 @@ import { draftSendFingerprint } from '../lib/mailDrawerDrafts'
 import { composeHoldBlock, composeHoldStillApproved, sendFailure } from '../lib/mailSendRelease'
 import { useOutsideClose } from './useOutsideClose'
 import { scheduleSend } from '../lib/mailScheduledSend'
+import { scheduleFollowUpReminder } from '../lib/followUpRadar'
+import { DEFAULT_SNIPPETS } from '../lib/mailSnippets'
+import { SnippetPickerMenu } from './SnippetPickerMenu'
+import { TimePickerPopover } from './TimePickerPopover'
 import {
   attachmentDisplaySize,
   attachmentKindLabel,
@@ -130,6 +143,7 @@ import {
   ComposeTemplateToChip,
   ComposeDockWinButton,
   ComposeDockWindow,
+  ComposeDropOverlay,
   ComposeField,
   ComposeFileInput,
   ComposeFooter,
@@ -287,6 +301,10 @@ export interface ComposeEditorProps {
   setSelectedMailboxId: React.Dispatch<React.SetStateAction<string>>
   setSelectedThreadId: React.Dispatch<React.SetStateAction<string>>
   setCommandNotice: React.Dispatch<React.SetStateAction<string>>
+  /** Optional account switcher when multiple accounts are connected. */
+  onSwitchAccount?: (accountId: string) => void
+  /** Optional shortcut to manage snippets in Mail settings. */
+  onManageSnippets?: () => void
 }
 
 export function ComposeEditor({
@@ -337,6 +355,7 @@ export function ComposeEditor({
   setSelectedMailboxId,
   setSelectedThreadId,
   setCommandNotice,
+  onManageSnippets,
 }: ComposeEditorProps): React.ReactElement {
   const reportSendFailure = (draftId: string, error: unknown): void => {
     setStore(current => markDraftSendFailed(current, draftId, error))
@@ -529,11 +548,71 @@ export function ComposeEditor({
   useOutsideClose(scheduleMenuWrapRef, scheduleMenuOpen, () =>
     setScheduleMenuOpen(false),
   )
-  const [scheduleAtDraft, setScheduleAtDraft] = useState('')
   // Template card: the Insert field ▾ menu of tokens the list provides.
   const [fieldMenuOpen, setFieldMenuOpen] = useState(false)
   const fieldMenuWrapRef = useRef<HTMLDivElement>(null)
   useOutsideClose(fieldMenuWrapRef, fieldMenuOpen, () => setFieldMenuOpen(false))
+
+  // Wave 2B: Snippets, Priority, Read Receipt, Follow-Up Reminder, Inline Image, Local From Account
+  const [composeAccountId, setComposeAccountId] = useState<string>(
+    selectedAccount?.id ?? store.accounts[0]?.id ?? '',
+  )
+  useEffect(() => {
+    if (composeContext && selectedAccount?.id) {
+      setComposeAccountId(selectedAccount.id)
+    }
+  }, [composeContext, selectedAccount?.id])
+  const effectiveAccount =
+    store.accounts.find(a => a.id === composeAccountId) ?? selectedAccount
+  const [snippetMenuOpen, setSnippetMenuOpen] = useState(false)
+  const [snippetInitialQuery, setSnippetInitialQuery] = useState('')
+  const savedSnippetRangeRef = useRef<Range | null>(null)
+  const [importance, setImportance] = useState<'normal' | 'high'>(
+    activeDraftRecord?.importance === 'high' ? 'high' : 'normal',
+  )
+  const [requestReadReceipt, setRequestReadReceipt] = useState<boolean>(
+    Boolean(activeDraftRecord?.requestReadReceipt),
+  )
+  useEffect(() => {
+    if (!activeDraftRecord) return
+    setImportance(activeDraftRecord.importance === 'high' ? 'high' : 'normal')
+    setRequestReadReceipt(Boolean(activeDraftRecord.requestReadReceipt))
+  }, [activeDraftRecord?.id])
+  const [followUpRemindAt, setFollowUpRemindAt] = useState<string | null>(null)
+  const [followUpRemindLabel, setFollowUpRemindLabel] = useState<string | null>(null)
+  const [followUpMenuOpen, setFollowUpMenuOpen] = useState(false)
+  const inlineImageInputRef = useRef<HTMLInputElement>(null)
+
+  const availableSnippets = useMemo(
+    () => (store.snippets === undefined ? DEFAULT_SNIPPETS : store.snippets),
+    [store.snippets],
+  )
+  const firstRecipientName = useMemo(() => {
+    const first = parseComposeRecipients(composeTo)[0]
+    return first?.name || first?.email || ''
+  }, [composeTo])
+
+  const handleFromAccountChange = (nextAccountId: string): void => {
+    const prevSig = defaultSignatureForAccount(store.settings, effectiveAccount?.id)
+    const nextSig = defaultSignatureForAccount(store.settings, nextAccountId)
+    setComposeAccountId(nextAccountId)
+    const editor = editorRef.current
+    if (editor && prevSig?.body !== nextSig?.body) {
+      let html = editor.innerHTML
+      if (prevSig?.body) {
+        const prevSigHtml = plainTextToComposeHtml(prevSig.body)
+        if (html.endsWith(prevSigHtml)) {
+          html = html.slice(0, html.length - prevSigHtml.length)
+        }
+      }
+      if (nextSig?.body) {
+        html = `${html.replace(/(?:<p><br><\/p>)*$/i, '')}<p><br></p>${plainTextToComposeHtml(nextSig.body)}`
+      }
+      editor.innerHTML = html
+      stripEmptyInlineFormatting()
+      syncBodyFromEditor()
+    }
+  }
 
   // Discard is an ARMED TWO-STEP: the first click arms "Discard?" for a few
   // seconds, the second click discards. window.confirm is a silent no-op in
@@ -775,7 +854,57 @@ export function ComposeEditor({
     refreshInlineFormats()
   }
 
+  const saveSnippetSelection = (): void => {
+    const selection = window.getSelection()
+    const editor = editorRef.current
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      editor &&
+      editor.contains(selection.anchorNode)
+    ) {
+      savedSnippetRangeRef.current = selection.getRangeAt(0).cloneRange()
+    } else {
+      savedSnippetRangeRef.current = null
+    }
+  }
+
   const handleEditorKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    // Cmd/Ctrl+; opens SnippetPickerMenu without blocking normal typing of ';'.
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key === ';') {
+      event.preventDefault()
+      saveSnippetSelection()
+      setSnippetInitialQuery('')
+      setSnippetMenuOpen(true)
+      return
+    }
+    // Double-semicolon (`;;`) inline trigger: lets single `;` (`;)`, French punctuation, code) pass freely.
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key === ';') {
+      const selection = window.getSelection()
+      if (
+        selection &&
+        selection.rangeCount > 0 &&
+        selection.isCollapsed &&
+        selection.anchorNode?.nodeType === Node.TEXT_NODE
+      ) {
+        const textNode = selection.anchorNode as Text
+        const offset = selection.anchorOffset
+        if (offset > 0 && textNode.data[offset - 1] === ';') {
+          event.preventDefault()
+          textNode.deleteData(offset - 1, 1)
+          const range = document.createRange()
+          range.setStart(textNode, offset - 1)
+          range.collapse(true)
+          selection.removeAllRanges()
+          selection.addRange(range)
+          savedSnippetRangeRef.current = range.cloneRange()
+          syncBodyFromEditor()
+          setSnippetInitialQuery('')
+          setSnippetMenuOpen(true)
+          return
+        }
+      }
+    }
     if (!event.metaKey && !event.ctrlKey) return
     const format =
       event.key === 'b' ? 'bold'
@@ -783,6 +912,87 @@ export function ComposeEditor({
       : event.key === 'u' ? 'underline'
       : null
     if (format) armInlineFormat(format)
+  }
+
+  const insertInlineCode = (): void => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.focus()
+    const selection = window.getSelection()
+    const selectedText = selection?.toString() ?? ''
+    const escaped = (selectedText || 'code')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+    insertHtmlAtCaret(`<code>${escaped}</code>&nbsp;`)
+  }
+
+  const ALLOWED_INLINE_IMAGE_MIMES = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+  ])
+  const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
+
+  const insertInlineImageFile = (file: File | undefined): void => {
+    if (!file) return
+    const mime = (file.type || '').toLowerCase()
+    if (!ALLOWED_INLINE_IMAGE_MIMES.has(mime)) {
+      setCommandNotice(
+        'Only PNG, JPEG, GIF, and WebP images can be inserted inline.',
+      )
+      return
+    }
+    if (file.size > MAX_INLINE_IMAGE_BYTES) {
+      setCommandNotice(
+        `${file.name} exceeds the 2 MB inline image limit — attached as a file instead.`,
+      )
+      void attachComposeFiles([file])
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (
+        typeof reader.result === 'string' &&
+        /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(reader.result)
+      ) {
+        const safeAlt = (file.name || 'image')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+        insertHtmlAtCaret(
+          `<img src="${reader.result}" alt="${safeAlt}" style="max-width:100%;height:auto;" />`,
+        )
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const insertRenderedSnippet = (rendered: { subject?: string; body: string }): void => {
+    setSnippetMenuOpen(false)
+    if (rendered.subject && !composeSubject.trim()) {
+      setComposeSubject(rendered.subject)
+    }
+    const html = plainTextToComposeHtml(rendered.body)
+    const editor = editorRef.current
+    if (editor) {
+      editor.focus()
+      const saved = savedSnippetRangeRef.current
+      savedSnippetRangeRef.current = null
+      if (saved && editor.contains(saved.commonAncestorContainer)) {
+        const selection = window.getSelection()
+        selection?.removeAllRanges()
+        selection?.addRange(saved)
+      }
+      insertHtmlAtCaret(html)
+    } else {
+      setComposeBody(current =>
+        current ? `${current}\n\n${rendered.body}` : rendered.body,
+      )
+      setComposeBodyHtml(current => (current ? `${current}${html}` : html))
+    }
   }
 
   const handleEditorInput = (event: FormEvent<HTMLDivElement>): void => {
@@ -905,10 +1115,16 @@ export function ComposeEditor({
       syncBodyFromEditor()
       return
     }
-    const signature = defaultSignatureForAccount(
-      store.settings,
-      selectedAccount?.id,
-    )
+    const replySigId =
+      composeContext && composeContext.kind !== 'draft' && selectedAccount?.id
+        ? store.settings.replySignatureIdByAccount?.[selectedAccount.id]
+        : undefined
+    const replySignature = replySigId
+      ? (store.settings.signatures ?? []).find(sig => sig.id === replySigId)
+      : undefined
+    const signature =
+      replySignature ??
+      defaultSignatureForAccount(store.settings, selectedAccount?.id)
     if (signature) {
       editor.innerHTML = `<p><br></p><p><br></p>${plainTextToComposeHtml(
         signature.body,
@@ -979,6 +1195,10 @@ export function ComposeEditor({
     onResetComposeContext()
     setAttachmentReminderOpen(false)
     setSubjectReminderOpen(false)
+    setImportance('normal')
+    setRequestReadReceipt(false)
+    setFollowUpRemindAt(null)
+    setFollowUpRemindLabel(null)
     if (editorRef.current) editorRef.current.innerHTML = ''
   }
 
@@ -1000,7 +1220,7 @@ export function ComposeEditor({
     const cc = parseComposeRecipients(snapshot.cc)
     const bcc = parseComposeRecipients(snapshot.bcc)
     const account =
-      current.accounts.find(item => item.id === selectedAccount?.id) ??
+      current.accounts.find(item => item.id === effectiveAccount?.id) ??
       current.accounts[0]
     const accountId = account?.id ?? 'local'
     // Ids come from the caller when it needs to know them. Minting them
@@ -1047,6 +1267,8 @@ export function ComposeEditor({
       source: 'manual',
       draftKind: 'manual',
       provenance: ['Created from Compose.'],
+      ...(importance === 'high' ? { importance: 'high' as const } : {}),
+      ...(requestReadReceipt ? { requestReadReceipt: true } : {}),
     }
     return {
       draftId,
@@ -1095,8 +1317,23 @@ export function ComposeEditor({
       attachments: snapshot.attachments,
       ...(newDraftId ? { newDraftId } : {}),
     })
+    const enrichedStore =
+      importance === 'high' || requestReadReceipt
+        ? {
+            ...result.store,
+            drafts: result.store.drafts.map(item =>
+              item.id === result.draftId
+                ? {
+                    ...item,
+                    ...(importance === 'high' ? { importance: 'high' as const } : {}),
+                    ...(requestReadReceipt ? { requestReadReceipt: true } : {}),
+                  }
+                : item,
+            ),
+          }
+        : result.store
     return {
-      nextStore: result.store,
+      nextStore: enrichedStore,
       draftId: result.draftId,
       threadId: context.threadId,
     }
@@ -1177,6 +1414,7 @@ export function ComposeEditor({
   const sendContextReply = (
     context: ComposeReplyContext,
     snapshot: ComposeSendSnapshot,
+    onSentSuccess?: (threadId: string) => void,
   ): void => {
     const pendingId = `pending_reply_${Date.now()}`
     const sentLabel = context.kind === 'forward' ? 'Forward' : context.kind === 'draft' ? 'Message' : 'Reply'
@@ -1243,6 +1481,7 @@ export function ComposeEditor({
                 }),
               )
               setSelectedThreadId(result.threadId)
+              onSentSuccess?.(result.threadId)
               setCommandNotice(`${sentLabel} sent through ${home}.`)
               recordReplySend(snapshot.subject)
             })
@@ -1285,6 +1524,7 @@ export function ComposeEditor({
           }
         })
         setSelectedThreadId(result.threadId)
+        onSentSuccess?.(result.threadId)
         keepWordsTypedDuringHold(snapshot, context)
         resetCompose()
         setComposeOpen(false)
@@ -1372,19 +1612,6 @@ export function ComposeEditor({
     })
   }
 
-  const schedulePresets = (): Array<{ label: string; at: string }> => {
-    const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    tomorrow.setHours(9, 0, 0, 0)
-    const monday = new Date()
-    monday.setDate(monday.getDate() + (((8 - monday.getDay()) % 7) || 7))
-    monday.setHours(9, 0, 0, 0)
-    return [
-      { label: 'Tomorrow 9:00', at: tomorrow.toISOString() },
-      { label: 'Monday 9:00', at: monday.toISOString() },
-    ]
-  }
-
   const sendComposeMessage = (
     event?: PersonGestureEvent,
     bypassSubjectReminder = false,
@@ -1460,10 +1687,24 @@ export function ComposeEditor({
       runChrome.onSend?.(draft)
       return
     }
+    const remindAtSnapshot = followUpRemindAt
+    const applyFollowUpOnSend = (threadIdToRemind: string): void => {
+      if (!remindAtSnapshot || !threadIdToRemind) return
+      const accountId =
+        effectiveAccount?.id ?? storeRef.current.accounts[0]?.id ?? ''
+      setStore(current =>
+        scheduleFollowUpReminder(current, {
+          threadId: threadIdToRemind,
+          accountId,
+          remindAt: remindAtSnapshot,
+          cancelOnReply: true,
+        }),
+      )
+    }
     if (composeContext) {
       // A reply/forward goes out threaded on the conversation it answers —
-      // the compose path below creates a NEW thread and must never carry it.
-      sendContextReply(composeContext, snapshot)
+      // schedule follow-up reminder ONLY after send confirms!
+      sendContextReply(composeContext, snapshot, applyFollowUpOnSend)
       return
     }
     const pendingId = `pending_compose_${Date.now()}`
@@ -1515,6 +1756,7 @@ export function ComposeEditor({
               })
               setSelectedMailboxId(sentMailboxId)
               setSelectedThreadId(result.threadId)
+              applyFollowUpOnSend(result.threadId)
               setCommandNotice(`Message sent through ${providerName(activeProvider)}.`)
               recordComposeSend(snapshot.subject)
             })
@@ -1566,6 +1808,7 @@ export function ComposeEditor({
         })
         setSelectedMailboxId(sentMailboxId)
         setSelectedThreadId(threadId)
+        applyFollowUpOnSend(threadId)
         keepWordsTypedDuringHold(snapshot, null)
         resetCompose()
         setComposeOpen(false)
@@ -1737,7 +1980,12 @@ export function ComposeEditor({
     }
     if (event.key !== 'Escape') return
     const hasOpenLayer =
-      scheduleMenuOpen || signatureMenuOpen || linkUrlDraft !== null || fieldMenuOpen
+      scheduleMenuOpen ||
+      signatureMenuOpen ||
+      snippetMenuOpen ||
+      followUpMenuOpen ||
+      linkUrlDraft !== null ||
+      fieldMenuOpen
     const modeForEscape = variant === 'full' ? 'full' : 'docked'
     const action = composeEscapeAction(modeForEscape, hasOpenLayer)
     if (action === 'close-menus') {
@@ -1745,6 +1993,8 @@ export function ComposeEditor({
       event.stopPropagation()
       setScheduleMenuOpen(false)
       setSignatureMenuOpen(false)
+      setSnippetMenuOpen(false)
+      setFollowUpMenuOpen(false)
       setLinkUrlDraft(null)
       savedLinkRangeRef.current = null
       setFieldMenuOpen(false)
@@ -1838,64 +2088,6 @@ export function ComposeEditor({
       </ComposeQuoteChip>
     </ComposeQuoteChipRow>
   ) : null
-
-  const scheduleMenuItems = (
-    <>
-      {schedulePresets().map(preset => (
-        <BulkMenuItem
-          key={preset.label}
-          type="button"
-          role="menuitem"
-          onClick={() => scheduleComposeSend(preset.at)}
-        >
-          <Clock aria-hidden="true" />
-          {preset.label}
-        </BulkMenuItem>
-      ))}
-      <BulkMenuItem as="div" role="none" style={{ cursor: 'default', flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input
-            type="datetime-local"
-            value={scheduleAtDraft}
-            aria-label="Custom send time"
-            style={{
-              border: 0,
-              outline: 'none',
-              background: 'transparent',
-              color: 'inherit',
-              font: 'inherit',
-              flex: 1,
-            }}
-            onClick={event => event.stopPropagation()}
-            onChange={event => setScheduleAtDraft(event.currentTarget.value)}
-          />
-          <Button
-            size="sm"
-            disabled={!scheduleAtDraft}
-            onClick={() => scheduleComposeSend(scheduleAtDraft)}
-          >
-            Schedule
-          </Button>
-        </div>
-        <span style={{ fontSize: 11, opacity: 0.72 }}>
-          {(() => {
-            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-            if (!scheduleAtDraft) return `Local time (${tz})`
-            const parsed = new Date(scheduleAtDraft)
-            if (Number.isNaN(parsed.getTime())) return `Local time (${tz})`
-            return `${parsed.toLocaleString(undefined, {
-              weekday: 'short',
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              timeZoneName: 'short',
-            })} (${tz})`
-          })()}
-        </span>
-      </BulkMenuItem>
-    </>
-  )
 
   if (variant === 'docked' || variant === 'run') {
     const isRun = variant === 'run'
@@ -2022,7 +2214,52 @@ export function ComposeEditor({
 
           {!isRun && composeContextStrip}
 
-          {runMode === 'template' ? (
+      {composeDropActive && (
+        <ComposeDropOverlay aria-live="polite">
+          <Paperclip size={20} aria-hidden="true" />
+          Drop files to attach
+        </ComposeDropOverlay>
+      )}
+      <input
+        ref={inlineImageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        aria-label="Insert inline image"
+        style={{ display: 'none' }}
+        onChange={event => {
+          insertInlineImageFile(event.currentTarget.files?.[0])
+          event.currentTarget.value = ''
+        }}
+      />
+      {store.accounts.length > 1 && runMode !== 'template' && !composeContext && (
+        <ComposeDockRow>
+          <ComposeDockRowLabel>From</ComposeDockRowLabel>
+          <select
+            aria-label="From account"
+            value={effectiveAccount?.id ?? store.accounts[0]?.id ?? ''}
+            onChange={event => handleFromAccountChange(event.currentTarget.value)}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: 0,
+              background: 'transparent',
+              color: 'var(--n-ink)',
+              font: 'inherit',
+              fontSize: 12.5,
+              outline: 'none',
+            }}
+          >
+            {store.accounts.map(account => (
+              <option key={account.id} value={account.id}>
+                {account.name && account.name !== account.email
+                  ? `${account.name} <${account.email}>`
+                  : account.email}
+              </option>
+            ))}
+          </select>
+        </ComposeDockRow>
+      )}
+      {runMode === 'template' ? (
             <ComposeDockRow>
               <ComposeDockRowLabel>To</ComposeDockRowLabel>
               <ComposeTemplateToChip title="Each draft goes to its row's email address">
@@ -2313,6 +2550,15 @@ export function ComposeEditor({
             >
               <Underline aria-hidden="true" />
             </ComposeDockToolbarButton>
+            <ComposeDockToolbarButton
+              type="button"
+              aria-label="Strikethrough"
+              title="Strikethrough"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => execEditorCommand('strikeThrough')}
+            >
+              <Strikethrough aria-hidden="true" />
+            </ComposeDockToolbarButton>
             <ComposeDockToolbarDivider aria-hidden="true" />
             <ComposeDockToolbarButton
               type="button"
@@ -2332,6 +2578,34 @@ export function ComposeEditor({
             </ComposeDockToolbarButton>
             <ComposeDockToolbarButton
               type="button"
+              aria-label="Blockquote"
+              title="Blockquote"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => execEditorCommand('formatBlock', 'blockquote')}
+            >
+              <Quote aria-hidden="true" />
+            </ComposeDockToolbarButton>
+            <ComposeDockToolbarButton
+              type="button"
+              aria-label="Inline code"
+              title="Inline code"
+              onMouseDown={event => event.preventDefault()}
+              onClick={insertInlineCode}
+            >
+              <Code aria-hidden="true" />
+            </ComposeDockToolbarButton>
+            <ComposeDockToolbarButton
+              type="button"
+              aria-label="Clear formatting"
+              title="Clear formatting"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => execEditorCommand('removeFormat')}
+            >
+              <RemoveFormatting aria-hidden="true" />
+            </ComposeDockToolbarButton>
+            <ComposeDockToolbarDivider aria-hidden="true" />
+            <ComposeDockToolbarButton
+              type="button"
               aria-label="Insert link"
               aria-expanded={linkUrlDraft !== null}
               onMouseDown={event => event.preventDefault()}
@@ -2339,6 +2613,50 @@ export function ComposeEditor({
             >
               <Link2 aria-hidden="true" />
             </ComposeDockToolbarButton>
+            <ComposeDockToolbarButton
+              type="button"
+              aria-label="Insert inline image"
+              title="Insert inline image"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => inlineImageInputRef.current?.click()}
+            >
+              <ImageIcon aria-hidden="true" />
+            </ComposeDockToolbarButton>
+            <BulkMenuWrap>
+              <ComposeDockToolbarButton
+                type="button"
+                data-popover-trigger=""
+                aria-label="Insert snippet"
+                title="Insert snippet (⌘; or ;;)"
+                aria-expanded={snippetMenuOpen}
+                onMouseDown={event => {
+                  event.preventDefault()
+                  saveSnippetSelection()
+                }}
+                onClick={() => {
+                  setSnippetInitialQuery('')
+                  setSnippetMenuOpen(open => !open)
+                }}
+              >
+                <Sparkles aria-hidden="true" />
+              </ComposeDockToolbarButton>
+              {snippetMenuOpen && (
+                <SnippetPickerMenu
+                  placement="up"
+                  align="right"
+                  snippets={availableSnippets}
+                  initialQuery={snippetInitialQuery}
+                  vars={{
+                    recipientName: firstRecipientName,
+                    myName: effectiveAccount?.name || effectiveAccount?.email || '',
+                    subject: composeSubject,
+                  }}
+                  onInsert={rendered => insertRenderedSnippet(rendered)}
+                  onManageSnippets={onManageSnippets}
+                  onClose={() => setSnippetMenuOpen(false)}
+                />
+              )}
+            </BulkMenuWrap>
             {runMode === 'template' && runChrome && (
               <>
                 <ComposeDockToolbarDivider aria-hidden="true" />
@@ -2512,6 +2830,7 @@ export function ComposeEditor({
                 </ComposeDockSendButton>
                 <ComposeDockSendLater
                   type="button"
+                  data-popover-trigger=""
                   aria-label="Send later"
                   aria-haspopup="menu"
                   aria-expanded={scheduleMenuOpen}
@@ -2522,9 +2841,12 @@ export function ComposeEditor({
                 </ComposeDockSendLater>
               </ComposeDockSendGroup>
               {scheduleMenuOpen && (
-                <ComposeDockMenu role="menu" aria-label="Send later">
-                  {scheduleMenuItems}
-                </ComposeDockMenu>
+                <TimePickerPopover
+                  mode="schedule"
+                  placement="up"
+                  onSelect={iso => scheduleComposeSend(iso)}
+                  onClose={() => setScheduleMenuOpen(false)}
+                />
               )}
             </BulkMenuWrap>
             <ComposeDockIconButton
@@ -2540,6 +2862,88 @@ export function ComposeEditor({
             >
               <Paperclip aria-hidden="true" />
             </ComposeDockIconButton>
+            <ComposeDockIconButton
+              type="button"
+              aria-label="High priority"
+              aria-pressed={importance === 'high'}
+              title={importance === 'high' ? 'High priority enabled' : 'Mark as high priority'}
+              style={
+                importance === 'high'
+                  ? { color: 'var(--p-failed-text, var(--b-amber))' }
+                  : undefined
+              }
+              onClick={() =>
+                setImportance(current => (current === 'high' ? 'normal' : 'high'))
+              }
+            >
+              <AlertCircle aria-hidden="true" />
+            </ComposeDockIconButton>
+            <ComposeDockIconButton
+              type="button"
+              aria-label="Request read receipt"
+              aria-pressed={requestReadReceipt}
+              title={
+                requestReadReceipt
+                  ? 'Read receipt requested'
+                  : 'Request read receipt'
+              }
+              style={
+                requestReadReceipt
+                  ? { color: 'var(--pure-chrome-accent)' }
+                  : undefined
+              }
+              onClick={() => setRequestReadReceipt(current => !current)}
+            >
+              <MailCheck aria-hidden="true" />
+            </ComposeDockIconButton>
+            <BulkMenuWrap>
+              <ComposeDockIconButton
+                type="button"
+                data-popover-trigger=""
+                aria-label="Follow-up reminder"
+                aria-pressed={Boolean(followUpRemindAt)}
+                title={
+                  followUpRemindLabel
+                    ? `Remind if no reply: ${followUpRemindLabel}`
+                    : 'Remind if no reply'
+                }
+                style={
+                  followUpRemindAt
+                    ? { color: 'var(--pure-chrome-accent)' }
+                    : undefined
+                }
+                onClick={() => setFollowUpMenuOpen(open => !open)}
+              >
+                <Bell aria-hidden="true" />
+              </ComposeDockIconButton>
+              {followUpRemindAt && (
+                <ComposeDockIconButton
+                  type="button"
+                  aria-label="Clear follow-up reminder"
+                  title="Clear follow-up reminder"
+                  onClick={() => {
+                    setFollowUpRemindAt(null)
+                    setFollowUpRemindLabel(null)
+                  }}
+                >
+                  <X aria-hidden="true" />
+                </ComposeDockIconButton>
+              )}
+              {followUpMenuOpen && (
+                <TimePickerPopover
+                  mode="followup"
+                  placement="up"
+                  align="right"
+                  title="Remind if no reply"
+                  onSelect={(iso, label) => {
+                    setFollowUpRemindAt(iso)
+                    setFollowUpRemindLabel(label)
+                    setFollowUpMenuOpen(false)
+                  }}
+                  onClose={() => setFollowUpMenuOpen(false)}
+                />
+              )}
+            </BulkMenuWrap>
             {composeSignatures.length > 0 && (
               <BulkMenuWrap ref={signatureMenuWrapRef}>
                 <ComposeDockIconButton
@@ -2641,6 +3045,7 @@ export function ComposeEditor({
       </ComposeHeader>
       {composeContextStrip}
       <ComposeBody
+        style={{ position: 'relative' }}
         onDragEnter={event => {
           event.preventDefault()
           setComposeDropActive(true)
@@ -2658,6 +3063,50 @@ export function ComposeEditor({
         onDrop={handleComposeAttachmentDrop}
         onPaste={handleComposePaste}
       >
+        {composeDropActive && (
+          <ComposeDropOverlay aria-live="polite">
+            <Paperclip size={22} aria-hidden="true" />
+            Drop files to attach
+          </ComposeDropOverlay>
+        )}
+        <input
+          ref={inlineImageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          aria-label="Insert inline image"
+          style={{ display: 'none' }}
+          onChange={event => {
+            insertInlineImageFile(event.currentTarget.files?.[0])
+            event.currentTarget.value = ''
+          }}
+        />
+        {store.accounts.length > 1 && !composeContext && (
+          <ComposeField as="div">
+            <ComposeLabel>From</ComposeLabel>
+            <select
+              aria-label="From account"
+              value={effectiveAccount?.id ?? store.accounts[0]?.id ?? ''}
+              onChange={event => handleFromAccountChange(event.currentTarget.value)}
+              style={{
+                border: '1px solid var(--n-line)',
+                borderRadius: 4,
+                background: 'var(--n-sheet)',
+                color: 'var(--n-ink)',
+                padding: '6px 8px',
+                font: 'inherit',
+                fontSize: 13,
+              }}
+            >
+              {store.accounts.map(account => (
+                <option key={account.id} value={account.id}>
+                  {account.name && account.name !== account.email
+                    ? `${account.name} <${account.email}>`
+                    : account.email}
+                </option>
+              ))}
+            </select>
+          </ComposeField>
+        )}
         <ComposeField as="div">
           <ComposeLabel>To</ComposeLabel>
           <RecipientChipsInput
@@ -2756,6 +3205,15 @@ export function ComposeEditor({
             </ComposeToolbarButton>
             <ComposeToolbarButton
               type="button"
+              aria-label="Strikethrough"
+              title="Strikethrough"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => execEditorCommand('strikeThrough')}
+            >
+              <Strikethrough aria-hidden="true" />
+            </ComposeToolbarButton>
+            <ComposeToolbarButton
+              type="button"
               aria-label="Bulleted list"
               title="Bulleted list"
               onMouseDown={event => event.preventDefault()}
@@ -2774,6 +3232,33 @@ export function ComposeEditor({
             </ComposeToolbarButton>
             <ComposeToolbarButton
               type="button"
+              aria-label="Blockquote"
+              title="Blockquote"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => execEditorCommand('formatBlock', 'blockquote')}
+            >
+              <Quote aria-hidden="true" />
+            </ComposeToolbarButton>
+            <ComposeToolbarButton
+              type="button"
+              aria-label="Inline code"
+              title="Inline code"
+              onMouseDown={event => event.preventDefault()}
+              onClick={insertInlineCode}
+            >
+              <Code aria-hidden="true" />
+            </ComposeToolbarButton>
+            <ComposeToolbarButton
+              type="button"
+              aria-label="Clear formatting"
+              title="Clear formatting"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => execEditorCommand('removeFormat')}
+            >
+              <RemoveFormatting aria-hidden="true" />
+            </ComposeToolbarButton>
+            <ComposeToolbarButton
+              type="button"
               aria-label="Insert link"
               title="Insert link"
               aria-expanded={linkUrlDraft !== null}
@@ -2782,6 +3267,49 @@ export function ComposeEditor({
             >
               <Link2 aria-hidden="true" />
             </ComposeToolbarButton>
+            <ComposeToolbarButton
+              type="button"
+              aria-label="Insert inline image"
+              title="Insert inline image"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => inlineImageInputRef.current?.click()}
+            >
+              <ImageIcon aria-hidden="true" />
+            </ComposeToolbarButton>
+            <BulkMenuWrap>
+              <ComposeToolbarButton
+                type="button"
+                data-popover-trigger=""
+                aria-label="Insert snippet"
+                title="Insert snippet (⌘; or ;;)"
+                aria-expanded={snippetMenuOpen}
+                onMouseDown={event => {
+                  event.preventDefault()
+                  saveSnippetSelection()
+                }}
+                onClick={() => {
+                  setSnippetInitialQuery('')
+                  setSnippetMenuOpen(open => !open)
+                }}
+              >
+                <Sparkles aria-hidden="true" />
+              </ComposeToolbarButton>
+              {snippetMenuOpen && (
+                <SnippetPickerMenu
+                  placement="down"
+                  snippets={availableSnippets}
+                  initialQuery={snippetInitialQuery}
+                  vars={{
+                    recipientName: firstRecipientName,
+                    myName: effectiveAccount?.name || effectiveAccount?.email || '',
+                    subject: composeSubject,
+                  }}
+                  onInsert={rendered => insertRenderedSnippet(rendered)}
+                  onManageSnippets={onManageSnippets}
+                  onClose={() => setSnippetMenuOpen(false)}
+                />
+              )}
+            </BulkMenuWrap>
           </ComposeToolbar>
           {linkUrlDraft !== null && (
             <ComposeInlineRow>
@@ -2998,6 +3526,64 @@ export function ComposeEditor({
             )}
           </BulkMenuWrap>
         )}
+        <Button
+          size="sm"
+          variant={importance === 'high' ? 'primary' : 'subtle'}
+          aria-pressed={importance === 'high'}
+          onClick={() =>
+            setImportance(current => (current === 'high' ? 'normal' : 'high'))
+          }
+        >
+          <AlertCircle aria-hidden="true" size={13} />{' '}
+          {importance === 'high' ? 'High priority' : 'Priority'}
+        </Button>
+        <Button
+          size="sm"
+          variant={requestReadReceipt ? 'primary' : 'subtle'}
+          aria-pressed={requestReadReceipt}
+          onClick={() => setRequestReadReceipt(current => !current)}
+        >
+          <MailCheck aria-hidden="true" size={13} /> Read receipt
+        </Button>
+        <BulkMenuWrap>
+          <Button
+            size="sm"
+            data-popover-trigger=""
+            variant={followUpRemindAt ? 'primary' : 'subtle'}
+            aria-pressed={Boolean(followUpRemindAt)}
+            onClick={() => setFollowUpMenuOpen(open => !open)}
+          >
+            <Bell aria-hidden="true" size={13} />{' '}
+            {followUpRemindLabel ? `Remind: ${followUpRemindLabel}` : 'Follow-up'}
+          </Button>
+          {followUpRemindAt && (
+            <Button
+              size="sm"
+              variant="text"
+              aria-label="Clear follow-up reminder"
+              onClick={() => {
+                setFollowUpRemindAt(null)
+                setFollowUpRemindLabel(null)
+              }}
+            >
+              Clear
+            </Button>
+          )}
+          {followUpMenuOpen && (
+            <TimePickerPopover
+              mode="followup"
+              placement="up"
+              align="right"
+              title="Remind if no reply"
+              onSelect={(iso, label) => {
+                setFollowUpRemindAt(iso)
+                setFollowUpRemindLabel(label)
+                setFollowUpMenuOpen(false)
+              }}
+              onClose={() => setFollowUpMenuOpen(false)}
+            />
+          )}
+        </BulkMenuWrap>
         <Button size="sm" onClick={handleDiscardClick}>
           {discardArmed ? 'Discard? click again' : 'Discard'}
         </Button>
@@ -3007,6 +3593,7 @@ export function ComposeEditor({
         <BulkMenuWrap ref={scheduleMenuWrapRef}>
           <Button
             size="sm"
+            data-popover-trigger=""
             disabled={!canSendCompose || composeSendPending}
             aria-haspopup="menu"
             aria-expanded={scheduleMenuOpen}
@@ -3016,9 +3603,13 @@ export function ComposeEditor({
             <Clock aria-hidden="true" size={13} /> Send later
           </Button>
           {scheduleMenuOpen && (
-            <BulkMenu role="menu" aria-label="Send later">
-              {scheduleMenuItems}
-            </BulkMenu>
+            <TimePickerPopover
+              mode="schedule"
+              placement="up"
+              align="right"
+              onSelect={iso => scheduleComposeSend(iso)}
+              onClose={() => setScheduleMenuOpen(false)}
+            />
           )}
         </BulkMenuWrap>
         <Button

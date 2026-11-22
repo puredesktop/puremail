@@ -17,6 +17,11 @@ import {
   unarchiveThread as unarchiveThreadInStore,
 } from './mailModel'
 import { setThreadStarred as setThreadStarredInStore } from './mailTriage'
+import {
+  parseAuthenticationResults,
+  parseMessageImportance,
+  sanitizeRawHeaders,
+} from './mailPrivacyShield'
 import { parseCalendarInvite } from './mailCalendarInvite'
 import {
   attachmentContentToBase64,
@@ -119,13 +124,6 @@ interface GmailThread {
 
 function gmailPath(path: string): string {
   return `${GMAIL_API_BASE}${path}`
-}
-
-function header(message: GmailMessage, name: string): string {
-  const match = (message.payload?.headers ?? []).find(
-    candidate => candidate.name.toLowerCase() === name.toLowerCase(),
-  )
-  return match?.value ?? ''
 }
 
 export function parseMailContact(raw: string): MailContact {
@@ -309,7 +307,24 @@ function extractAttachments(message: GmailMessage): Attachment[] {
   return attachments
 }
 
+function indexHeadersByName(
+  headers: ReadonlyArray<{ name: string; value: string }> | undefined,
+): Map<string, string[]> {
+  const map = new Map<string, string[]>()
+  if (!headers?.length) return map
+  for (const entry of headers) {
+    const key = entry.name.toLowerCase()
+    const list = map.get(key)
+    if (list) list.push(entry.value)
+    else map.set(key, [entry.value])
+  }
+  return map
+}
+
 function parsedMessage(message: GmailMessage): MailMessage {
+  const headerMap = indexHeadersByName(message.payload?.headers)
+  const firstHeader = (name: string): string => headerMap.get(name)?.[0] ?? ''
+
   const attachments = extractAttachments(message)
   const html = messageHtml(message)
   const calendarAttachment = attachments.find(
@@ -327,35 +342,61 @@ function parsedMessage(message: GmailMessage): MailMessage {
   // fetched mail silently disappear from the list. Fall back to the RFC 822
   // Date header; epoch 0 only when the message is truly undatable.
   const internalMs = Number(message.internalDate ?? Number.NaN)
-  const headerDateMs = Date.parse(header(message, 'Date'))
+  const headerDateMs = Date.parse(firstHeader('date'))
   const receivedMs =
     Number.isFinite(internalMs) && internalMs > 0
       ? internalMs
       : Number.isFinite(headerDateMs)
         ? headerDateMs
         : 0
-  const messageIdHeader = header(message, 'Message-ID').trim()
+  const messageIdHeader = firstHeader('message-id').trim()
+  const listUnsubscribe = firstHeader('list-unsubscribe')
+  const listUnsubscribePost = firstHeader('list-unsubscribe-post').trim()
+  // Strictly topmost Authentication-Results (added by our receiving MTA, never a lower spoofed header).
+  const authHeader = firstHeader('authentication-results').trim()
+  const spfHeader = firstHeader('received-spf').trim()
+  const dkimHeader = firstHeader('dkim-signature').trim()
+  const authResults =
+    authHeader || spfHeader || dkimHeader
+      ? parseAuthenticationResults(authHeader, spfHeader, dkimHeader)
+      : undefined
+  const returnPath = firstHeader('return-path').trim()
+  const rawHeaders = sanitizeRawHeaders(message.payload?.headers)
+  const importance = parseMessageImportance(
+    firstHeader('importance'),
+    firstHeader('x-priority'),
+  )
+  const inReplyTo = firstHeader('in-reply-to')
+  const referencesRaw = firstHeader('references')
+  const deliveredTo = [
+    ...(headerMap.get('delivered-to') ?? []),
+    ...(headerMap.get('x-original-to') ?? []),
+    ...(headerMap.get('envelope-to') ?? []),
+  ].flatMap(value => parseMailContactList(value))
   return {
     id: `gmail_msg_${message.id}`,
     threadId: `gmail_thread_${message.threadId}`,
     ...(messageIdHeader ? { messageIdHeader } : {}),
-    from: parseMailContact(header(message, 'From') || 'unknown@unknown'),
-    to: parseMailContactList(header(message, 'To')),
-    cc: parseMailContactList(header(message, 'Cc')),
-    bcc: parseMailContactList(header(message, 'Bcc')),
-    replyTo: parseMailContactList(header(message, 'Reply-To')),
-    deliveredTo: (message.payload?.headers ?? []).filter(h => ['delivered-to', 'x-original-to', 'envelope-to'].includes(h.name.toLowerCase())).flatMap(h => parseMailContactList(h.value)),
-    ...(header(message, 'In-Reply-To') ? { inReplyTo: header(message, 'In-Reply-To') } : {}),
-    ...(header(message, 'References') ? { references: header(message, 'References').match(/<[^>]+>/g) ?? [] } : {}),
-    subject: header(message, 'Subject') || '(no subject)',
+    from: parseMailContact(firstHeader('from') || 'unknown@unknown'),
+    to: parseMailContactList(firstHeader('to')),
+    cc: parseMailContactList(firstHeader('cc')),
+    bcc: parseMailContactList(firstHeader('bcc')),
+    replyTo: parseMailContactList(firstHeader('reply-to')),
+    deliveredTo,
+    ...(inReplyTo ? { inReplyTo } : {}),
+    ...(referencesRaw ? { references: referencesRaw.match(/<[^>]+>/g) ?? [] } : {}),
+    subject: firstHeader('subject') || '(no subject)',
     body: messageBody(message),
     ...(html ? { bodyHtml: html } : {}),
     receivedAt: new Date(receivedMs).toISOString(),
     attachments,
     ...(calendarInvite ? { calendarInvite } : {}),
-    ...(header(message, 'List-Unsubscribe')
-      ? { listUnsubscribe: header(message, 'List-Unsubscribe') }
-      : {}),
+    ...(listUnsubscribe ? { listUnsubscribe } : {}),
+    ...(listUnsubscribePost ? { listUnsubscribePost } : {}),
+    ...(authResults ? { authResults } : {}),
+    ...(returnPath ? { returnPath } : {}),
+    ...(rawHeaders.length ? { rawHeaders } : {}),
+    ...(importance ? { importance } : {}),
     read: !(message.labelIds ?? []).includes('UNREAD'),
     ...((message.labelIds ?? []).includes('SENT')
       ? { sentCopyPresent: true }
@@ -1211,6 +1252,8 @@ export class GmailMailProvider implements MailProvider {
       body: input.draft.body,
       ...(input.draft.bodyHtml ? { bodyHtml: input.draft.bodyHtml } : {}),
       attachments: mimeAttachments,
+      ...(input.draft.importance ? { importance: input.draft.importance } : {}),
+      ...(input.draft.requestReadReceipt ? { requestReadReceipt: true } : {}),
     })
     const sent = await this.sendRaw(input, raw, gmailThreadId)
     const ownEmail =
@@ -1690,6 +1733,8 @@ export class GmailMailProvider implements MailProvider {
       body: draft.body,
       ...(draft.bodyHtml ? { bodyHtml: draft.bodyHtml } : {}),
       attachments,
+      ...(draft.importance ? { importance: draft.importance } : {}),
+      ...(draft.requestReadReceipt ? { requestReadReceipt: true } : {}),
     })
   }
 

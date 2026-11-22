@@ -1,18 +1,25 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { labelAgentRefs, mailboxAgentRefs, runAgentRefs, viewAgentRefs } from '../lib/agentRefs'
 import {
   Archive,
   Bookmark,
+  ChevronDown,
+  ChevronRight,
   Clock,
   File,
   Folder,
+  Hourglass,
   Inbox,
   LayoutGrid,
   MailMinus,
+  Newspaper,
   NotebookPen,
   PenLine,
+  Plus,
+  Receipt,
   Search,
   Send,
+  Shield,
   Star,
   Timer,
   Trash2,
@@ -26,6 +33,7 @@ import {
   quoteQueryValue,
   resolveThreadQuery,
 } from '../lib/mailQuery'
+import { unscreenedSendersInStore } from '../lib/mailScreener'
 import { type MailSpecialRailView } from '../lib/mailViews'
 import { runStatusLabel } from '../lib/mailRuns'
 import type {
@@ -39,9 +47,13 @@ import {
   NavComposeButton,
   NavRail,
   NavRailCount,
+  NavRailGroupDivider,
+  NavRailInlineAddBtn,
   NavRailItem,
   NavRailLabelDot,
+  NavRailSectionHeaderRow,
   NavRailSectionTitle,
+  NavRailSectionToggle,
 } from './mailShellStyles'
 
 export interface MailSidebarProps {
@@ -78,6 +90,32 @@ export interface MailSidebarProps {
   openNotes?: () => void
   openContext?: () => void
   openRun: (runId: string) => void
+  /** Optional inline label creation callback. */
+  createMailLabel?: (name: string) => void
+  /** Precomputed unscreened sender count for the Screener badge. */
+  screenerCount?: number
+}
+
+const SIDEBAR_COLLAPSE_KEY = 'puremail.sidebar.collapsed.v1'
+
+type CollapsibleSectionKey = 'folders' | 'labels' | 'views'
+
+function readCollapsedSections(): Record<CollapsibleSectionKey, boolean> {
+  if (typeof window === 'undefined') {
+    return { folders: false, labels: false, views: false }
+  }
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_COLLAPSE_KEY)
+    if (!raw) return { folders: false, labels: false, views: false }
+    const parsed = JSON.parse(raw) as Partial<Record<CollapsibleSectionKey, boolean>>
+    return {
+      folders: parsed.folders === true,
+      labels: parsed.labels === true,
+      views: parsed.views === true,
+    }
+  } catch {
+    return { folders: false, labels: false, views: false }
+  }
 }
 
 /** "Synced 2m ago", or an honest fallback when nothing has synced. */
@@ -133,7 +171,39 @@ export function MailSidebar({
   sweepsActive,
   openContext,
   openRun,
+  createMailLabel,
+  screenerCount,
 }: MailSidebarProps): React.ReactElement {
+  const [collapsedSections, setCollapsedSections] = useState<
+    Record<CollapsibleSectionKey, boolean>
+  >(readCollapsedSections)
+  const [addingLabel, setAddingLabel] = useState(false)
+  const [newLabelDraft, setNewLabelDraft] = useState('')
+
+  const toggleSection = (key: CollapsibleSectionKey): void => {
+    const next = { ...collapsedSections, [key]: !collapsedSections[key] }
+    setCollapsedSections(next)
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSE_KEY, JSON.stringify(next))
+    } catch {
+      // Ignore storage errors in sandboxed/private frames.
+    }
+  }
+
+  const submitNewLabel = (): void => {
+    const trimmed = newLabelDraft.trim()
+    if (trimmed && createMailLabel) {
+      createMailLabel(trimmed)
+    }
+    setNewLabelDraft('')
+    setAddingLabel(false)
+  }
+
+  const computedScreenerCount = useMemo(() => {
+    if (typeof screenerCount === 'number') return screenerCount
+    if (store.settings.screenerEnabled === false) return 0
+    return unscreenedSendersInStore(store, selectedAccount?.id).length
+  }, [screenerCount, store, selectedAccount?.id])
   // Every count comes from the same resolver the list renders, so a badge
   // can never disagree with the number of rows it points at.
   const countFor = (query: string): number =>
@@ -222,13 +292,24 @@ export function MailSidebar({
   const scheduledCount = countFor('is:scheduled')
 
   const specialRow = (
-    kind: 'starred' | 'snoozed' | 'scheduled',
+    kind:
+      | 'starred'
+      | 'snoozed'
+      | 'scheduled'
+      | 'waiting'
+      | 'screener'
+      | 'feed'
+      | 'paper_trail',
     query: string,
     label: string,
     icon: React.ReactElement,
+    options?: { countOverride?: number; accentBadge?: boolean },
   ): React.ReactElement => {
     const active = selectedSpecialView?.kind === kind
-    const count = countFor(query)
+    const count =
+      typeof options?.countOverride === 'number'
+        ? options.countOverride
+        : countFor(query)
     return (
       <NavRailItem
         type="button"
@@ -239,7 +320,9 @@ export function MailSidebar({
         {icon}
         {label}
         {navUnseen(query)}
-        {count > 0 && <NavRailCount>{count}</NavRailCount>}
+        {count > 0 && (
+          <NavRailCount $accent={options?.accentBadge}>{count}</NavRailCount>
+        )}
       </NavRailItem>
     )
   }
@@ -248,10 +331,16 @@ export function MailSidebar({
     mailbox: Mailbox,
     icon: React.ReactElement,
     labelOverride?: string,
+    indentDepth = 0,
   ): React.ReactElement => {
     const query = boxQueryFor(mailbox)
     const active = navMailboxActive(mailbox)
     const count = countFor(query)
+    const displayName =
+      labelOverride ??
+      (indentDepth > 0
+        ? mailbox.name.split('/').filter(Boolean).at(-1) ?? mailbox.name
+        : mailbox.name)
     return (
       <NavRailItem
         key={mailbox.id}
@@ -259,10 +348,16 @@ export function MailSidebar({
         type="button"
         $active={active}
         aria-current={active ? 'true' : undefined}
+        title={indentDepth > 0 ? mailbox.name : undefined}
+        style={
+          indentDepth > 0
+            ? { paddingLeft: `calc(var(--pure-chrome-inset, 14px) + ${indentDepth * 14}px)` }
+            : undefined
+        }
         onClick={() => selectQuery(query)}
       >
         {icon}
-        {labelOverride ?? mailbox.name}
+        {displayName}
         {navUnseen(query)}
         {count > 0 && <NavRailCount>{count}</NavRailCount>}
       </NavRailItem>
@@ -275,6 +370,7 @@ export function MailSidebar({
         <PenLine aria-hidden="true" />
         Compose
       </NavComposeButton>
+      {/* Mail */}
       {inboxMailbox && (
         <NavRailItem
           {...mailboxAgentRefs(inboxMailbox, 'Inbox')}
@@ -293,6 +389,50 @@ export function MailSidebar({
       )}
       {specialRow('starred', 'is:starred', 'Starred', <Star aria-hidden="true" />)}
       {specialRow('snoozed', 'is:snoozed', 'Snoozed', <Clock aria-hidden="true" />)}
+      {specialRow(
+        'waiting',
+        'is:awaiting',
+        'Waiting On',
+        <Hourglass aria-hidden="true" />,
+      )}
+      {scheduledCount > 0 &&
+        specialRow(
+          'scheduled',
+          'is:scheduled',
+          'Scheduled',
+          <Timer aria-hidden="true" />,
+        )}
+
+      {/* Smart Views */}
+      <NavRailGroupDivider aria-hidden="true" />
+      <NavRailSectionTitle>Smart Views</NavRailSectionTitle>
+      {store.settings.screenerEnabled !== false &&
+        specialRow(
+          'screener',
+          'is:screener',
+          'Screener',
+          <Shield aria-hidden="true" />,
+          {
+            countOverride: computedScreenerCount,
+            accentBadge: computedScreenerCount > 0,
+          },
+        )}
+      {specialRow(
+        'feed',
+        'is:newsletter',
+        'Feed',
+        <Newspaper aria-hidden="true" />,
+      )}
+      {specialRow(
+        'paper_trail',
+        'is:receipt',
+        'Paper Trail',
+        <Receipt aria-hidden="true" />,
+      )}
+
+      {/* Mailboxes */}
+      <NavRailGroupDivider aria-hidden="true" />
+      <NavRailSectionTitle>Mailboxes</NavRailSectionTitle>
       {(() => {
         const sent = mailboxByRole('sent')
         return sent ? mailboxRow(sent, <Send aria-hidden="true" />) : null
@@ -302,8 +442,20 @@ export function MailSidebar({
         return drafts ? mailboxRow(drafts, <File aria-hidden="true" />) : null
       })()}
       {(() => {
-        // Runs sit under Drafts: a paused run is one click away. The row
-        // opens the index; the section below lists runs in progress.
+        const archive = mailboxByRole('archive')
+        return archive
+          ? mailboxRow(archive, <Archive aria-hidden="true" />)
+          : null
+      })()}
+      {(() => {
+        const trash = mailboxByRole('trash')
+        return trash ? mailboxRow(trash, <Trash2 aria-hidden="true" />) : null
+      })()}
+
+      {/* Workspace */}
+      <NavRailGroupDivider aria-hidden="true" />
+      <NavRailSectionTitle>Workspace</NavRailSectionTitle>
+      {(() => {
         const inProgress = runs.filter(run => run.status !== 'done')
         const active = runsIndexActive || Boolean(activeRunId)
         return (
@@ -361,25 +513,8 @@ export function MailSidebar({
           {contextCount > 0 && <NavRailCount>{contextCount}</NavRailCount>}
         </NavRailItem>
       ) : null}
-      {scheduledCount > 0 &&
-        specialRow(
-          'scheduled',
-          'is:scheduled',
-          'Scheduled',
-          <Timer aria-hidden="true" />,
-        )}
-      {(() => {
-        const archive = mailboxByRole('archive')
-        return archive
-          ? mailboxRow(archive, <Archive aria-hidden="true" />)
-          : null
-      })()}
-      {(() => {
-        const trash = mailboxByRole('trash')
-        return trash ? mailboxRow(trash, <Trash2 aria-hidden="true" />) : null
-      })()}
       {runs.some(run => run.status !== 'done') && (
-        <NavRailSectionTitle>Runs</NavRailSectionTitle>
+        <NavRailSectionTitle>Active Runs</NavRailSectionTitle>
       )}
       {runs
         .filter(run => run.status !== 'done')
@@ -402,70 +537,189 @@ export function MailSidebar({
             </NavRailItem>
           )
         })}
+
+      {/* Collapsible Folders */}
       {customMailboxes.length > 0 && (
-        <NavRailSectionTitle>Folders</NavRailSectionTitle>
+        <>
+          <NavRailGroupDivider aria-hidden="true" />
+          <NavRailSectionHeaderRow>
+            <NavRailSectionToggle
+              type="button"
+              aria-expanded={!collapsedSections.folders}
+              onClick={() => toggleSection('folders')}
+            >
+              {collapsedSections.folders ? (
+                <ChevronRight aria-hidden="true" />
+              ) : (
+                <ChevronDown aria-hidden="true" />
+              )}
+              Folders
+            </NavRailSectionToggle>
+          </NavRailSectionHeaderRow>
+          {!collapsedSections.folders &&
+            [...customMailboxes]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map(mailbox => {
+                const depth = Math.max(
+                  0,
+                  mailbox.name.split('/').filter(Boolean).length - 1,
+                )
+                return mailboxRow(
+                  mailbox,
+                  <Folder aria-hidden="true" />,
+                  undefined,
+                  Math.min(depth, 3),
+                )
+              })}
+        </>
       )}
-      {customMailboxes.map(mailbox =>
-        mailboxRow(mailbox, <Folder aria-hidden="true" />),
+
+      {/* Collapsible Labels with inline + create */}
+      {(store.labels.length > 0 || Boolean(createMailLabel)) && (
+        <>
+          <NavRailGroupDivider aria-hidden="true" />
+          <NavRailSectionHeaderRow>
+            <NavRailSectionToggle
+              type="button"
+              aria-expanded={!collapsedSections.labels}
+              onClick={() => toggleSection('labels')}
+            >
+              {collapsedSections.labels ? (
+                <ChevronRight aria-hidden="true" />
+              ) : (
+                <ChevronDown aria-hidden="true" />
+              )}
+              Labels
+            </NavRailSectionToggle>
+            {createMailLabel && (
+              <NavRailInlineAddBtn
+                type="button"
+                aria-label="Create label"
+                title="Create label"
+                onClick={() => {
+                  if (collapsedSections.labels) toggleSection('labels')
+                  setAddingLabel(open => !open)
+                }}
+              >
+                <Plus size={12} aria-hidden="true" />
+              </NavRailInlineAddBtn>
+            )}
+          </NavRailSectionHeaderRow>
+          {addingLabel && createMailLabel && (
+            <div style={{ padding: '4px 12px 6px', display: 'flex', gap: 4 }}>
+              <input
+                autoFocus
+                value={newLabelDraft}
+                aria-label="New label name"
+                placeholder="Label name…"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: 24,
+                  padding: '0 7px',
+                  border: '1px solid var(--n-line)',
+                  borderRadius: 3,
+                  background: 'var(--n-sheet)',
+                  color: 'var(--n-ink)',
+                  fontSize: 12,
+                }}
+                onChange={event => setNewLabelDraft(event.currentTarget.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    submitNewLabel()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    setAddingLabel(false)
+                    setNewLabelDraft('')
+                  }
+                }}
+                onBlur={() => {
+                  if (!newLabelDraft.trim()) setAddingLabel(false)
+                }}
+              />
+            </div>
+          )}
+          {!collapsedSections.labels &&
+            store.labels.map(label => {
+              const query = `label:${quoteQueryValue(label.name)}`
+              const active =
+                selectedSpecialView?.kind === 'label' &&
+                selectedSpecialView.labelId === label.id
+              const count = countFor(query)
+              return (
+                <NavRailItem
+                  key={label.id}
+                  {...labelAgentRefs(label)}
+                  type="button"
+                  $active={active}
+                  aria-current={active ? 'true' : undefined}
+                  onClick={() => selectQuery(query)}
+                >
+                  <NavRailLabelDot $color={label.color} aria-hidden="true" />
+                  {label.name}
+                  {navUnseen(query)}
+                  {count > 0 && <NavRailCount>{count}</NavRailCount>}
+                </NavRailItem>
+              )
+            })}
+        </>
       )}
-      {store.labels.length > 0 && (
-        <NavRailSectionTitle>Labels</NavRailSectionTitle>
-      )}
-      {store.labels.map(label => {
-        const query = `label:${quoteQueryValue(label.name)}`
-        const active =
-          selectedSpecialView?.kind === 'label' &&
-          selectedSpecialView.labelId === label.id
-        const count = countFor(query)
-        return (
-          <NavRailItem
-            key={label.id}
-            {...labelAgentRefs(label)}
-            type="button"
-            $active={active}
-            aria-current={active ? 'true' : undefined}
-            onClick={() => selectQuery(query)}
-          >
-            <NavRailLabelDot $color={label.color} aria-hidden="true" />
-            {label.name}
-            {navUnseen(query)}
-            {count > 0 && <NavRailCount>{count}</NavRailCount>}
-          </NavRailItem>
-        )
-      })}
+
+      {/* Collapsible Saved Views */}
       {visibleSavedViews.length > 0 && (
-        <NavRailSectionTitle>Views</NavRailSectionTitle>
+        <>
+          <NavRailGroupDivider aria-hidden="true" />
+          <NavRailSectionHeaderRow>
+            <NavRailSectionToggle
+              type="button"
+              aria-expanded={!collapsedSections.views}
+              onClick={() => toggleSection('views')}
+            >
+              {collapsedSections.views ? (
+                <ChevronRight aria-hidden="true" />
+              ) : (
+                <ChevronDown aria-hidden="true" />
+              )}
+              Views
+            </NavRailSectionToggle>
+          </NavRailSectionHeaderRow>
+          {!collapsedSections.views &&
+            visibleSavedViews.map(view => {
+              const active = currentQuery === view.query
+              const count = countThreadQuery(store, selectedAccount?.id, view.query)
+              return (
+                <NavRailItem
+                  key={view.id}
+                  {...viewAgentRefs(view)}
+                  type="button"
+                  $active={active}
+                  aria-current={active ? 'true' : undefined}
+                  title={view.query}
+                  onClick={() => selectQuery(view.query)}
+                >
+                  <Search aria-hidden="true" />
+                  {view.name}
+                  {navUnseen(view.query)}
+                  {count > 0 && <NavRailCount>{count}</NavRailCount>}
+                </NavRailItem>
+              )
+            })}
+        </>
       )}
-      {visibleSavedViews.map(view => {
-        const active = currentQuery === view.query
-        const count = countThreadQuery(store, selectedAccount?.id, view.query)
-        return (
-          <NavRailItem
-            key={view.id}
-            {...viewAgentRefs(view)}
-            type="button"
-            $active={active}
-            aria-current={active ? 'true' : undefined}
-            title={view.query}
-            onClick={() => selectQuery(view.query)}
-          >
-            <Search aria-hidden="true" />
-            {view.name}
-            {navUnseen(view.query)}
-            {count > 0 && <NavRailCount>{count}</NavRailCount>}
-          </NavRailItem>
-        )
-      })}
       {unsubscribeCount > 0 && (
-        <NavRailItem
-          type="button"
-          aria-haspopup="dialog"
-          onClick={openUnsubscribeDrawer}
-        >
-          <MailMinus aria-hidden="true" />
-          Unsubscribe
-          <NavRailCount>{unsubscribeCount}</NavRailCount>
-        </NavRailItem>
+        <>
+          <NavRailGroupDivider aria-hidden="true" />
+          <NavRailItem
+            type="button"
+            aria-haspopup="dialog"
+            onClick={openUnsubscribeDrawer}
+          >
+            <MailMinus aria-hidden="true" />
+            Unsubscribe
+            <NavRailCount>{unsubscribeCount}</NavRailCount>
+          </NavRailItem>
+        </>
       )}
     </NavRail>
   )

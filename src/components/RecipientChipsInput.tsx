@@ -4,14 +4,15 @@ import {
   loadPeopleDirectory,
   type PeopleDirectoryEntry,
 } from '../lib/peopleDirectory'
-import { X } from 'lucide-react'
+import { Users, X } from 'lucide-react'
 import {
   formatRecipientToken,
   isValidEmailAddress,
   parseRecipientInput,
   rankedCorrespondents,
 } from '../lib/mailCompose'
-import type { MailStore } from '../types'
+import type { MailContactGroup, MailStore } from '../types'
+import { senderAvatar } from './mailShellHelpers'
 import {
   ChipField,
   ChipTextInput,
@@ -32,6 +33,20 @@ export interface RecipientChipsInputProps {
   placeholder?: string
   inputRef?: React.RefObject<HTMLInputElement | null>
 }
+
+const CONSUMER_WEBMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'icloud.com',
+  'me.com',
+  'yahoo.com',
+  'proton.me',
+  'protonmail.com',
+  'fastmail.com',
+])
 
 function contactToken(name: string, email: string): string {
   return formatRecipientToken(name, email)
@@ -85,16 +100,53 @@ export function RecipientChipsInput({
     }
   }, [menuOpen])
 
-  const suggestions = useMemo(() => {
+  const activeAccountDomain = useMemo(() => {
+    const acct =
+      store.accounts.find(a => a.id === accountId) ?? store.accounts[0]
+    const email = acct?.email?.trim().toLowerCase() ?? ''
+    const at = email.indexOf('@')
+    return at > 0 ? email.slice(at + 1) : ''
+  }, [store.accounts, accountId])
+
+  type RecipientSuggestion =
+    | { kind: 'contact'; name: string; email: string }
+    | { kind: 'group'; group: MailContactGroup }
+
+  const suggestions = useMemo<RecipientSuggestion[]>(() => {
     if (!accountId || !menuOpen) return []
-    const fromMail = rankedCorrespondents(store, accountId, pending).filter(
-      contact => !chipEmails.has(contact.email.trim().toLowerCase()),
-    )
-    const seen = new Set(
-      fromMail.map(contact => contact.email.trim().toLowerCase()),
-    )
     const needle = pending.trim().toLowerCase()
-    const fromPeople = peopleDirectory
+    const fromGroups: RecipientSuggestion[] = (store.contactGroups ?? [])
+      .filter(group => {
+        if (!group.members.length) return false
+        if (!needle) return true
+        return (
+          group.name.toLowerCase().includes(needle) ||
+          group.members.some(
+            m =>
+              m.email.toLowerCase().includes(needle) ||
+              m.name.toLowerCase().includes(needle),
+          )
+        )
+      })
+      .slice(0, 3)
+      .map(group => ({ kind: 'group', group }))
+    const fromMail: RecipientSuggestion[] = rankedCorrespondents(
+      store,
+      accountId,
+      pending,
+    )
+      .filter(contact => !chipEmails.has(contact.email.trim().toLowerCase()))
+      .map(contact => ({
+        kind: 'contact',
+        name: contact.name,
+        email: contact.email,
+      }))
+    const seen = new Set(
+      fromMail.map(item =>
+        item.kind === 'contact' ? item.email.trim().toLowerCase() : '',
+      ),
+    )
+    const fromPeople: RecipientSuggestion[] = peopleDirectory
       .filter(entry => {
         if (chipEmails.has(entry.email) || seen.has(entry.email)) return false
         if (!needle) return false
@@ -107,10 +159,11 @@ export function RecipientChipsInput({
       .sort((a, b) => b.weight - a.weight)
       .slice(0, 4)
       .map(entry => ({
+        kind: 'contact',
         name: entry.org ? `${entry.name} (${entry.org})` : entry.name,
         email: entry.email,
       }))
-    return [...fromMail, ...fromPeople].slice(0, 8)
+    return [...fromGroups, ...fromMail, ...fromPeople].slice(0, 8)
   }, [accountId, chipEmails, menuOpen, pending, peopleDirectory, store])
 
   const commitChips = (nextChips: string[]): void => {
@@ -163,13 +216,25 @@ export function RecipientChipsInput({
     )
   }
 
-  const addSuggestion = (name: string, email: string): void => {
+  const addSuggestion = (suggestion: RecipientSuggestion): void => {
     lastPickAtRef.current = Date.now()
     setPending('')
     setMenuOpen(false)
+    if (suggestion.kind === 'group') {
+      const existing = new Set(chipEmails)
+      const nextTokens = chips.map(chip => contactToken(chip.name, chip.email))
+      for (const member of suggestion.group.members) {
+        const normalized = member.email.trim().toLowerCase()
+        if (!normalized || existing.has(normalized)) continue
+        existing.add(normalized)
+        nextTokens.push(contactToken(member.name, member.email))
+      }
+      commitChips(nextTokens)
+      return
+    }
     commitChips([
       ...chips.map(chip => contactToken(chip.name, chip.email)),
-      contactToken(name, email),
+      contactToken(suggestion.name, suggestion.email),
     ])
   }
 
@@ -197,7 +262,7 @@ export function RecipientChipsInput({
     if (event.key === 'Enter' && menuShowing) {
       event.preventDefault()
       const active = suggestions[activeIndex] ?? suggestions[0]
-      if (active) addSuggestion(active.name, active.email)
+      if (active) addSuggestion(active)
       return
     }
     if (event.key === 'Enter' || event.key === ',' || event.key === ';') {
@@ -225,13 +290,23 @@ export function RecipientChipsInput({
       >
         {chips.map((chip, index) => {
           const valid = isValidEmailAddress(chip.email)
+          const avatar = senderAvatar(chip.name || chip.email)
+          const atIdx = chip.email.indexOf('@')
+          const chipDomain =
+            atIdx > 0 ? chip.email.slice(atIdx + 1).trim().toLowerCase() : ''
+          const isExternal =
+            valid &&
+            Boolean(activeAccountDomain) &&
+            !CONSUMER_WEBMAIL_DOMAINS.has(activeAccountDomain) &&
+            Boolean(chipDomain) &&
+            chipDomain !== activeAccountDomain
           return (
             <RecipientChip
               key={`${chip.email}-${index}`}
               $invalid={!valid}
               title={
                 valid
-                  ? `${chip.email} (double-click to edit)`
+                  ? `${chip.email}${isExternal ? ' (external domain)' : ''} (double-click to edit)`
                   : `"${chip.email}" is not a valid email address — click or press Enter to edit`
               }
               onDoubleClick={event => {
@@ -239,6 +314,26 @@ export function RecipientChipsInput({
                 editChip(index)
               }}
             >
+              {valid && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    background: avatar.bg,
+                    color: avatar.fg,
+                    fontSize: 9.5,
+                    fontWeight: 600,
+                    flex: 'none',
+                  }}
+                >
+                  {avatar.initial}
+                </span>
+              )}
               <span
                 tabIndex={!valid ? 0 : undefined}
                 role={!valid ? 'button' : undefined}
@@ -266,6 +361,23 @@ export function RecipientChipsInput({
                   : chip.email}
                 {!valid ? ' — invalid' : ''}
               </span>
+              {isExternal && (
+                <span
+                  title={`External domain: ${chipDomain}`}
+                  style={{
+                    fontSize: 9.5,
+                    fontWeight: 600,
+                    padding: '0 4px',
+                    borderRadius: 3,
+                    background: 'color-mix(in srgb, var(--b-amber) 14%, transparent)',
+                    color: 'var(--b-amber)',
+                    lineHeight: '15px',
+                    flex: 'none',
+                  }}
+                >
+                  External
+                </span>
+              )}
               <button
                 type="button"
                 aria-label={`Remove recipient ${chip.email}`}
@@ -317,25 +429,49 @@ export function RecipientChipsInput({
       {suggestions.length > 0 && (
         <RecipientMenuWrap>
           <RecipientMenu role="listbox" aria-label="Recipient suggestions">
-            {suggestions.map((contact, index) => (
-              <RecipientMenuItem
-                key={contact.email}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                $active={index === activeIndex}
-                onMouseDown={event => {
-                  event.preventDefault()
-                }}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => addSuggestion(contact.name, contact.email)}
-              >
-                {contact.name && contact.name !== contact.email
-                  ? contact.name
-                  : contact.email}
-                <RecipientMenuMeta>{contact.email}</RecipientMenuMeta>
-              </RecipientMenuItem>
-            ))}
+            {suggestions.map((item, index) =>
+              item.kind === 'group' ? (
+                <RecipientMenuItem
+                  key={`group-${item.group.id}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  $active={index === activeIndex}
+                  onMouseDown={event => {
+                    event.preventDefault()
+                  }}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => addSuggestion(item)}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <Users size={12} aria-hidden="true" />
+                    {item.group.name}
+                  </span>
+                  <RecipientMenuMeta>
+                    Group · {item.group.members.length}{' '}
+                    {item.group.members.length === 1 ? 'member' : 'members'}
+                  </RecipientMenuMeta>
+                </RecipientMenuItem>
+              ) : (
+                <RecipientMenuItem
+                  key={item.email}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  $active={index === activeIndex}
+                  onMouseDown={event => {
+                    event.preventDefault()
+                  }}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => addSuggestion(item)}
+                >
+                  {item.name && item.name !== item.email
+                    ? item.name
+                    : item.email}
+                  <RecipientMenuMeta>{item.email}</RecipientMenuMeta>
+                </RecipientMenuItem>
+              ),
+            )}
           </RecipientMenu>
         </RecipientMenuWrap>
       )}
