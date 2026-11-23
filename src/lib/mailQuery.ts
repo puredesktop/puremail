@@ -5,7 +5,11 @@ import {
   DEFAULT_REPLY_THRESHOLD_WORKING_DAYS,
   replyStateForThread,
 } from './mailReplyState'
-import { isNewsletterThread, isPaperTrailThread } from './mailScreener'
+import {
+  isNewsletterThread,
+  isPaperTrailThread,
+  unscreenedSendersInStore,
+} from './mailScreener'
 
 /**
  * The one query language. A thread list only ever comes into existence by
@@ -95,6 +99,7 @@ const IS_VALUES = new Set([
   'pinned',
   'awaiting',
   'overdue',
+  'screener',
   'newsletter',
   'receipt',
 ])
@@ -457,6 +462,10 @@ interface StoreQueryIndexes {
   factsByThread: Map<string, ThreadFacts>
   /** Lazy: threads holding at least one unread message. */
   unreadThreadIds?: Set<string>
+  /** Lazy: mailbox IDs with role `'inbox'` for active-inbox checks. */
+  inboxMailboxIds?: Set<string>
+  /** Lazy: normalized unscreened sender emails per account for `is:screener`. */
+  unscreenedSendersByAccount?: Map<string, Set<string>>
 }
 
 const storeQueryIndexes = new WeakMap<MailStore, StoreQueryIndexes>()
@@ -652,6 +661,38 @@ function termHolds(
       if (lowered === 'vip') return facts.vip
       if (lowered === 'muted') return facts.muted
       if (lowered === 'pinned') return facts.pinned
+      if (lowered === 'screener') {
+        if (store.settings.screenerEnabled === false) return false
+        // Match unscreenedSendersInStore scope: only active Inbox threads.
+        if (thread.status === 'archived' || thread.status === 'snoozed') {
+          return false
+        }
+        const indexes = indexesForStore(store)
+        if (!indexes.inboxMailboxIds) {
+          indexes.inboxMailboxIds = new Set(
+            store.mailboxes.filter(m => m.role === 'inbox').map(m => m.id),
+          )
+        }
+        if (!indexes.inboxMailboxIds.has(thread.mailboxId)) return false
+        if (!indexes.unscreenedSendersByAccount) {
+          indexes.unscreenedSendersByAccount = new Map()
+        }
+        const acctKey = thread.accountId ?? ''
+        let pending = indexes.unscreenedSendersByAccount.get(acctKey)
+        if (!pending) {
+          pending = new Set(
+            unscreenedSendersInStore(store, thread.accountId).map(s =>
+              s.email.trim().toLowerCase(),
+            ),
+          )
+          indexes.unscreenedSendersByAccount.set(acctKey, pending)
+        }
+        return messages.some(
+          m =>
+            !m.isDraft &&
+            pending!.has((m.from?.email ?? '').trim().toLowerCase()),
+        )
+      }
       if (lowered === 'newsletter') {
         return isNewsletterThread(thread, messages, store.screenerDecisions)
       }
