@@ -549,3 +549,18 @@ describe('unseen arrivals per mailbox', () => {
     ).toBe(0)
   })
 })
+
+describe('is:screener query flag', () => {
+  it('parses is:screener as an is flag (not free text) and resolves unscreened threads', () => {
+    const parsed = parseMailQuery('is:screener')
+    expect(parsed.text).toBe('')
+    expect(parsed.terms).toEqual([
+      { field: 'is', value: 'screener', negated: false },
+    ])
+
+    const store = baseStore()
+    const id = accountId(store)
+    const result = resolveThreadQuery(store, id, 'is:screener', NOW)
+    expect(result.threads.length).toBeGreaterThan(0)
+  })
+})
