@@ -773,6 +773,95 @@ describe('mailHubSync: optional granular settings & chunked history backfill', (
         c => c.method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_INGEST_MESSAGES,
       ),
     ).toBe(false)
+
+    // Partial opt-in: signalExtraction only -> passes skipIndex: true on ingestMessages.
+    const signalsOnlyHarness = createFakeHubHarness()
+    await syncStoreWithMailHub({
+      store,
+      tracker: createMailHubSyncTracker(),
+      client: signalsOnlyHarness.client,
+      settings: {
+        ...DEFAULT_MAIL_INTELLIGENCE_SETTINGS,
+        enabled: true,
+        signalExtraction: true,
+        semanticMemory: false,
+        voiceProfile: false,
+        crossAppOutbox: false,
+      },
+    })
+    const signalsOnlyIngest = signalsOnlyHarness.calls.find(
+      c => c.method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_INGEST_MESSAGES,
+    )
+    expect(signalsOnlyIngest).toBeDefined()
+    expect((signalsOnlyIngest!.args[0] as { skipIndex?: boolean }).skipIndex).toBe(true)
+    expect((signalsOnlyIngest!.args[0] as { skipSignals?: boolean }).skipSignals).toBeUndefined()
+  })
+
+  it('useMailHubIntegration refreshes newly enabled sub-features while already active', async () => {
+    const baseStore = demoMailStoreForNow(NOW)
+    let currentStore: MailStore = {
+      ...baseStore,
+      settings: {
+        ...baseStore.settings,
+        mailIntelligence: {
+          ...DEFAULT_MAIL_INTELLIGENCE_SETTINGS,
+          enabled: true,
+          signalExtraction: false,
+          crossAppOutbox: false,
+          semanticMemory: false,
+          voiceProfile: true,
+        },
+      },
+    }
+    const storeRef = { current: currentStore }
+    const harness = createFakeHubHarness()
+    let latestApi!: MailHubIntegrationApi
+
+    function HarnessComponent({ storeProp }: { storeProp: MailStore }) {
+      storeRef.current = storeProp
+      latestApi = useMailHubIntegration({
+        enabled: true,
+        allowIngestion: false,
+        store: storeProp,
+        storeRef,
+        client: harness.client,
+      })
+      return null
+    }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(createElement(HarnessComponent, { storeProp: currentStore }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(latestApi.pendingDrafts).toEqual([])
+    expect(latestApi.voiceProfile?.sampleCount).toBe(18)
+
+    // Now enable crossAppOutbox while already active -> pendingDrafts must load via refresh().
+    currentStore = {
+      ...currentStore,
+      settings: {
+        ...currentStore.settings,
+        mailIntelligence: {
+          ...currentStore.settings.mailIntelligence!,
+          crossAppOutbox: true,
+        },
+      },
+    }
+    await act(async () => {
+      root.render(createElement(HarnessComponent, { storeProp: currentStore }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(latestApi.pendingDrafts.map(d => d.id)).toEqual([SAMPLE_DRAFT.id])
+
+    await act(async () => {
+      root.unmount()
+    })
   })
 
   it('filters messages accurately across days, weeks, months, and all history ranges', () => {

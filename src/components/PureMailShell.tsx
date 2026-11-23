@@ -3772,7 +3772,7 @@ export function PureMailShell({
     holdForDraft,
     isDraftSending,
     markDraftSending,
-    deliver: (provider, draft, attempt) => deliveryController.current!(provider, draft, attempt),
+    deliver: sendDraftThroughProvider,
     reportFailure: reportSendFailure,
     notice: setCommandNotice,
     record: (kind, summary) => recordTriageOperation(kind, summary),

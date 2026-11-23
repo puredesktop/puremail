@@ -323,6 +323,13 @@ export function MailIntelligenceSettings({
       | 'allowOrgSharing',
     checked: boolean,
   ) => {
+    const restoreSignalKinds =
+      key === 'signalExtraction' &&
+      checked &&
+      settings.enabledSignalKinds !== undefined &&
+      settings.enabledSignalKinds.length === 0
+        ? { enabledSignalKinds: undefined }
+        : {}
     if (!settings.enabled && checked) {
       // Enabling any single capability while master is off turns on ONLY that capability (opt-in in part!).
       patchSettings({
@@ -332,10 +339,11 @@ export function MailIntelligenceSettings({
         semanticMemory: key === 'semanticMemory',
         voiceProfile: key === 'voiceProfile',
         allowOrgSharing: key === 'allowOrgSharing',
+        ...restoreSignalKinds,
       })
       return
     }
-    patchSettings({ [key]: checked })
+    patchSettings({ [key]: checked, ...restoreSignalKinds })
   }
 
   const toggleSignalGroup = (kinds: readonly MailSignalKind[], checked: boolean) => {

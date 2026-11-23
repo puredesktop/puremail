@@ -106,6 +106,36 @@ describe('MailIntelligenceSettings UI', () => {
     expect(amountInput).toBeTruthy()
     expect(unitSelect).toBeTruthy()
 
+    // Uncheck every signal group -> re-enabling signalExtraction must restore all signal kinds (not leave []).
+    const groupCheckboxes = () =>
+      Array.from(
+        container.querySelectorAll<HTMLInputElement>(
+          '[aria-label="Signal categories"] input[type="checkbox"]',
+        ),
+      )
+    expect(groupCheckboxes().length).toBeGreaterThan(0)
+    for (let guard = 0; guard < 12; guard++) {
+      const checked = groupCheckboxes().find(cb => cb.checked)
+      if (!checked) break
+      await act(async () => {
+        checked.click()
+      })
+    }
+    expect(latestStore.settings.mailIntelligence?.signalExtraction).toBe(false)
+    expect(latestStore.settings.mailIntelligence?.enabledSignalKinds).toEqual([])
+
+    const signalMasterCheckbox = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ).find(cb =>
+      cb.closest('label')?.textContent?.includes('Cross-app signal extraction'),
+    )
+    expect(signalMasterCheckbox).toBeTruthy()
+    await act(async () => {
+      signalMasterCheckbox!.click()
+    })
+    expect(latestStore.settings.mailIntelligence?.signalExtraction).toBe(true)
+    expect(latestStore.settings.mailIntelligence?.enabledSignalKinds).toBeUndefined()
+
     await act(async () => {
       root.unmount()
     })

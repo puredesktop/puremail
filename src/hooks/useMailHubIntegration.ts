@@ -242,10 +242,22 @@ export function useMailHubIntegration(
     })
   }, [])
 
-  // Initial load + live Mail Hub event subscription + periodic follow-up check.
+  // Refresh Hub snapshots on activation or whenever a surfaced capability is toggled on.
   useEffect(() => {
     if (!active || !client.isAvailable()) return
     void refresh()
+  }, [
+    active,
+    settings.crossAppOutbox,
+    settings.signalExtraction,
+    settings.voiceProfile,
+    client,
+    refresh,
+  ])
+
+  // Initial sync + live Mail Hub event subscription + periodic follow-up check.
+  useEffect(() => {
+    if (!active || !client.isAvailable()) return
     if (input.allowIngestion) {
       runIncrementalSync()
     }

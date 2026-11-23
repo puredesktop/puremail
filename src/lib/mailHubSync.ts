@@ -616,10 +616,22 @@ export async function syncStoreWithMailHub(
   let blockedByPrivacy = 0
   const extractedSignals: MailSignal[] = []
 
+  const ingestOptions = settings
+    ? {
+        ...(!settings.semanticMemory ? { skipIndex: true } : {}),
+        ...(!settings.signalExtraction ? { skipSignals: true } : {}),
+      }
+    : undefined
+  const hasIngestOptions =
+    ingestOptions !== undefined && Object.keys(ingestOptions).length > 0
+
   for (let i = 0; i < toIngest.length; i += batchSize) {
     const chunk = toIngest.slice(i, i + batchSize)
     try {
-      const result = await client.ingestMessages(chunk)
+      const result = await client.ingestMessages(
+        chunk,
+        hasIngestOptions ? ingestOptions : undefined,
+      )
       ingestedCount += result.ingested
       blockedByPrivacy += result.blockedByPrivacy
       if (result.signalsExtracted?.length) {
@@ -806,6 +818,12 @@ export async function runMailHubHistoryScan(
   const extractedSignals: MailSignal[] = []
   let cancelled = false
 
+  const scanIngestOptions = {
+    ...(!settings.semanticMemory ? { skipIndex: true } : {}),
+    ...(!settings.signalExtraction ? { skipSignals: true } : {}),
+  }
+  const hasScanIngestOptions = Object.keys(scanIngestOptions).length > 0
+
   if (shouldIngest && convertedAll.length > 0) {
     progress.phase = 'ingesting'
     input.onProgress?.({ ...progress })
@@ -817,7 +835,10 @@ export async function runMailHubHistoryScan(
       const slice = convertedAll.slice(i, i + batchSize)
       const chunk = slice.map(item => item.converted)
       try {
-        const res = await client.ingestMessages(chunk)
+        const res = await client.ingestMessages(
+          chunk,
+          hasScanIngestOptions ? scanIngestOptions : undefined,
+        )
         progress.ingestedMessages += res.ingested
         progress.blockedByPrivacy += res.blockedByPrivacy
         if (res.signalsExtracted?.length) {
