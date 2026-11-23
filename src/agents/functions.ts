@@ -915,7 +915,7 @@ export const PUREMAIL_FUNCTIONS: readonly AppFunctionDefinition<MailAgentToolCon
         // Build an exact candidate-scoped proposal so we NEVER affect non-promotional inbox mail.
         const proposal: MailProposal = {
           id: `prop_cleanup_${crypto.randomUUID()}`,
-          query: query ?? 'is:feed',
+          query: query ?? 'is:newsletter',
           action: bulkAction,
           rationale: `Cleanup ${candidates.length} promotional/newsletter thread${candidates.length === 1 ? '' : 's'} (${action})`,
           threadIds: candidates.map(c => c.id),
