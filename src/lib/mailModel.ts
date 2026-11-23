@@ -486,6 +486,10 @@ export interface ComposedMessageInput {
   body: string
   bodyHtml?: string
   cc?: MailContact[]
+  /** Mail Intelligence Hub staged draft id for closed-loop send reporting. */
+  hubDraftId?: string
+  /** Originating Pure* app slug/name for a Mail Intelligence Hub staged draft. */
+  hubSourceApp?: string
   /** Who wrote it: an agent's message is marked as such in the composer. */
   origin?: 'agent' | 'manual'
   subject: string
@@ -550,6 +554,8 @@ export function createComposedMessageDraft(
     subject,
     body: input.body,
     ...(input.bodyHtml ? { bodyHtml: input.bodyHtml } : {}),
+    ...(input.hubDraftId ? { hubDraftId: input.hubDraftId } : {}),
+    ...(input.hubSourceApp ? { hubSourceApp: input.hubSourceApp } : {}),
     attachments: input.attachments ?? [],
     updatedAt: now,
     syncState: 'pending',
@@ -557,9 +563,11 @@ export function createComposedMessageDraft(
     draftKind: byAgent ? 'assistant' : 'manual',
     ...(byAgent ? { qaStatus: 'ready' as const } : {}),
     provenance: [
-      byAgent
-        ? 'Composed by an agent as a new message. Not sent.'
-        : 'Created from Compose.',
+      input.hubSourceApp
+        ? `Staged from ${input.hubSourceApp} via Mail Intelligence Hub. Not sent.`
+        : byAgent
+          ? 'Composed by an agent as a new message. Not sent.'
+          : 'Created from Compose.',
     ],
   }
   return {

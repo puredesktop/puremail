@@ -1,4 +1,6 @@
+import type { MailScope } from '@purescience/platform-ui/bridge/mailHub'
 import { defineAppFunction, type AppFunctionDefinition } from '../lib/appFunctions'
+import { buildMailIntelligenceBriefing } from '../lib/mailHubSync'
 import { applyAiTriage, senderFacts, triageRow } from '../lib/aiTriage'
 import { aiTriageCurrent, isAiTriageVerdict, latestDeliveredMessage } from '../lib/aiTriageState'
 import {
@@ -1364,6 +1366,68 @@ export const PUREMAIL_FUNCTIONS: readonly AppFunctionDefinition<MailAgentToolCon
           warnings,
           ...(markdown ? { markdown } : {}),
         },
+      }
+    },
+  }),
+
+  // ── 10. fn_mailIntelligenceBriefing ───────────────────────────────────
+  defineAppFunction<MailAgentToolContext>({
+    name: 'fn_mailIntelligenceBriefing',
+    category: 'briefing',
+    risk: 'read',
+    requiresApproval: false,
+    replaces: ['listDrafts', 'getMailContext'],
+    description:
+      'Aggregates the Mail Intelligence Hub executive picture in ONE call: pending cross-app Outbox drafts awaiting review, extracted email signals grouped by target Pure* app, overdue follow-ups, the active Voice Profile summary, and the synthesized Morning Briefing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: {
+          type: 'string',
+          enum: ['personal', 'organisation'],
+          description:
+            'Optional privacy scope filter for extracted signals and briefing synthesis.',
+        },
+        limit: {
+          type: 'number',
+          description:
+            'Maximum pending drafts and signals to include in detail (default 25, max 100).',
+        },
+        includeBriefingMarkdown: {
+          type: 'boolean',
+          description:
+            'Include the synthesized Morning Briefing Markdown document (default true).',
+        },
+      },
+    },
+    run: async (ctx, args) => {
+      const rawScope = optionalString(args, 'scope')
+      if (rawScope && rawScope !== 'personal' && rawScope !== 'organisation') {
+        throw new AgentMailToolError(
+          `Invalid scope "${rawScope}". Expected "personal" or "organisation".`,
+        )
+      }
+      const scope = rawScope as MailScope | undefined
+      const limit = clampInt(optionalNumber(args, 'limit'), 25, 1, 100)
+      const includeBriefingMarkdown = args.includeBriefingMarkdown !== false
+
+      const data = await buildMailIntelligenceBriefing({
+        client: ctx.mailHubClient,
+        scope,
+        limit,
+        includeBriefingMarkdown,
+        now: ctx.now,
+      })
+
+      const appCount = Object.keys(data.signalsByTargetApp).length
+      const summary = data.hubAvailable
+        ? `Mail Intelligence Hub briefing: ${data.counts.pendingOutboxDrafts} pending cross-app draft${data.counts.pendingOutboxDrafts === 1 ? '' : 's'}, ${data.counts.pendingSignals} signal${data.counts.pendingSignals === 1 ? '' : 's'} across ${appCount} app${appCount === 1 ? '' : 's'}, ${data.counts.dueFollowUps} overdue follow-up${data.counts.dueFollowUps === 1 ? '' : 's'}${data.voiceProfile ? `, Voice Profile grounded on ${data.voiceProfile.sampleCount} sent emails` : ''}.`
+        : 'Mail Intelligence Hub bridge is unavailable in this session; returning empty cross-app snapshot.'
+
+      return {
+        mutated: false,
+        summary,
+        data: data as unknown as Record<string, unknown>,
       }
     },
   }),

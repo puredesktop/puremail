@@ -40,6 +40,7 @@ import {
   UserRound,
 } from 'lucide-react'
 import type { CalendarInviteResponse } from '@purescience/platform-ui/bridge/calendarInviteIntent'
+import type { MailSignal } from '@purescience/platform-ui/bridge/mailHub'
 import { Button } from '@purescience/platform-ui/components/common/buttons/Button'
 import { EmptyState } from '@purescience/platform-ui/components/common/feedback/EmptyState'
 import {
@@ -111,6 +112,7 @@ import {
 import { PrivacyInspectorModal } from './PrivacyInspectorModal'
 import { QuickReplyBar, type QuickReplySendResult } from './QuickReplyBar'
 import { SecurityShieldPill } from './SecurityShieldPill'
+import { ThreadSignalChips } from './ThreadSignalChips'
 import {
   computeFollowUpIso,
   type ThreadDecisionInsight,
@@ -485,6 +487,12 @@ export interface ThreadReaderProps {
   decisionInsight?: ThreadDecisionInsight | null
   /** One-click follow-up reminder callback (used by decision-model follow-up radar hint). */
   onSetFollowUpReminder?: (threadId: string, iso: string) => void
+  /** Pending Mail Intelligence Hub signals extracted for this thread. */
+  threadSignals?: readonly MailSignal[]
+  /** Accept a pending Mail Intelligence Hub signal (routes to its target Pure* app). */
+  onAcceptSignal?: (signalId: string) => void | Promise<unknown>
+  /** Dismiss a pending Mail Intelligence Hub signal. */
+  onDismissSignal?: (signalId: string) => void | Promise<unknown>
 }
 
 /**
@@ -645,6 +653,9 @@ export function ThreadReader({
   composeMinimized = false,
   decisionInsight = null,
   onSetFollowUpReminder,
+  threadSignals = [],
+  onAcceptSignal,
+  onDismissSignal,
 }: ThreadReaderProps): React.ReactElement {
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [threadMenuOpen, setThreadMenuOpen] = useState(false)
@@ -2567,6 +2578,13 @@ export function ThreadReader({
             )}
           </ReaderStateLine>
           <Title>{selectedThread.subject}</Title>
+          {threadSignals.length > 0 && onAcceptSignal && onDismissSignal && (
+            <ThreadSignalChips
+              signals={threadSignals}
+              onAccept={onAcceptSignal}
+              onDismiss={onDismissSignal}
+            />
+          )}
           <ReaderSenderRow>
             <ReaderSenderAvatar
               as="button"

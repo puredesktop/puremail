@@ -329,6 +329,33 @@
           "requiresApproval": false
         },
         {
+          "name": "fn_mailIntelligenceBriefing",
+          "risk": "read",
+          "description": "Aggregates the Mail Intelligence Hub executive picture in ONE call: pending cross-app Outbox drafts awaiting review, extracted email signals grouped by target Pure* app, overdue follow-ups, the active Voice Profile summary, and the synthesized Morning Briefing.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "personal",
+                  "organisation"
+                ],
+                "description": "Optional privacy scope filter for extracted signals and briefing synthesis."
+              },
+              "limit": {
+                "type": "number",
+                "description": "Maximum pending drafts and signals to include in detail (default 25, max 100)."
+              },
+              "includeBriefingMarkdown": {
+                "type": "boolean",
+                "description": "Include the synthesized Morning Briefing Markdown document (default true)."
+              }
+            }
+          },
+          "requiresApproval": false
+        },
+        {
           "name": "getMailContext",
           "risk": "read",
           "description": "Return the selected account, the query the mail list is currently showing, its result count, and the selected thread. Includes workspaceFolder, the absolute path of the user's workspace; saveAttachments and saveMessageAsPdf write into its Mail folder.",
@@ -685,7 +712,7 @@
           "name": "discoverAppTools",
           "risk": "read",
           "requiresApproval": false,
-          "description": "Discover PureMail's extended specialist tools (53 tools across archive_sweep, audit, boxes, documents, drafts, filters, reading_room, send_runs, triage, views) and composite functions (9 workflows). Prefer calling exposed composite functions and core tools first; use discoverAppTools when an edge case needs a specialist tool, then call it via callExtendedReadTool (for read-only tools) or callExtendedTool (for mutating tools).",
+          "description": "Discover PureMail's extended specialist tools (53 tools across archive_sweep, audit, boxes, documents, drafts, filters, reading_room, send_runs, triage, views) and composite functions (10 workflows). Prefer calling exposed composite functions and core tools first; use discoverAppTools when an edge case needs a specialist tool, then call it via callExtendedReadTool (for read-only tools) or callExtendedTool (for mutating tools).",
           "inputSchema": {
             "type": "object",
             "properties": {

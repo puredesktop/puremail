@@ -447,6 +447,10 @@ export interface Draft {
   sentReviewBypassReason?: string
   /** The send run this draft belongs to (template or rendered item). */
   runId?: string
+  /** Mail Intelligence Hub staged draft id when opened from a cross-app Outbox draft. */
+  hubDraftId?: string
+  /** Originating Pure* app slug/name when opened from a cross-app Outbox draft. */
+  hubSourceApp?: string
 }
 
 export interface DraftabilityDecision {
