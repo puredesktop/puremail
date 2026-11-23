@@ -1,8 +1,10 @@
 import {
+  MAIL_SIGNAL_KINDS,
   mailHub,
   type DailyBriefingPacket,
   type IngestedMailMessage,
   type MailHubClient,
+  type MailPrivacyPolicy,
   type MailScope,
   type MailSignal,
   type MailSignalKind,
@@ -14,6 +16,9 @@ import { ownAddresses } from './mailReplyState'
 import type {
   Mailbox,
   MailContact,
+  MailIntelligenceHistoryRange,
+  MailIntelligenceLastScanSummary,
+  MailIntelligenceSettings,
   MailMessage,
   MailStore,
   MailThread,
@@ -287,12 +292,219 @@ export function createMailHubSyncTracker(): MailHubSyncTracker {
   }
 }
 
+export interface MailSignalGroup {
+  id: string
+  label: string
+  description: string
+  targetApps: string
+  kinds: readonly MailSignalKind[]
+}
+
+export const MAIL_SIGNAL_GROUPS: readonly MailSignalGroup[] = [
+  {
+    id: 'finance',
+    label: 'Receipts & invoices',
+    description: 'Vendor receipts, client payment confirmations, and contractor bills.',
+    targetApps: 'PureExpenses, PureInvoicing',
+    kinds: ['receipt', 'invoice_payment', 'contractor_bill'],
+  },
+  {
+    id: 'tasks_projects',
+    label: 'Tasks & waiting-on blockers',
+    description: 'Commitments you made, requests assigned to you, and project waits.',
+    targetApps: 'PureTasks, PureProjects',
+    kinds: ['task_commitment', 'project_wait', 'wait_resolved'],
+  },
+  {
+    id: 'contacts',
+    label: 'Contacts & role changes',
+    description: 'Signatures, job titles, phone numbers, and company updates.',
+    targetApps: 'PurePeople',
+    kinds: ['contact_update'],
+  },
+  {
+    id: 'calendar',
+    label: 'Travel & calendar bookings',
+    description: 'Flights, hotels, reservations, and meeting invitations.',
+    targetApps: 'PureCalendar',
+    kinds: ['calendar_booking'],
+  },
+  {
+    id: 'documents',
+    label: 'Contracts, signing & papers',
+    description: 'Contract redlines, signature PDFs, peer reviews, and shared papers.',
+    targetApps: 'PureRedline, PureSign, PureJournal, PureReader',
+    kinds: ['contract_redline', 'signing_request', 'peer_review', 'paper_share'],
+  },
+  {
+    id: 'knowledge',
+    label: 'Repeated FAQ answers',
+    description: 'Recurring explanations in your Sent mail worth capturing as docs.',
+    targetApps: 'PureKnowledge',
+    kinds: ['faq_pattern'],
+  },
+] as const
+
+const VALID_SIGNAL_KIND_SET = new Set<string>(MAIL_SIGNAL_KINDS)
+
+export const DEFAULT_MAIL_INTELLIGENCE_SETTINGS: MailIntelligenceSettings = {
+  enabled: false,
+  signalExtraction: true,
+  crossAppOutbox: true,
+  semanticMemory: true,
+  voiceProfile: true,
+  allowOrgSharing: false,
+  neverReadSenders: [],
+  neverReadDomains: [],
+  defaultHistoryRange: { mode: 'window', amount: 30, unit: 'days' },
+}
+
+export function resolveMailIntelligenceSettings(
+  storeOrSettings: Pick<MailStore, 'settings'> | MailIntelligenceSettings | undefined,
+): MailIntelligenceSettings {
+  const raw: Partial<MailIntelligenceSettings> | undefined =
+    storeOrSettings && 'settings' in storeOrSettings
+      ? storeOrSettings.settings.mailIntelligence
+      : (storeOrSettings as Partial<MailIntelligenceSettings> | undefined)
+
+  if (!raw) {
+    return {
+      ...DEFAULT_MAIL_INTELLIGENCE_SETTINGS,
+      neverReadSenders: [],
+      neverReadDomains: [],
+      defaultHistoryRange: { ...DEFAULT_MAIL_INTELLIGENCE_SETTINGS.defaultHistoryRange! },
+    }
+  }
+
+  const enabledSignalKinds = Array.isArray(raw.enabledSignalKinds)
+    ? raw.enabledSignalKinds.filter((k): k is MailSignalKind =>
+        VALID_SIGNAL_KIND_SET.has(k),
+      )
+    : undefined
+
+  return {
+    enabled: raw.enabled === true,
+    signalExtraction: raw.signalExtraction !== false,
+    ...(enabledSignalKinds !== undefined ? { enabledSignalKinds } : {}),
+    crossAppOutbox: raw.crossAppOutbox !== false,
+    semanticMemory: raw.semanticMemory !== false,
+    voiceProfile: raw.voiceProfile !== false,
+    allowOrgSharing: raw.allowOrgSharing === true,
+    neverReadSenders: Array.isArray(raw.neverReadSenders)
+      ? raw.neverReadSenders.map(s => s.trim().toLowerCase()).filter(Boolean)
+      : [],
+    neverReadDomains: Array.isArray(raw.neverReadDomains)
+      ? raw.neverReadDomains
+          .map(d => d.trim().toLowerCase().replace(/^@+/, ''))
+          .filter(Boolean)
+      : [],
+    defaultHistoryRange: raw.defaultHistoryRange ?? {
+      mode: 'window',
+      amount: 30,
+      unit: 'days',
+    },
+    ...(raw.lastHistoryScan ? { lastHistoryScan: raw.lastHistoryScan } : {}),
+  }
+}
+
+export function effectiveEnabledSignalKinds(
+  settings: MailIntelligenceSettings,
+): MailSignalKind[] {
+  if (!settings.enabled || !settings.signalExtraction) return []
+  if (settings.enabledSignalKinds === undefined) {
+    return [...MAIL_SIGNAL_KINDS]
+  }
+  return settings.enabledSignalKinds.filter((k): k is MailSignalKind =>
+    VALID_SIGNAL_KIND_SET.has(k),
+  )
+}
+
+export function hasAnyMailIntelligenceFeatureEnabled(
+  settings: MailIntelligenceSettings,
+): boolean {
+  if (!settings.enabled) return false
+  return (
+    (settings.signalExtraction && effectiveEnabledSignalKinds(settings).length > 0) ||
+    settings.crossAppOutbox ||
+    settings.semanticMemory ||
+    settings.voiceProfile
+  )
+}
+
+export function mailIntelligenceToHubPolicy(
+  settings: MailIntelligenceSettings,
+): Partial<MailPrivacyPolicy> {
+  return {
+    allowEmbeddings: settings.enabled && settings.semanticMemory,
+    allowVoiceProfile: settings.enabled && settings.voiceProfile,
+    allowOrgSharing: settings.enabled && settings.allowOrgSharing,
+    enabledSignalKinds: effectiveEnabledSignalKinds(settings),
+    neverReadSenders: settings.neverReadSenders ?? [],
+    neverReadDomains: settings.neverReadDomains ?? [],
+  }
+}
+
+export function formatHistoryRangeLabel(
+  range: MailIntelligenceHistoryRange,
+): string {
+  if (range.mode === 'all') return 'All emails'
+  const amount = Math.max(1, Math.floor(range.amount ?? 30))
+  const unit = range.unit ?? 'days'
+  const singular =
+    unit === 'days' ? 'day' : unit === 'weeks' ? 'week' : 'month'
+  return `Last ${amount} ${amount === 1 ? singular : unit}`
+}
+
+export function resolveHistoryRangeCutoffMs(
+  range: MailIntelligenceHistoryRange,
+  nowMs = Date.now(),
+): number | null {
+  if (range.mode === 'all') return null
+  const amount = Math.max(1, Math.floor(range.amount ?? 30))
+  const unit = range.unit ?? 'days'
+  if (unit === 'days') return nowMs - amount * 24 * 60 * 60 * 1000
+  if (unit === 'weeks') return nowMs - amount * 7 * 24 * 60 * 60 * 1000
+  const date = new Date(nowMs)
+  date.setMonth(date.getMonth() - amount)
+  return date.getTime()
+}
+
+export function filterMessagesByHistoryRange(
+  messages: readonly MailMessage[],
+  range: MailIntelligenceHistoryRange,
+  nowMs = Date.now(),
+): MailMessage[] {
+  const cutoffMs = resolveHistoryRangeCutoffMs(range, nowMs)
+  const filtered: MailMessage[] = []
+  for (const message of messages) {
+    if (message.isDraft || message.optimistic) continue
+    if (cutoffMs !== null) {
+      const ts = Date.parse(message.receivedAt)
+      if (!Number.isFinite(ts) || ts < cutoffMs) continue
+    }
+    filtered.push(message)
+  }
+  // Newest first so recent signals surface immediately during long scans.
+  filtered.sort((a, b) => (b.receivedAt ?? '').localeCompare(a.receivedAt ?? ''))
+  return filtered
+}
+
+export function countMessagesInHistoryRange(
+  store: Pick<MailStore, 'messages'>,
+  range: MailIntelligenceHistoryRange,
+  nowMs = Date.now(),
+): number {
+  return filterMessagesByHistoryRange(store.messages, range, nowMs).length
+}
+
 export interface SyncStoreWithMailHubInput {
   store: MailStore
   tracker: MailHubSyncTracker
   client?: MailHubClient
   orgAccountIds?: ReadonlySet<string>
   batchSize?: number
+  /** Optional granular settings; when omitted, all capabilities run (legacy/test behavior). */
+  settings?: MailIntelligenceSettings
 }
 
 export interface SyncStoreWithMailHubResult {
@@ -313,7 +525,24 @@ export async function syncStoreWithMailHub(
   input: SyncStoreWithMailHubInput,
 ): Promise<SyncStoreWithMailHubResult> {
   const client = input.client ?? mailHub
-  if (!client.isAvailable()) {
+  const settings = input.settings
+  const shouldIngest = settings
+    ? settings.enabled && (settings.signalExtraction || settings.semanticMemory)
+    : true
+  const shouldUpdateVoice = settings
+    ? settings.enabled && settings.voiceProfile
+    : true
+  const shouldTrackReplies = settings
+    ? settings.enabled && settings.crossAppOutbox
+    : true
+  const effectiveOrgIds =
+    settings && !settings.allowOrgSharing ? undefined : input.orgAccountIds
+
+  if (
+    !client.isAvailable() ||
+    (settings && !settings.enabled) ||
+    (!shouldIngest && !shouldUpdateVoice && !shouldTrackReplies)
+  ) {
     return {
       skipped: true,
       ingestedCount: 0,
@@ -326,7 +555,8 @@ export async function syncStoreWithMailHub(
     }
   }
 
-  const { store, tracker, orgAccountIds } = input
+  const { store, tracker } = input
+  const orgAccountIds = effectiveOrgIds
   const batchSize = Math.max(1, input.batchSize ?? DEFAULT_INGEST_BATCH_SIZE)
   const threadById = new Map(store.threads.map(thread => [thread.id, thread]))
   const mailboxById = new Map(store.mailboxes.map(mailbox => [mailbox.id, mailbox]))
@@ -358,11 +588,12 @@ export async function syncStoreWithMailHub(
       orgAccountIds,
     })
 
-    if (!tracker.ingestedMessageIds.has(message.id)) {
+    if (shouldIngest && !tracker.ingestedMessageIds.has(message.id)) {
       toIngest.push(converted)
     }
 
     if (
+      shouldUpdateVoice &&
       converted.direction === 'outbound' &&
       !tracker.voiceSampleMessageIds.has(message.id) &&
       (converted.text?.trim().length ?? 0) >= 12
@@ -371,6 +602,7 @@ export async function syncStoreWithMailHub(
     }
 
     if (
+      shouldTrackReplies &&
       converted.direction === 'inbound' &&
       !tracker.recordedReplyMessageIds.has(message.id) &&
       ((threadNonDraftCount.get(message.threadId) ?? 0) > 1 ||
@@ -451,6 +683,260 @@ export async function syncStoreWithMailHub(
     voiceProfile,
     repliesRecorded,
     extractedSignals,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// History Backfill Scan (days / weeks / months / all emails)
+// ---------------------------------------------------------------------------
+
+export interface MailHubHistoryScanProgress {
+  phase: 'policy' | 'ingesting' | 'voice' | 'replies' | 'done' | 'cancelled'
+  scannedMessages: number
+  totalMessages: number
+  ingestedMessages: number
+  blockedByPrivacy: number
+  signalsExtracted: number
+  voiceSamplesAnalyzed: number
+  repliesRecorded: number
+}
+
+export interface RunMailHubHistoryScanInput {
+  store: MailStore
+  settings: MailIntelligenceSettings
+  range: MailIntelligenceHistoryRange
+  tracker?: MailHubSyncTracker
+  client?: MailHubClient
+  orgAccountIds?: ReadonlySet<string>
+  batchSize?: number
+  nowMs?: number
+  signal?: AbortSignal
+  onProgress?: (progress: MailHubHistoryScanProgress) => void
+}
+
+export interface RunMailHubHistoryScanResult {
+  summary: MailIntelligenceLastScanSummary
+  extractedSignals: MailSignal[]
+  voiceProfile: VoiceProfile | null
+}
+
+const MAX_HISTORY_VOICE_SAMPLES = 120
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+export async function runMailHubHistoryScan(
+  input: RunMailHubHistoryScanInput,
+): Promise<RunMailHubHistoryScanResult> {
+  const client = input.client ?? mailHub
+  const nowMs = input.nowMs ?? Date.now()
+  const rangeLabel = formatHistoryRangeLabel(input.range)
+  const settings = resolveMailIntelligenceSettings(input.settings)
+
+  const emptySummary = (cancelled = false): MailIntelligenceLastScanSummary => ({
+    ranAt: new Date(nowMs).toISOString(),
+    rangeLabel,
+    scannedMessages: 0,
+    ingestedMessages: 0,
+    blockedByPrivacy: 0,
+    signalsExtracted: 0,
+    voiceSamplesAnalyzed: 0,
+    repliesRecorded: 0,
+    ...(cancelled ? { cancelled: true } : {}),
+  })
+
+  if (!client.isAvailable() || !hasAnyMailIntelligenceFeatureEnabled(settings)) {
+    return {
+      summary: emptySummary(false),
+      extractedSignals: [],
+      voiceProfile: null,
+    }
+  }
+
+  const batchSize = Math.max(1, input.batchSize ?? DEFAULT_INGEST_BATCH_SIZE)
+  const scopedMessages = filterMessagesByHistoryRange(
+    input.store.messages,
+    input.range,
+    nowMs,
+  )
+  const totalMessages = scopedMessages.length
+  const threadById = new Map(input.store.threads.map(t => [t.id, t]))
+  const mailboxById = new Map(input.store.mailboxes.map(m => [m.id, m]))
+  const ownEmails = storeOwnEmailSet(input.store)
+  const effectiveOrgIds = settings.allowOrgSharing ? input.orgAccountIds : undefined
+
+  const threadNonDraftCount = new Map<string, number>()
+  for (const m of input.store.messages) {
+    if (m.isDraft || m.optimistic) continue
+    threadNonDraftCount.set(m.threadId, (threadNonDraftCount.get(m.threadId) ?? 0) + 1)
+  }
+
+  const progress: MailHubHistoryScanProgress = {
+    phase: 'policy',
+    scannedMessages: 0,
+    totalMessages,
+    ingestedMessages: 0,
+    blockedByPrivacy: 0,
+    signalsExtracted: 0,
+    voiceSamplesAnalyzed: 0,
+    repliesRecorded: 0,
+  }
+  input.onProgress?.({ ...progress })
+
+  // Sync the latest privacy/feature policy before scanning so newly toggled
+  // signal kinds, embeddings, voice profile, or neverRead exclusions apply immediately.
+  await client.updatePolicy(mailIntelligenceToHubPolicy(settings)).catch(() => undefined)
+
+  const shouldIngest = settings.signalExtraction || settings.semanticMemory
+  const shouldVoice = settings.voiceProfile
+  const shouldReplies = settings.crossAppOutbox
+
+  const convertedAll: Array<{ raw: MailMessage; converted: IngestedMailMessage }> =
+    scopedMessages.map(raw => ({
+      raw,
+      converted: toIngestedMailMessage(raw, {
+        thread: threadById.get(raw.threadId),
+        mailboxById,
+        ownEmails,
+        orgAccountIds: effectiveOrgIds,
+      }),
+    }))
+
+  const extractedSignals: MailSignal[] = []
+  let cancelled = false
+
+  if (shouldIngest && convertedAll.length > 0) {
+    progress.phase = 'ingesting'
+    input.onProgress?.({ ...progress })
+    for (let i = 0; i < convertedAll.length; i += batchSize) {
+      if (input.signal?.aborted) {
+        cancelled = true
+        break
+      }
+      const slice = convertedAll.slice(i, i + batchSize)
+      const chunk = slice.map(item => item.converted)
+      try {
+        const res = await client.ingestMessages(chunk)
+        progress.ingestedMessages += res.ingested
+        progress.blockedByPrivacy += res.blockedByPrivacy
+        if (res.signalsExtracted?.length) {
+          extractedSignals.push(...res.signalsExtracted)
+          progress.signalsExtracted = extractedSignals.length
+        }
+        if (input.tracker) {
+          for (const item of chunk) {
+            input.tracker.ingestedMessageIds.add(item.messageId)
+          }
+        }
+      } catch {
+        // Keep moving through remaining chunks if a single batch fails.
+      }
+      progress.scannedMessages = Math.min(totalMessages, i + slice.length)
+      input.onProgress?.({ ...progress })
+      if (i + batchSize < convertedAll.length) {
+        await yieldToEventLoop()
+      }
+    }
+  } else {
+    progress.scannedMessages = totalMessages
+  }
+
+  let voiceProfile: VoiceProfile | null = null
+  if (!cancelled && shouldVoice) {
+    if (input.signal?.aborted) {
+      cancelled = true
+    } else {
+      const sentSamples = convertedAll
+        .filter(
+          item =>
+            item.converted.direction === 'outbound' &&
+            (item.converted.text?.trim().length ?? 0) >= 12,
+        )
+        .slice(0, MAX_HISTORY_VOICE_SAMPLES)
+        .map(item => item.converted)
+
+      if (sentSamples.length > 0) {
+        progress.phase = 'voice'
+        input.onProgress?.({ ...progress })
+        try {
+          voiceProfile = await client.updateVoiceProfile(sentSamples)
+          setCachedHubVoiceProfile(voiceProfile)
+          progress.voiceSamplesAnalyzed = sentSamples.length
+          if (input.tracker) {
+            for (const s of sentSamples) {
+              input.tracker.voiceSampleMessageIds.add(s.messageId)
+            }
+          }
+        } catch {
+          // Best-effort voice refresh.
+        }
+        input.onProgress?.({ ...progress })
+      }
+    }
+  }
+
+  if (!cancelled && shouldReplies) {
+    const replyCandidates = convertedAll
+      .filter(
+        item =>
+          item.converted.direction === 'inbound' &&
+          ((threadNonDraftCount.get(item.raw.threadId) ?? 0) > 1 ||
+            Boolean(item.raw.inReplyTo)),
+      )
+      .map(item => item.raw)
+
+    if (replyCandidates.length > 0) {
+      progress.phase = 'replies'
+      input.onProgress?.({ ...progress })
+      for (let i = 0; i < replyCandidates.length; i++) {
+        if (input.signal?.aborted) {
+          cancelled = true
+          break
+        }
+        const reply = replyCandidates[i]!
+        try {
+          const matched = await client.recordReply({
+            threadId: reply.threadId,
+            ...(reply.inReplyTo ? { inReplyToMessageId: reply.inReplyTo } : {}),
+            replyMessageId: reply.id,
+            from: formatMailContactAddress(reply.from),
+            receivedAt: reply.receivedAt,
+          })
+          input.tracker?.recordedReplyMessageIds.add(reply.id)
+          if (matched.length > 0) {
+            progress.repliesRecorded += matched.length
+          }
+        } catch {
+          // Best-effort reply reconciliation.
+        }
+        if ((i + 1) % batchSize === 0) {
+          input.onProgress?.({ ...progress })
+          await yieldToEventLoop()
+        }
+      }
+    }
+  }
+
+  progress.phase = cancelled ? 'cancelled' : 'done'
+  input.onProgress?.({ ...progress })
+
+  const summary: MailIntelligenceLastScanSummary = {
+    ranAt: new Date().toISOString(),
+    rangeLabel,
+    scannedMessages: progress.scannedMessages,
+    ingestedMessages: progress.ingestedMessages,
+    blockedByPrivacy: progress.blockedByPrivacy,
+    signalsExtracted: progress.signalsExtracted,
+    voiceSamplesAnalyzed: progress.voiceSamplesAnalyzed,
+    repliesRecorded: progress.repliesRecorded,
+    ...(cancelled ? { cancelled: true } : {}),
+  }
+
+  return {
+    summary,
+    extractedSignals,
+    voiceProfile,
   }
 }
 

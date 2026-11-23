@@ -1917,6 +1917,7 @@ export function PureMailShell({
     allowIngestion: activeProvider !== 'demo' && !isHeldCopy(),
     store,
     storeRef,
+    setStore,
     orgAccountIds: executiveShare.sharedAccountIds,
     onNotice: setCommandNotice,
   })
@@ -6710,6 +6711,7 @@ export function PureMailShell({
           refreshMail={refreshMail}
           replayQueuedActionsNow={replayQueuedActionsNow}
           discardQueuedActionNow={discardQueuedActionNow}
+          mailHubIntegration={mailHubIntegration}
         />
       )}
 

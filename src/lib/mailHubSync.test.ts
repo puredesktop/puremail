@@ -18,13 +18,20 @@ import { demoMailStoreForNow } from '../test/mailFixtures'
 import { prepareReplyContext } from './mailDraftAgent'
 import {
   buildMailIntelligenceBriefing,
+  countMessagesInHistoryRange,
   createMailHubSyncTracker,
+  DEFAULT_MAIL_INTELLIGENCE_SETTINGS,
   discardHubDraft,
+  filterMessagesByHistoryRange,
+  formatHistoryRangeLabel,
   formatSourceAppLabel,
   getCachedHubVoiceProfile,
   hubDraftToComposeFields,
+  mailIntelligenceToHubPolicy,
   notifyHubDraftSent,
   openHubDraft,
+  resolveMailIntelligenceSettings,
+  runMailHubHistoryScan,
   setCachedHubVoiceProfile,
   signalsForThread,
   syncStoreWithMailHub,
@@ -293,6 +300,10 @@ function createFakeHubHarness() {
         }
         case PLATFORM_BRIDGE_METHODS.MAIL_HUB_GENERATE_BRIEFING:
           return state.briefing as T
+        case PLATFORM_BRIDGE_METHODS.MAIL_HUB_UPDATE_POLICY:
+          return payload as T
+        case PLATFORM_BRIDGE_METHODS.MAIL_HUB_GET_POLICY:
+          return {} as T
         default:
           throw new Error(`Unexpected bridge method: ${method}`)
       }
@@ -629,8 +640,18 @@ describe('Mail Hub UI surfaces & live hook event subscriptions', () => {
     })
   })
 
-  it('useMailHubIntegration reacts to live draft.staged, mail.sent, and signal.extracted events', async () => {
-    const store = demoMailStoreForNow(NOW)
+  it('useMailHubIntegration stays inactive by default until opted in, and reacts when enabled', async () => {
+    const baseStore = demoMailStoreForNow(NOW)
+    const store: MailStore = {
+      ...baseStore,
+      settings: {
+        ...baseStore.settings,
+        mailIntelligence: {
+          ...DEFAULT_MAIL_INTELLIGENCE_SETTINGS,
+          enabled: true,
+        },
+      },
+    }
     const storeRef = { current: store }
     const harness = createFakeHubHarness()
     const notices: string[] = []
@@ -703,5 +724,144 @@ describe('Mail Hub UI surfaces & live hook event subscriptions', () => {
     await act(async () => {
       root.unmount()
     })
+  })
+})
+
+describe('mailHubSync: optional granular settings & chunked history backfill', () => {
+  it('defaults to off (always optional) and skips sync when disabled or only partial parts enabled', async () => {
+    const store = demoMailStoreForNow(NOW)
+    const defaults = resolveMailIntelligenceSettings(store)
+    expect(defaults.enabled).toBe(false)
+
+    const harness = createFakeHubHarness()
+    const tracker = createMailHubSyncTracker()
+
+    const offRes = await syncStoreWithMailHub({
+      store,
+      tracker,
+      client: harness.client,
+      settings: defaults,
+    })
+    expect(offRes.skipped).toBe(true)
+    expect(harness.calls).toHaveLength(0)
+
+    // Partial opt-in: ONLY voiceProfile enabled -> no ingestion or reply recording!
+    const voiceOnly = {
+      ...DEFAULT_MAIL_INTELLIGENCE_SETTINGS,
+      enabled: true,
+      signalExtraction: false,
+      crossAppOutbox: false,
+      semanticMemory: false,
+      voiceProfile: true,
+    }
+    const policy = mailIntelligenceToHubPolicy(voiceOnly)
+    expect(policy.allowEmbeddings).toBe(false)
+    expect(policy.allowVoiceProfile).toBe(true)
+    expect(policy.enabledSignalKinds).toEqual([])
+
+    const partialRes = await syncStoreWithMailHub({
+      store,
+      tracker,
+      client: harness.client,
+      settings: voiceOnly,
+    })
+    expect(partialRes.skipped).toBe(false)
+    expect(partialRes.ingestedCount).toBe(0)
+    expect(partialRes.repliesRecorded).toBe(0)
+    expect(
+      harness.calls.some(
+        c => c.method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_INGEST_MESSAGES,
+      ),
+    ).toBe(false)
+  })
+
+  it('filters messages accurately across days, weeks, months, and all history ranges', () => {
+    const nowMs = Date.parse('2026-11-23T12:00:00.000Z')
+    const base = demoMailStoreForNow(new Date(nowMs))
+    const sample = base.messages[0]!
+    const messages: MailMessage[] = [
+      { ...sample, id: 'm_2d', receivedAt: '2026-11-21T12:00:00.000Z' },
+      { ...sample, id: 'm_10d', receivedAt: '2026-11-13T12:00:00.000Z' },
+      { ...sample, id: 'm_45d', receivedAt: '2026-10-09T12:00:00.000Z' },
+      { ...sample, id: 'm_200d', receivedAt: '2026-05-07T12:00:00.000Z' },
+      { ...sample, id: 'm_draft', receivedAt: '2026-11-22T12:00:00.000Z', isDraft: true },
+    ]
+
+    expect(formatHistoryRangeLabel({ mode: 'all' })).toBe('All emails')
+    expect(formatHistoryRangeLabel({ mode: 'window', amount: 2, unit: 'weeks' })).toBe('Last 2 weeks')
+    expect(formatHistoryRangeLabel({ mode: 'window', amount: 1, unit: 'months' })).toBe('Last 1 month')
+
+    expect(
+      filterMessagesByHistoryRange(messages, { mode: 'window', amount: 7, unit: 'days' }, nowMs).map(m => m.id),
+    ).toEqual(['m_2d'])
+    expect(
+      filterMessagesByHistoryRange(messages, { mode: 'window', amount: 2, unit: 'weeks' }, nowMs).map(m => m.id),
+    ).toEqual(['m_2d', 'm_10d'])
+    expect(
+      filterMessagesByHistoryRange(messages, { mode: 'window', amount: 2, unit: 'months' }, nowMs).map(m => m.id),
+    ).toEqual(['m_2d', 'm_10d', 'm_45d'])
+    expect(
+      filterMessagesByHistoryRange(messages, { mode: 'all' }, nowMs).map(m => m.id),
+    ).toEqual(['m_2d', 'm_10d', 'm_45d', 'm_200d'])
+    expect(
+      countMessagesInHistoryRange({ messages }, { mode: 'all' }, nowMs),
+    ).toBe(4)
+  })
+
+  it('runMailHubHistoryScan syncs policy, processes in chunks with progress, and supports cancellation', async () => {
+    const store = demoMailStoreForNow(NOW)
+    const harness = createFakeHubHarness()
+    const settings = {
+      ...DEFAULT_MAIL_INTELLIGENCE_SETTINGS,
+      enabled: true,
+      signalExtraction: true,
+      enabledSignalKinds: ['receipt', 'task_commitment'],
+      semanticMemory: true,
+      voiceProfile: true,
+      crossAppOutbox: true,
+    }
+    const phases: string[] = []
+    const res = await runMailHubHistoryScan({
+      store,
+      settings,
+      range: { mode: 'all' },
+      client: harness.client,
+      batchSize: 2,
+      nowMs: NOW.getTime(),
+      onProgress: p => phases.push(p.phase),
+    })
+
+    const realCount = store.messages.filter(m => !m.isDraft && !m.optimistic).length
+    expect(res.summary.rangeLabel).toBe('All emails')
+    expect(res.summary.scannedMessages).toBe(realCount)
+    expect(res.summary.ingestedMessages).toBe(realCount)
+    expect(res.summary.cancelled).toBeUndefined()
+    expect(phases[0]).toBe('policy')
+    expect(phases[phases.length - 1]).toBe('done')
+
+    // Policy must have been pushed before ingestion.
+    const policyCallIdx = harness.calls.findIndex(
+      c => c.method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_UPDATE_POLICY,
+    )
+    const firstIngestIdx = harness.calls.findIndex(
+      c => c.method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_INGEST_MESSAGES,
+    )
+    expect(policyCallIdx).toBeGreaterThanOrEqual(0)
+    expect(policyCallIdx).toBeLessThan(firstIngestIdx)
+
+    // Pre-aborted AbortController cancels cleanly without ingesting chunks.
+    const abortHarness = createFakeHubHarness()
+    const controller = new AbortController()
+    controller.abort()
+    const cancelledRes = await runMailHubHistoryScan({
+      store,
+      settings,
+      range: { mode: 'all' },
+      client: abortHarness.client,
+      signal: controller.signal,
+      nowMs: NOW.getTime(),
+    })
+    expect(cancelledRes.summary.cancelled).toBe(true)
+    expect(cancelledRes.summary.ingestedMessages).toBe(0)
   })
 })

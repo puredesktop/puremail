@@ -2,6 +2,8 @@ import { hasConnectionSmtpPassword, hasSavedMailConnection } from '../lib/mailCo
 import { filterAgentRefs } from '../lib/agentRefs'
 import { AppSettingsPages } from '@purescience/platform-bridge/components/settings/AppSettings'
 import { TypedTriageSettings } from './TypedTriageSettings'
+import { MailIntelligenceSettings } from './MailIntelligenceSettings'
+import type { MailHubIntegrationApi } from '../hooks/useMailHubIntegration'
 import {
   runMailFilters,
   addMailFilter,
@@ -312,6 +314,8 @@ export interface MailSettingsProps {
   fireFilterMutations?: (
     mutations: readonly import('../lib/mailFilters').MailFilterMutation[],
   ) => void
+  /** Optional Mail Intelligence Hub controller for live settings & history scans. */
+  mailHubIntegration?: MailHubIntegrationApi
 }
 
 /**
@@ -324,6 +328,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<readonly [string, string]> = [
   ['Fetching & inbox', 'settings-fetching'],
   ['Filters', 'settings-filters'],
   ['Automatic triage', 'settings-typed-triage'],
+  ['Mail intelligence', 'settings-mail-intelligence'],
   ['Reply assistance', 'settings-compose'],
   ['Offline changes', 'settings-offline-queue'],
   ['Signatures', 'settings-signatures'],
@@ -335,6 +340,7 @@ const SETTINGS_HELP: Record<string, string> = {
   'settings-fetching': 'Choose when to check for mail, how much history to fetch, and how the inbox handles images and notifications.',
   'settings-filters': 'Create rules that organise incoming messages. Review a rule before applying it to existing mail.',
   'settings-typed-triage': 'Choose how new mail is classified and prioritised. These preferences guide automatic triage.',
+  'settings-mail-intelligence': 'Optionally connect PureMail to other Pure* apps for cross-app signals, Outbox Review, local semantic search, and writing voice — and run through mail history whenever you change settings.',
   'settings-compose': 'Set reply suggestions, follow-ups, and composition preferences.',
   'settings-offline-queue': 'Review changes waiting to sync. Retry or discard individual queued actions.',
   'settings-signatures': 'Create signatures and choose which accounts use them. Signatures are added to new drafts.',
@@ -358,6 +364,7 @@ export function MailSettings({
   replayQueuedActionsNow,
   discardQueuedActionNow,
   fireFilterMutations,
+  mailHubIntegration,
 }: MailSettingsProps): React.ReactElement {
   const [providerTestResult, setProviderTestResult] =
     useState<ConnectionTestResult | null>(null)
@@ -839,6 +846,20 @@ export function MailSettings({
   return (
     <AppSettingsPages pages={SETTINGS_SECTIONS.map(([label, id]) => ({ id, label, description: SETTINGS_HELP[id] }))}>
             <div id="settings-typed-triage"><TypedTriageSettings store={store} setStore={setStore} onRunTriage={onRunTriage} /></div>
+            <div id="settings-mail-intelligence">
+              <MailIntelligenceSettings
+                store={store}
+                setStore={setStore}
+                hubAvailable={mailHubIntegration?.hubAvailable ?? false}
+                historyScan={mailHubIntegration?.historyScan ?? { running: false, progress: null }}
+                onRunHistoryScan={range =>
+                  mailHubIntegration
+                    ? mailHubIntegration.runHistoryScan(range)
+                    : Promise.resolve(null)
+                }
+                onCancelHistoryScan={() => mailHubIntegration?.cancelHistoryScan()}
+              />
+            </div>
             <SettingsCard id="settings-accounts">
               <SettingsCardHeader>
                 <div>
