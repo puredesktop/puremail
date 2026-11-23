@@ -562,5 +562,16 @@ describe('is:screener query flag', () => {
     const id = accountId(store)
     const result = resolveThreadQuery(store, id, 'is:screener', NOW)
     expect(result.threads.length).toBeGreaterThan(0)
+
+    // Archived or snoozed threads from unscreened senders must not leak into is:screener.
+    const first = result.threads[0]!
+    const archivedStore = {
+      ...store,
+      threads: store.threads.map(t =>
+        t.id === first.id ? { ...t, status: 'archived' as const } : t,
+      ),
+    }
+    const afterArchive = resolveThreadQuery(archivedStore, id, 'is:screener', NOW)
+    expect(afterArchive.threads.some(t => t.id === first.id)).toBe(false)
   })
 })

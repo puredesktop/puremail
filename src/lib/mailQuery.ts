@@ -462,6 +462,8 @@ interface StoreQueryIndexes {
   factsByThread: Map<string, ThreadFacts>
   /** Lazy: threads holding at least one unread message. */
   unreadThreadIds?: Set<string>
+  /** Lazy: mailbox IDs with role `'inbox'` for active-inbox checks. */
+  inboxMailboxIds?: Set<string>
   /** Lazy: normalized unscreened sender emails per account for `is:screener`. */
   unscreenedSendersByAccount?: Map<string, Set<string>>
 }
@@ -661,7 +663,17 @@ function termHolds(
       if (lowered === 'pinned') return facts.pinned
       if (lowered === 'screener') {
         if (store.settings.screenerEnabled === false) return false
+        // Match unscreenedSendersInStore scope: only active Inbox threads.
+        if (thread.status === 'archived' || thread.status === 'snoozed') {
+          return false
+        }
         const indexes = indexesForStore(store)
+        if (!indexes.inboxMailboxIds) {
+          indexes.inboxMailboxIds = new Set(
+            store.mailboxes.filter(m => m.role === 'inbox').map(m => m.id),
+          )
+        }
+        if (!indexes.inboxMailboxIds.has(thread.mailboxId)) return false
         if (!indexes.unscreenedSendersByAccount) {
           indexes.unscreenedSendersByAccount = new Map()
         }
