@@ -1,3 +1,4 @@
+import type { MailHubClient } from '@purescience/platform-ui/bridge/mailHub'
 import type { SendStoreDraftOptions, SendStoreDraftResult } from '../lib/mailSendRelease'
 import type { PreparedReply } from '../lib/mailDrawerDrafts'
 import type { Attachment, Draft, MailMessage, MailStore, MailThread } from '../types'
@@ -8,7 +9,7 @@ import type { SweepProvider } from '../lib/archiveSweepRun'
  * Exposed PureMail operations (must stay in sync 1:1 with `plugin.json` -> `app.agents.tools[].name`).
  *
  * 3-tier exposure (built on `src/lib/appFunctions.ts`):
- *   1. 9 composite `function` workflows (`fn_*`) — replace 3–15 atomic round-trips each
+ *   1. 10 composite `function` workflows (`fn_*`) — replace 3–15 atomic round-trips each
  *   2. 13 core/release atomic tools (~20% of 66) — indispensable direct verbs + mandatory release gates
  *   3. 3 universal escape-hatch meta-tools (`discoverAppTools`, `callExtendedReadTool`, `callExtendedTool`)
  *      providing full on-demand access to the remaining 53 specialist atomic tools.
@@ -23,6 +24,7 @@ export const PUREMAIL_FUNCTION_NAMES = [
   'fn_screenerReview',
   'fn_auditThreadSecurity',
   'fn_exportThreadBundle',
+  'fn_mailIntelligenceBriefing',
 ] as const
 
 export const PUREMAIL_CORE_TOOL_NAMES = [
@@ -293,6 +295,8 @@ export interface MailAgentToolContext {
   /** Present when the account can walk past the synced window. */
   sweepProvider?: SweepProvider
   readWalkedMessage?: (id: string) => Promise<{ message: MailMessage } | null>
+  /** Optional Mail Intelligence Hub client override (defaults to singleton `mailHub`). */
+  mailHubClient?: MailHubClient
   searchAllMail?: (
     query: string,
     limit: number,

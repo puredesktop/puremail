@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getPlatformPreferences } from '@purescience/platform-ui/bridge/preferences'
 import {
   readPlatformStorageJson,
@@ -67,8 +67,11 @@ export function useExecutiveMailShare(input: {
   /** Call after a successful sync, with the accounts that sync covered. */
   afterSync: (syncedAccounts: MailAccount[]) => void
   teamReads: TeamReadStatuses
+  /** Account IDs matched to an active Executive / organisation mail share. */
+  sharedAccountIds: ReadonlySet<string>
 } {
   const [receipts, setReceipts] = useState<TeamMailReceipt[]>([])
+  const [sharedIds, setSharedIds] = useState<string[]>([])
   const inputRef = useRef(input)
   inputRef.current = input
   const instanceId = useRef(Math.random().toString(36).slice(2, 10) || 'window')
@@ -85,12 +88,14 @@ export function useExecutiveMailShare(input: {
         const root = (await getPlatformPreferences()).workspaceRoot?.trim()
         const settings = await readPlatformStorageJson({ appSlug: 'executive', fileName: 'executive.json' }).catch(() => ({ value: null }))
         const allReceipts: TeamMailReceipt[] = []
+        const foundSharedIds = new Set<string>()
         for (const folder of mailShareRoots(settings.value, root)) {
           try {
             const share = await readMailShare(shellFiles, folder)
             if (!share) continue
             const account = sharedAccount(current.readStore(), share)
             if (!account) continue
+            foundSharedIds.add(account.id)
             // Cached synced messages bootstrap a newly configured share too. Cursor deduplication is durable.
             const synced = syncedAccounts ? sharedAccount({ accounts: syncedAccounts }, share) : account
             if (synced) await writeMailDigest({ files: shellFiles, root: folder, store: current.readStore(), share, account: synced, instanceId: instanceId.current })
@@ -108,6 +113,8 @@ export function useExecutiveMailShare(input: {
             await reportExecutiveDraftStates({ files: shellFiles, root: folder, store: current.readStore(), account, finalKeys: finals, storeId: draftsStoreId(), discardedAt: draftDiscardedAt })
           } catch { console.warn('[puremail] An organisation mail share could not be refreshed; it will retry.') }
         }
+        const sortedIds = [...foundSharedIds].sort()
+        setSharedIds(previous => JSON.stringify(previous) === JSON.stringify(sortedIds) ? previous : sortedIds)
         setReceipts(previous => JSON.stringify(previous) === JSON.stringify(allReceipts) ? previous : allReceipts)
       } catch (error) {
         // The share is a side channel: a failed look must never disturb mail.
@@ -145,5 +152,11 @@ export function useExecutiveMailShare(input: {
     look.current(null)
   }, [input.enabled, input.deliverySignature])
 
-  return { afterSync: syncedAccounts => look.current(syncedAccounts), teamReads: teamReadStatuses(input.readStore(), receipts) }
+  const sharedAccountIds = useMemo(() => new Set(sharedIds), [sharedIds])
+
+  return {
+    afterSync: syncedAccounts => look.current(syncedAccounts),
+    teamReads: teamReadStatuses(input.readStore(), receipts),
+    sharedAccountIds,
+  }
 }

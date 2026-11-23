@@ -447,6 +447,10 @@ export interface Draft {
   sentReviewBypassReason?: string
   /** The send run this draft belongs to (template or rendered item). */
   runId?: string
+  /** Mail Intelligence Hub staged draft id when opened from a cross-app Outbox draft. */
+  hubDraftId?: string
+  /** Originating Pure* app slug/name when opened from a cross-app Outbox draft. */
+  hubSourceApp?: string
 }
 
 export interface DraftabilityDecision {
@@ -696,8 +700,55 @@ export interface DecisionModelOperationsSettings {
   snippetSuggestions?: boolean
 }
 
+export type MailIntelligenceHistoryUnit = 'days' | 'weeks' | 'months'
+
+export interface MailIntelligenceHistoryRange {
+  mode: 'all' | 'window'
+  amount?: number
+  unit?: MailIntelligenceHistoryUnit
+}
+
+export interface MailIntelligenceLastScanSummary {
+  ranAt: string
+  rangeLabel: string
+  scannedMessages: number
+  ingestedMessages: number
+  blockedByPrivacy: number
+  signalsExtracted: number
+  voiceSamplesAnalyzed: number
+  repliesRecorded: number
+  cancelled?: boolean
+}
+
+export interface MailIntelligenceSettings {
+  /** Master opt-in switch; always optional (defaults to false). */
+  enabled: boolean
+  /** Extract cross-app signals (receipts, tasks, waits, contracts, papers, etc.) and show thread chips. */
+  signalExtraction: boolean
+  /** Optional subset of enabled signal kinds; omitted means all signal kinds. */
+  enabledSignalKinds?: string[]
+  /** Show staged drafts from other Pure* apps in Cross-App Outbox and notify them on Send/Reply. */
+  crossAppOutbox: boolean
+  /** Index opted-in messages locally for cross-app semantic mail search. */
+  semanticMemory: boolean
+  /** Learn greeting, tone, and sign-off habits locally from Sent mail to ground reply drafts. */
+  voiceProfile: boolean
+  /** Allow org-shared accounts to share signals/briefings with PureExecutive / PureCloud. */
+  allowOrgSharing: boolean
+  /** Optional sender addresses excluded from Mail Intelligence processing. */
+  neverReadSenders?: string[]
+  /** Optional domains excluded from Mail Intelligence processing. */
+  neverReadDomains?: string[]
+  /** Preferred history range when running a manual backfill scan. */
+  defaultHistoryRange?: MailIntelligenceHistoryRange
+  /** Summary of the most recent history scan. */
+  lastHistoryScan?: MailIntelligenceLastScanSummary
+}
+
 export interface MailSettings {
   typedTriage?: { provider?: 'typesafe' | 'local'; localModel?: string; localConfidence?: number; mode: 'off' | 'shadow' | 'suggest'; dailyCap: number; confidence: number; operations?: DecisionModelOperationsSettings }
+  /** Optional PureDesktop Mail Intelligence Hub settings (enable all, enable in part, or leave off). */
+  mailIntelligence?: MailIntelligenceSettings
 
   /** The IMAP-family account, when one is configured. */
   imapAccount?: ImapAccountSettings

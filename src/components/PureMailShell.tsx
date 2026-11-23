@@ -112,6 +112,10 @@ import { PUREMAIL_LOCAL_SETTINGS_KEY } from '../hooks/usePureMailBoot'
 import { useDraftProviderSync } from '../hooks/useDraftProviderSync'
 import { useCompactInRoom, useRestoreWholeScroll, useRoomSlot } from '../hooks/useCompactInRoom'
 import { useExecutiveMailShare } from '../hooks/useExecutiveMailShare'
+import { useMailHubIntegration } from '../hooks/useMailHubIntegration'
+import type { StagedMailDraft } from '@purescience/platform-ui/bridge/mailHub'
+import { formatSourceAppLabel, hubDraftToComposeFields } from '../lib/mailHubSync'
+import { MailHubOutboxBanner } from './MailHubOutboxBanner'
 import { CompactInbox, CompactInRoomStyle } from './CompactInRoom'
 import {
   addExecutiveDraft,
@@ -1908,6 +1912,17 @@ export function PureMailShell({
   })
   const executiveShareRef = useRef(executiveShare)
   executiveShareRef.current = executiveShare
+  const mailHubIntegration = useMailHubIntegration({
+    enabled: !isHeldCopy(),
+    allowIngestion: activeProvider !== 'demo' && !isHeldCopy(),
+    store,
+    storeRef,
+    setStore,
+    orgAccountIds: executiveShare.sharedAccountIds,
+    onNotice: setCommandNotice,
+  })
+  const mailHubIntegrationRef = useRef(mailHubIntegration)
+  mailHubIntegrationRef.current = mailHubIntegration
   const deliveryInputs = useRef({ prepareSend, releaseSend, flushForSend })
   deliveryInputs.current = { prepareSend, releaseSend, flushForSend }
   const deliveryController = useRef<ReturnType<typeof createMailDeliveryController> | null>(null)
@@ -1922,7 +1937,17 @@ export function PureMailShell({
   const sendDraftThroughProvider = (provider: MailProvider, draft: Draft, attempt?: { id: string }) => {
     const refusal = isHeldCopy() ? heldCopySendRefusal(storeRef.current, draft) : null
     if (refusal) return Promise.reject(new MailSendError(refusal, 'not_sent'))
-    return deliveryController.current!(provider, draft, attempt)
+    return deliveryController.current!(provider, draft, attempt).then(sentMessage => {
+      if (draft.hubDraftId) {
+        void mailHubIntegrationRef.current.markHubDraftSent({
+          draftId: draft.hubDraftId,
+          sentMessageId: sentMessage.id,
+          sentThreadId: sentMessage.threadId,
+          sentAt: sentMessage.receivedAt || new Date().toISOString(),
+        })
+      }
+      return sentMessage
+    })
   }
 
   useEffect(() => {
@@ -2080,6 +2105,8 @@ export function PureMailShell({
         if (!isHeldCopy()) {
           // The executive team's digest reads the merged store, after the merge.
           executiveShareRef.current.afterSync(nextStore.accounts)
+          // Push newly synced messages & replies into the Mail Intelligence Hub.
+          mailHubIntegrationRef.current.afterSync()
           // A successful sync means we are online: drain the offline queue.
           window.setTimeout(() => {
             void replayQueuedActionsNowRef.current()
@@ -2546,6 +2573,120 @@ export function PureMailShell({
   }
 
   /**
+   * Open a cross-app draft staged in the Mail Intelligence Hub Outbox inside
+   * PureMail's composer, marking it opened in the Hub and binding `hubDraftId`
+   * so the human Send closes the loop back to the originating Pure* app.
+   */
+  const openHubStagedDraftInComposer = async (
+    staged: StagedMailDraft,
+  ): Promise<void> => {
+    if (pendingSend?.target === 'compose') {
+      undoPendingSend(pendingSend.id)
+    }
+    if (composeHoldsDraft(composeMode) && composeWindowHasContent()) {
+      stashOpenCompose()
+    }
+    await mailHubIntegrationRef.current.openStagedDraft(staged.id)
+
+    const fields = hubDraftToComposeFields(staged)
+    const existingLocal = storeRef.current.drafts.find(
+      draft => draft.hubDraftId === staged.id && !draft.sentAt,
+    )
+    const targetThread =
+      !existingLocal && staged.threadId
+        ? storeRef.current.threads.find(thread => thread.id === staged.threadId)
+        : undefined
+    const toContacts = parseComposeRecipients(fields.to)
+    const ccContacts = parseComposeRecipients(fields.cc)
+    const bccContacts = parseComposeRecipients(fields.bcc)
+
+    let localDraftId: string
+    let localThreadId: string
+    let composeKind: ReplyComposeKind | 'draft' = 'draft'
+
+    if (existingLocal) {
+      localDraftId = existingLocal.id
+      localThreadId = existingLocal.threadId
+      const hasMessages = storeRef.current.messages.some(
+        message => message.threadId === localThreadId && !message.isDraft,
+      )
+      composeKind = draftComposeKind(existingLocal, hasMessages)
+    } else if (targetThread) {
+      composeKind = 'reply'
+      const newDraftId = `draft_hub_${crypto.randomUUID()}`
+      const replyCtx: ComposeReplyContext = {
+        threadId: targetThread.id,
+        messageId: null,
+        kind: 'reply',
+        draftId: null,
+        hubDraftId: fields.hubDraftId,
+        hubSourceApp: fields.hubSourceApp,
+      }
+      setStore(
+        current =>
+          upsertReplyDraft(current, {
+            context: replyCtx,
+            to: toContacts,
+            cc: ccContacts,
+            bcc: bccContacts,
+            subject: fields.subject,
+            body: fields.body,
+            bodyHtml: fields.bodyHtml,
+            attachments: [],
+            newDraftId,
+          }).store,
+      )
+      localDraftId = newDraftId
+      localThreadId = targetThread.id
+    } else {
+      const now = new Date().toISOString()
+      const identity = createComposedDraftIdentity()
+      const composeInput = {
+        accountId: staged.accountId ?? selectedAccountId,
+        to: toContacts,
+        cc: ccContacts,
+        bcc: bccContacts,
+        subject: fields.subject,
+        body: fields.body,
+        ...(fields.bodyHtml ? { bodyHtml: fields.bodyHtml } : {}),
+        hubDraftId: fields.hubDraftId,
+        hubSourceApp: fields.hubSourceApp,
+        origin: 'agent' as const,
+      }
+      setStore(
+        current =>
+          createComposedMessageDraft(current, composeInput, now, identity).store,
+      )
+      localDraftId = identity.draftId
+      localThreadId = identity.threadId
+    }
+
+    setComposeTo(fields.to)
+    setComposeCc(fields.cc)
+    setComposeBcc(fields.bcc)
+    setComposeCcBccOpen(Boolean(fields.cc || fields.bcc))
+    setComposeSubject(fields.subject)
+    setComposeBody(fields.body)
+    setComposeBodyHtml(fields.bodyHtml)
+    setComposeAttachments([])
+    setComposeQuote(null)
+    setComposeContext({
+      threadId: localThreadId,
+      messageId: null,
+      kind: composeKind,
+      draftId: localDraftId,
+      hubDraftId: fields.hubDraftId,
+      hubSourceApp: fields.hubSourceApp,
+    })
+    setComposeDropActive(false)
+    setComposeMode(modeAfterOpenCompose)
+    setComposeSession(session => session + 1)
+    setCommandNotice(
+      `Opened draft from ${fields.sourceAppLabel} in Composer. Review before sending.`,
+    )
+  }
+
+  /**
    * Open a reply/reply-all/forward in the docked compose window — THE
    * composer surface. Reuses the one unsent draft a conversation already
    * has (a second Reply must never bury the reply you had written), derives
@@ -2735,6 +2876,8 @@ export function PureMailShell({
       messageId: contextMessageId,
       kind,
       draftId: contextDraftId,
+      ...(existing?.hubDraftId ? { hubDraftId: existing.hubDraftId } : {}),
+      ...(existing?.hubSourceApp ? { hubSourceApp: existing.hubSourceApp } : {}),
     })
     setComposeDropActive(false)
     // Replies open the DOCKED window — over the reader, never replacing it.
@@ -3629,7 +3772,7 @@ export function PureMailShell({
     holdForDraft,
     isDraftSending,
     markDraftSending,
-    deliver: (provider, draft, attempt) => deliveryController.current!(provider, draft, attempt),
+    deliver: sendDraftThroughProvider,
     reportFailure: reportSendFailure,
     notice: setCommandNotice,
     record: (kind, summary) => recordTriageOperation(kind, summary),
@@ -6002,6 +6145,21 @@ export function PureMailShell({
             </Meta>
           </Section>
         )}
+        {!compactInRoom && mailHubIntegration.pendingDrafts.length > 0 && (
+          <MailHubOutboxBanner
+            drafts={mailHubIntegration.pendingDrafts}
+            onOpenInComposer={openHubStagedDraftInComposer}
+            onDiscard={async draftId => {
+              const target = mailHubIntegration.pendingDrafts.find(d => d.id === draftId)
+              await mailHubIntegration.discardStagedDraft(draftId)
+              if (target) {
+                setCommandNotice(
+                  `Discarded draft from ${formatSourceAppLabel(target.sourceApp)}.`,
+                )
+              }
+            }}
+          />
+        )}
         {selectedSpecialView?.kind === 'screener' && !compactInRoom ? (
           <ScreenerQueue
             senders={unscreenedSendersWithModel}
@@ -6300,6 +6458,18 @@ export function PureMailShell({
             isSplitPane={isSplitLayout}
             composeMinimized={composeMode === 'minimized'}
             decisionInsight={activeThreadDecisionInsight}
+            threadSignals={mailHubIntegration.getThreadSignals(
+              selectedThread.id,
+              new Set(selectedMessages.map(m => m.id)),
+            )}
+            onAcceptSignal={async signalId => {
+              const ok = await mailHubIntegration.acceptSignal(signalId)
+              if (ok) setCommandNotice('Signal accepted and routed to target Pure* app.')
+            }}
+            onDismissSignal={async signalId => {
+              const ok = await mailHubIntegration.dismissSignal(signalId)
+              if (ok) setCommandNotice('Signal dismissed.')
+            }}
             onSetFollowUpReminder={(threadId, iso) => {
               const target = storeRef.current.threads.find(t => t.id === threadId)
               if (!target) return
@@ -6541,6 +6711,7 @@ export function PureMailShell({
           refreshMail={refreshMail}
           replayQueuedActionsNow={replayQueuedActionsNow}
           discardQueuedActionNow={discardQueuedActionNow}
+          mailHubIntegration={mailHubIntegration}
         />
       )}
 

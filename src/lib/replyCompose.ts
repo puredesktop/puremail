@@ -40,6 +40,10 @@ export interface ComposeReplyContext {
   kind: ReplyComposeKind | 'draft'
   /** The store draft the window is editing, when one already exists. */
   draftId: string | null
+  /** Mail Intelligence Hub staged draft id when opened from the cross-app Outbox. */
+  hubDraftId?: string | null
+  /** Originating Pure* app when opened from the cross-app Outbox. */
+  hubSourceApp?: string | null
 }
 
 export interface ComposeQuoteState {
@@ -380,10 +384,16 @@ export function upsertReplyDraft(
     ...(input.context.messageId
       ? { sourceMessageId: input.context.messageId }
       : {}),
+    ...(input.context.hubDraftId ? { hubDraftId: input.context.hubDraftId } : {}),
+    ...(input.context.hubSourceApp
+      ? { hubSourceApp: input.context.hubSourceApp }
+      : {}),
     provenance: [
-      input.context.kind === 'forward'
-        ? 'Created as a forward draft in the compose window.'
-        : 'Created as a reply draft in the compose window.',
+      input.context.hubSourceApp
+        ? `Staged from ${input.context.hubSourceApp} via Mail Intelligence Hub. Not sent.`
+        : input.context.kind === 'forward'
+          ? 'Created as a forward draft in the compose window.'
+          : 'Created as a reply draft in the compose window.',
     ],
   }
   return {

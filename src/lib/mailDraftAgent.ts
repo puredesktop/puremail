@@ -1,3 +1,8 @@
+import type { VoiceProfile } from '@purescience/platform-ui/bridge/mailHub'
+import {
+  formatVoiceProfileForPrompt,
+  getCachedHubVoiceProfile,
+} from './mailHubSync'
 import {
   cleanMailMessageText,
   latestMessageForThread,
@@ -76,6 +81,7 @@ function buildDraftMessage(input: {
   intent: 'draft' | 'regenerate'
   userFeedback?: string
   redraftReason?: RedraftReason
+  hubVoiceProfile?: VoiceProfile | null
 }): string {
   const {
     store,
@@ -84,7 +90,11 @@ function buildDraftMessage(input: {
     intent,
     userFeedback,
     redraftReason,
+    hubVoiceProfile,
   } = input
+  const activeHubVoice =
+    hubVoiceProfile === undefined ? getCachedHubVoiceProfile() : hubVoiceProfile
+  const hubVoicePrompt = formatVoiceProfileForPrompt(activeHubVoice)
   const thread = store.threads.find(item => item.id === threadId)
   if (!thread) throw new Error('Thread not found for LLM draft generation.')
   const latest = latestMessageForThread(store, threadId)
@@ -183,6 +193,9 @@ ${latestText}`
     voice.avoidPhrases.length
       ? `Avoid phrases: ${voice.avoidPhrases.join(', ')}`
       : '',
+    hubVoicePrompt
+      ? `Learned Mail Hub Voice Profile:\n${hubVoicePrompt}`
+      : '',
     '',
     previousDraft
       ? [
@@ -215,6 +228,7 @@ export function prepareReplyContext(input: {
   intent?: 'draft' | 'regenerate'
   userFeedback?: string
   redraftReason?: RedraftReason
+  hubVoiceProfile?: VoiceProfile | null
 }): { instructions: string; context: string } {
   return {
     instructions: buildSystemPrompt(input.store),

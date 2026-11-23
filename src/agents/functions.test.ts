@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import {
+  createMailHubClient,
+  type MailHubBridgeTransport,
+} from '@purescience/platform-ui/bridge/mailHub'
+import { PLATFORM_BRIDGE_METHODS } from '@purescience/platform-ui/bridge/methods.mjs'
 import { demoMailStoreForNow } from '../test/mailFixtures'
 import {
   buildGuardedPureMailHandlers,
@@ -73,7 +78,7 @@ describe('PureMail Operations Registry (Functions + 20% Core + Extended Escape H
     expect(summary.functions).toBe(PUREMAIL_FUNCTION_NAMES.length)
     expect(summary.coreTools).toBe(PUREMAIL_CORE_TOOL_NAMES.length)
     expect(summary.extendedTools).toBe(PUREMAIL_EXTENDED_TOOL_NAMES.length)
-    expect(summary.totalExposed).toBe(25)
+    expect(summary.totalExposed).toBe(26)
     expect(summary.totalAtomicTools).toBe(66)
     expect(summary.schemaReductionPercent).toBeGreaterThanOrEqual(60)
   })
@@ -153,6 +158,95 @@ describe('PureMail Operations Registry (Functions + 20% Core + Extended Escape H
     )
     expect(bundle.ok).toBe(true)
     expect(bundle.data.markdown).toContain(ctx.store.threads[0]!.subject)
+
+    // 10. fn_mailIntelligenceBriefing (read-only composite Mail Intelligence Hub overview)
+    const hubTransport: MailHubBridgeTransport = {
+      call: async <T = unknown>(method: string): Promise<T> => {
+        if (method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_LIST_DRAFTS) {
+          return [
+            {
+              id: 'draft_hub_1',
+              sourceApp: 'invoicing',
+              to: ['billing@acme.test'],
+              subject: 'Invoice #99',
+              body: 'Attached.',
+              status: 'pending',
+              createdAt: NOW.toISOString(),
+              updatedAt: NOW.toISOString(),
+            },
+          ] as T
+        }
+        if (method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_LIST_SIGNALS) {
+          return [
+            {
+              id: 'sig_1',
+              kind: 'signing_request',
+              targetApp: 'sign',
+              scope: 'personal',
+              messageId: 'm_1',
+              from: 'legal@acme.test',
+              subject: 'Please sign NDA',
+              summary: 'NDA awaiting signature',
+              confidence: 0.92,
+              status: 'pending',
+              extractedAt: NOW.toISOString(),
+              updatedAt: NOW.toISOString(),
+              data: {},
+            },
+          ] as T
+        }
+        if (method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_CHECK_FOLLOWUPS) return [] as T
+        if (method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_GET_VOICE_PROFILE) {
+          return {
+            updatedAt: NOW.toISOString(),
+            sampleCount: 12,
+            avgSentenceWords: 11,
+            directnessScore: 0.85,
+            usesBulletsRate: 0.3,
+            exclamationRate: 0.05,
+            topGreetings: ['Hi'],
+            topSignOffs: ['Best,'],
+            byAudience: {
+              executive: { sampleCount: 4, avgSentenceWords: 10, directnessScore: 0.9, topGreetings: ['Hi'], topSignOffs: ['Best,'], toneSummary: 'Direct' },
+              teammate: { sampleCount: 4, avgSentenceWords: 11, directnessScore: 0.85, topGreetings: ['Hi'], topSignOffs: ['Thanks,'], toneSummary: 'Direct' },
+              external: { sampleCount: 4, avgSentenceWords: 12, directnessScore: 0.8, topGreetings: ['Hello'], topSignOffs: ['Best,'], toneSummary: 'Clear' },
+            },
+            promptSummary: 'Direct and concise.',
+          } as T
+        }
+        if (method === PLATFORM_BRIDGE_METHODS.MAIL_HUB_GENERATE_BRIEFING) {
+          return {
+            generatedAt: NOW.toISOString(),
+            date: '2026-11-22',
+            summary: '1 cross-app draft and 1 signing request.',
+            sections: [],
+            counts: { pendingDrafts: 1, dueFollowUps: 0, pendingSignals: 1, urgentItems: 0 },
+            markdown: '# Daily Briefing\n- Invoice #99 awaiting review',
+            cloudSyncPayload: {
+              version: 1,
+              generatedAt: NOW.toISOString(),
+              date: '2026-11-22',
+              summary: '1 cross-app draft and 1 signing request.',
+              counts: { pendingDrafts: 1, dueFollowUps: 0, pendingSignals: 1, urgentItems: 0 },
+              sectionIds: [],
+            },
+          } as T
+        }
+        return [] as T
+      },
+      onEvent: () => () => undefined,
+    }
+    ctx.mailHubClient = createMailHubClient(hubTransport)
+    const hubBriefing = JSON.parse(
+      (await handlers.fn_mailIntelligenceBriefing(invoke('fn_mailIntelligenceBriefing'))).content,
+    )
+    expect(hubBriefing.ok).toBe(true)
+    expect(hubBriefing.data.hubAvailable).toBe(true)
+    expect(hubBriefing.data.counts.pendingOutboxDrafts).toBe(1)
+    expect(hubBriefing.data.pendingDrafts[0].sourceAppLabel).toBe('PureInvoicing')
+    expect(hubBriefing.data.signalsByTargetApp.PureSign).toHaveLength(1)
+    expect(hubBriefing.data.voiceProfile.promptSummary).toBe('Direct and concise.')
+    expect(hubBriefing.data.briefing.markdown).toContain('Daily Briefing')
 
     // Only mutating function calls (fn_triageInbox apply:true, fn_prepareReply with body) log to mutations ledger
     expect(ops.map(o => o.kind)).toEqual(['function.fn_triageInbox', 'function.fn_prepareReply'])

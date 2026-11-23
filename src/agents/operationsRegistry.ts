@@ -172,7 +172,7 @@ const atomicTools: AppAtomicToolDefinition<MailAgentToolContext>[] =
 
 /**
  * PureMail's unified Operations Registry built on the Pure* App Functions primitive:
- *   - 9 composite `function` workflows (always exposed)
+ *   - 10 composite `function` workflows (always exposed)
  *   - 13 core/release atomic tools (~20% of 66, always exposed)
  *   - 3 universal escape-hatch meta-tools (always exposed)
  *   - 53 extended specialist atomic tools (hidden by default, 100% reachable on demand)
